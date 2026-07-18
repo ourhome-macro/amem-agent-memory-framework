@@ -9,7 +9,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
-from agent_memory_runtime.config import RuntimeConfig
+from agent_memory_runtime.config import LLMConfig, RuntimeConfig, provider_presets
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.evals import evaluate_contains
@@ -29,6 +29,13 @@ AGENT_OPTION = typer.Option("--agent")
 QUERY_OPTION = typer.Option("--query")
 SESSION_OPTION = typer.Option("--session")
 INSTRUCTION_OPTION = typer.Option("--instruction", help="Additional non-secret system instruction.")
+PROVIDER_OPTION = typer.Option("--provider", help="OpenAI-compatible provider preset or custom.")
+MODEL_OPTION = typer.Option("--model", help="Override the provider default model.")
+BASE_URL_OPTION = typer.Option("--base-url", help="Override the provider base URL.")
+API_KEY_ENV_OPTION = typer.Option(
+    "--api-key-env",
+    help="Environment variable that holds the API key.",
+)
 
 
 @app.command()
@@ -93,15 +100,43 @@ def respond(
     query: Annotated[str, QUERY_OPTION],
     session: Annotated[str | None, SESSION_OPTION] = None,
     instruction: Annotated[str | None, INSTRUCTION_OPTION] = None,
+    provider: Annotated[str, PROVIDER_OPTION] = "deepseek",
+    model: Annotated[str | None, MODEL_OPTION] = None,
+    base_url: Annotated[str | None, BASE_URL_OPTION] = None,
+    api_key_env: Annotated[str | None, API_KEY_ENV_OPTION] = None,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir)
+    runtime = _runtime(
+        data_dir,
+        config=RuntimeConfig(
+            llm=_llm_config(
+                provider=provider,
+                model=model,
+                base_url=base_url,
+                api_key_env=api_key_env,
+            )
+        ),
+    )
     response = runtime.respond(
         MemoryQuery(agent_id=agent, text=query, session_id=session),
         instruction=instruction,
     )
     console.print(response.content)
     _print_trace({**runtime.last_trace.to_dict(), **response.to_dict()})
+
+
+@app.command("providers")
+def list_providers() -> None:
+    table = Table("provider", "default_model", "api_key_env", "base_url")
+    for preset in provider_presets():
+        table.add_row(
+            preset.provider,
+            preset.default_model,
+            preset.api_key_env,
+            preset.base_url,
+        )
+    table.add_row("custom", "required", "required", "required")
+    console.print(table)
 
 
 @app.command()
@@ -177,15 +212,33 @@ def _run_demo(filename: str, agent: str, query: str) -> None:
     _print_trace(runtime.last_trace.to_dict())
 
 
-def _runtime(data_dir: Path) -> AgentMemoryRuntime:
+def _runtime(data_dir: Path, *, config: RuntimeConfig | None = None) -> AgentMemoryRuntime:
     data_dir.mkdir(parents=True, exist_ok=True)
-    config = RuntimeConfig()
+    runtime_config = config or RuntimeConfig()
     return AgentMemoryRuntime(
-        config=config,
+        config=runtime_config,
         event_store=JsonlEventStore(data_dir / "events.jsonl"),
         memory_store=JsonlMemoryStore(data_dir / "memories.jsonl"),
         snapshot_store=JsonlSnapshotStore(data_dir / "snapshots.jsonl"),
     )
+
+
+def _llm_config(
+    *,
+    provider: str,
+    model: str | None,
+    base_url: str | None,
+    api_key_env: str | None,
+) -> LLMConfig:
+    try:
+        return LLMConfig.for_provider(
+            provider,
+            model=model,
+            base_url=base_url,
+            api_key_env=api_key_env,
+        )
+    except ValueError as error:
+        raise typer.BadParameter(str(error)) from error
 
 
 def _load_events(path: Path) -> list[Event]:

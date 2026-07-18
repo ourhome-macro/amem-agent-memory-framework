@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from agent_memory_runtime.config import LLMConfig, RuntimeConfig
+from agent_memory_runtime.config import LLMConfig, RuntimeConfig, provider_presets
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.exceptions import WriteGuardError
-from agent_memory_runtime.llm import DeepSeekChatClient, LLMResponse
+from agent_memory_runtime.llm import DeepSeekChatClient, LLMResponse, OpenAICompatibleChatClient
 from agent_memory_runtime.runtime import AgentMemoryRuntime
 
 
@@ -217,6 +217,31 @@ def test_replay_detects_rule_or_config_change() -> None:
     assert actual.state_hash != expected.state_hash
 
 
+def test_mainstream_openai_compatible_provider_presets() -> None:
+    presets = {preset.provider: preset for preset in provider_presets()}
+
+    assert set(presets) == {"deepseek", "openai", "gemini", "qwen", "zai", "kimi"}
+    assert LLMConfig.for_provider("openai").api_key_env == "OPENAI_API_KEY"
+    assert LLMConfig.for_provider("gemini").model == "gemini-2.5-flash"
+    assert LLMConfig.for_provider("qwen").base_url.endswith("/compatible-mode/v1")
+    assert LLMConfig.for_provider("zai").model == "glm-5.2"
+    assert LLMConfig.for_provider("kimi").extra_body == {"thinking": {"type": "disabled"}}
+
+    custom = LLMConfig.for_provider(
+        "custom",
+        base_url="https://models.example.com/v1",
+        api_key_env="EXAMPLE_API_KEY",
+        model="example-chat",
+    )
+    assert custom.provider == "custom"
+    assert custom.model == "example-chat"
+
+
+def test_custom_provider_requires_all_connection_fields() -> None:
+    with pytest.raises(ValueError, match="Custom provider requires"):
+        LLMConfig.for_provider("custom", model="example-chat")
+
+
 def test_respond_uses_only_projected_context_and_does_not_write_memory() -> None:
     client = _FakeChatClient()
     runtime = AgentMemoryRuntime(llm_client=client)
@@ -258,6 +283,18 @@ def test_deepseek_client_uses_openai_compatible_chat_completions_shape() -> None
             "stream": False,
         }
     ]
+
+
+def test_generic_client_applies_provider_specific_request_body() -> None:
+    fake_client = _FakeOpenAIClient()
+    client = OpenAICompatibleChatClient(LLMConfig.for_provider("kimi"), client=fake_client)
+
+    client.complete(system_prompt="System prompt", user_prompt="User prompt")
+
+    request = fake_client.chat.completions.calls[0]
+    assert request["model"] == "kimi-k2.6"
+    assert "temperature" not in request
+    assert request["extra_body"] == {"thinking": {"type": "disabled"}}
 
 
 def _message_event(

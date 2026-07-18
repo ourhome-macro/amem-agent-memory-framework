@@ -38,7 +38,7 @@ MemoryQuery
  -> AccessChecker
  -> scoring/rerank/budget
  -> ContextBuilder
- -> DeepSeekChatClient (optional)
+ -> OpenAICompatibleChatClient（可选）
  -> Agent response
 ```
 
@@ -46,9 +46,9 @@ MemoryQuery
 未授权的 private 和 sensitive 记录。评分综合关键词重合度、时效性、显著性、置信度、
 类型加权、强化次数和来源链接信号。
 
-`DeepSeekChatClient` 是可选的末端读取消费者。它通过 OpenAI 兼容协议仅接收已投影的上下文，
-不持有 Store，也不具备记忆写入能力。要把模型输出转化为长期记忆，应用必须创建新的 `Event`
-并重新进入写入链路。
+`OpenAICompatibleChatClient` 是可选的末端读取消费者，内置 DeepSeek、OpenAI、Gemini、Qwen、
+Z.AI/GLM 和 Kimi 预设，并允许传入自定义兼容端点。它仅接收已投影的上下文，不持有 Store，也不具备记忆
+写入能力。要把模型输出转化为长期记忆，应用必须创建新的 `Event` 并重新进入写入链路。
 
 ## 回放链路
 

@@ -98,7 +98,13 @@ def test_cli_respond_uses_injected_llm_client(monkeypatch, tmp_path) -> None:
             },
         )
     )
-    monkeypatch.setattr(cli_app, "_runtime", lambda _data_dir: runtime)
+    received_configs = []
+
+    def fake_runtime(_data_dir, *, config=None):
+        received_configs.append(config)
+        return runtime
+
+    monkeypatch.setattr(cli_app, "_runtime", fake_runtime)
 
     response = CliRunner().invoke(
         cli_app.app,
@@ -110,6 +116,8 @@ def test_cli_respond_uses_injected_llm_client(monkeypatch, tmp_path) -> None:
             "What should I do?",
             "--session",
             "cli-s1",
+            "--provider",
+            "kimi",
             "--data-dir",
             str(tmp_path / ".amem"),
         ],
@@ -119,6 +127,16 @@ def test_cli_respond_uses_injected_llm_client(monkeypatch, tmp_path) -> None:
     assert "Gateway confirmation is pending." in response.output
     assert "selected_memory_ids" in response.output
     assert "test-model" in response.output
+    assert received_configs[-1].llm.provider == "kimi"
+    assert received_configs[-1].llm.model == "kimi-k2.6"
+
+
+def test_cli_lists_supported_openai_compatible_providers() -> None:
+    result = CliRunner().invoke(cli_app.app, ["providers"])
+
+    assert result.exit_code == 0
+    for provider in ("deepseek", "openai", "gemini", "qwen", "zai", "kimi", "custom"):
+        assert provider in result.output
 
 
 class _FakeChatClient:

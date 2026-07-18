@@ -46,8 +46,10 @@
 
 输入：`MemoryQuery` 或符合查询结构的字典，以及可选的非机密应用指令。
 
-处理：先执行 `project`，再通过 `DeepSeekChatClient` 调用 OpenAI 兼容的 Chat Completions 接口。
-密钥仅从 `DEEPSEEK_API_KEY` 环境变量或本地 `.env` 读取，绝不进入 `RuntimeConfig`、快照或追踪输出。
+处理：先执行 `project`，再通过 `OpenAICompatibleChatClient` 调用 OpenAI 兼容的 Chat Completions
+接口。CLI 可用 `--provider` 选择 `deepseek`、`openai`、`gemini`、`qwen`、`zai`、`kimi` 或 `custom`；后者
+必须同时提供 `--model`、`--base-url` 和 `--api-key-env`。密钥仅从对应环境变量或本地 `.env` 读取，
+绝不进入 `RuntimeConfig`、快照或追踪输出。
 
 输出：`AgentResponse`，包含模型回答、模型标识、可选用量与对应的 `AgentContext`。
 

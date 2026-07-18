@@ -10,7 +10,7 @@ from agent_memory_runtime.context import AgentContext, ContextBuilder
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryCandidate, MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery
-from agent_memory_runtime.llm import ChatClient, DeepSeekChatClient, LLMResponse
+from agent_memory_runtime.llm import ChatClient, LLMResponse, OpenAICompatibleChatClient
 from agent_memory_runtime.memory.derivation import DerivationEngine
 from agent_memory_runtime.memory.lifecycle import LifecycleReducer
 from agent_memory_runtime.memory.retrieval import RetrievalPipeline
@@ -76,7 +76,7 @@ class AgentMemoryRuntime:
         self.retrieval = retrieval or RetrievalPipeline(self.config)
         self.context_builder = context_builder or ContextBuilder(self.config)
         self.write_guard = write_guard or WriteGuard()
-        self.llm_client = llm_client or DeepSeekChatClient(self.config.llm)
+        self.llm_client = llm_client or OpenAICompatibleChatClient(self.config.llm)
         self.last_trace = RuntimeTrace()
 
     def ingest(self, event: Event | dict[str, object]) -> IngestResult:

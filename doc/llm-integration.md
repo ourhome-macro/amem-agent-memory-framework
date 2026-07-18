@@ -1,18 +1,33 @@
-# DeepSeek LLM 集成
+# OpenAI 兼容模型集成
 
-## 协议与默认配置
+## 协议与预设
 
-运行时通过 OpenAI Python SDK 调用 DeepSeek 的 OpenAI 兼容 Chat Completions 接口。默认配置为：
+运行时通过 OpenAI Python SDK 调用 Chat Completions 接口。`OpenAICompatibleChatClient` 只有一个
+请求实现，厂商差异由 `LLMConfig` 的预设表达，因此不会为每个厂商复制状态、权限或审计逻辑。
 
-- `base_url`：`https://api.deepseek.com`
-- `model`：`deepseek-v4-flash`
-- `api_key_env`：`DEEPSEEK_API_KEY`
-- `temperature`：`0.2`
-- `max_tokens`：`512`
+| 提供商 | 默认模型 | `base_url` | 密钥环境变量 |
+| --- | --- | --- | --- |
+| `deepseek` | `deepseek-v4-flash` | `https://api.deepseek.com` | `DEEPSEEK_API_KEY` |
+| `openai` | `gpt-5-mini` | `https://api.openai.com/v1` | `OPENAI_API_KEY` |
+| `gemini` | `gemini-2.5-flash` | `https://generativelanguage.googleapis.com/v1beta/openai/` | `GEMINI_API_KEY` |
+| `qwen` | `qwen3.6-plus` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `DASHSCOPE_API_KEY` |
+| `zai` | `glm-5.2` | `https://api.z.ai/api/paas/v4/` | `ZAI_API_KEY` |
+| `kimi` | `kimi-k2.6` | `https://api.moonshot.ai/v1` | `MOONSHOT_API_KEY` |
 
-`deepseek-chat` 和 `deepseek-reasoner` 已进入弃用窗口，因此默认使用当前的 V4 模型名。
-如需调整模型、超时或输出长度，应创建 `RuntimeConfig(llm=LLMConfig(...))`；配置哈希会记录这些
-非机密配置变化，API 密钥不会进入配置对象。
+`kimi` 预设默认关闭 thinking，避免只读记忆回答被推理内容和低输出预算截断。`openai` 与 `kimi`
+不传 `temperature`，由供应商采用模型默认行为。`custom` 不含默认值，必须明确提供模型、端点和
+密钥环境变量。
+
+通过 CLI 查看预设并选择提供商：
+
+```powershell
+amem providers
+amem respond --agent support_agent --query "退款进度怎么样" --provider qwen
+amem respond --agent support_agent --query "退款进度怎么样" --provider custom --model example-chat --base-url https://models.example.com/v1 --api-key-env EXAMPLE_API_KEY
+```
+
+Python 调用可使用 `LLMConfig.for_provider("kimi")`，或者使用
+`LLMConfig.for_provider("custom", model=..., base_url=..., api_key_env=...)`。
 
 ## 密钥管理
 
@@ -20,6 +35,11 @@
 
 ```dotenv
 DEEPSEEK_API_KEY=你的_DeepSeek_API_密钥
+OPENAI_API_KEY=你的_OpenAI_API_密钥
+GEMINI_API_KEY=你的_Gemini_API_密钥
+DASHSCOPE_API_KEY=你的_Qwen_API_密钥
+ZAI_API_KEY=你的_ZAI_API_密钥
+MOONSHOT_API_KEY=你的_Kimi_API_密钥
 ```
 
 `.env` 已被 `.gitignore` 忽略。生产环境应由部署平台或密钥管理系统注入同名环境变量；运行时
@@ -34,7 +54,7 @@ MemoryQuery
  -> Retrieval
  -> AccessChecker
  -> ContextBuilder
- -> DeepSeekChatClient
+ -> OpenAICompatibleChatClient
  -> AgentResponse
 ```
 
@@ -46,7 +66,7 @@ MemoryQuery
 
 ## 错误处理
 
-- 未配置 `DEEPSEEK_API_KEY` 时抛出 `LLMConfigurationError`。
+- 未配置所选提供商的密钥环境变量时抛出 `LLMConfigurationError`。
 - 网络、认证、配额或供应商请求失败时抛出 `LLMRequestError`。
 - 返回为空或没有可用候选时抛出 `LLMResponseError`。
 
