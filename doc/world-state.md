@@ -1,38 +1,39 @@
-# Memory State Model
+# 记忆状态模型
 
-## Core Types
+## 核心类型
 
-- `Event`: immutable source input with `event_id`, `sequence`, `kind`, `actor_id`,
-  `session_id`, `payload`, labels, tags, and timestamp.
-- `MemoryCandidate`: rule-derived proposed memory. It is not authoritative until it passes
-  write guard and lifecycle reduction.
-- `MemoryRecord`: official retrievable memory with type, scope, layer, owner, visibility,
-  labels, source links, salience, confidence, status, and lifecycle metadata.
-- `RuntimeSnapshot`: replay checkpoint with rule/config hashes and state hash.
+- `Event`：不可变的来源输入，包含 `event_id`、`sequence`、`kind`、`actor_id`、
+  `session_id`、`payload`、标签、标记和时间戳。
+- `MemoryCandidate`：由规则派生的候选记忆。只有通过写入守卫和生命周期归并后，
+  它才成为权威状态。
+- `MemoryRecord`：可正式检索的记忆，包含类型、作用域、层级、所有者、可见范围、
+  标签、来源链接、显著性、置信度、状态和生命周期元数据。
+- `RuntimeSnapshot`：包含规则哈希、配置哈希和状态哈希的回放检查点。
+- `AgentResponse`：一次模型调用的临时读取结果，包含回答、模型标识、用量和对应的
+  `AgentContext`；它不是持久状态，也不会自动生成记忆。
 
-## Memory Types
+## 记忆类型
 
-- `episodic`: concrete interaction or observation.
-- `belief`: preference, stated belief, inferred stable user/agent belief.
-- `relationship`: relationship signal between principals.
-- `strategy`: task outcome or learned execution heuristic.
+- `episodic`：具体的交互或观察。
+- `belief`：偏好、明确陈述的信念，或推断出的稳定用户/Agent 信念。
+- `relationship`：主体间的关系信号。
+- `strategy`：任务结果或学习得到的执行启发式。
 
-## Scope And Layer
+## 作用域与层级
 
-Scopes:
+作用域：
 
-- `private`: owned by one agent or explicitly visible principals.
-- `shared`: visible to configured principals.
-- `global`: broadly available memory.
+- `private`：由单个 Agent 所有，或仅对显式指定的主体可见。
+- `shared`：对已配置主体可见。
+- `global`：可广泛访问的记忆。
 
-Layers:
+层级：
 
-- `core`: stable long-term memory.
-- `working`: active session memory.
-- `archival`: retained for audit/replay but normally excluded from context.
+- `core`：稳定的长期记忆。
+- `working`：当前会话中的活动记忆。
+- `archival`：保留用于审计和回放，通常不进入上下文。
 
-## Source Links
+## 来源链接
 
-Every active memory must carry `source_event_ids`. Derived strategy memories may also carry
-`source_memory_ids` to preserve reasoning chains.
-
+每条活动记忆都必须携带 `source_event_ids`。派生出的 strategy 记忆还可以携带
+`source_memory_ids`，以保留推理链路。

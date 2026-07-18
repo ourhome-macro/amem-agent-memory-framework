@@ -1,14 +1,13 @@
-# Runtime Governance
+# 运行时治理
 
-This project is domain-neutral, so it does not implement a mystery Narrative Director. The
-equivalent governance layer is access and information-flow control:
+本项目与业务领域无关，因此不实现悬疑游戏的 Narrative Director。与之对应的治理层由访问控制和
+信息流控制构成：
 
-- private memory remains private unless explicitly visible
-- sensitive memory is blocked from normal context projection
-- private memory cannot be promoted to shared/global through a later event
-- replay detects rule/config drift
-- source events remain the audit authority
+- private 记忆在未显式授权可见前始终保持私有。
+- sensitive 记忆会被阻止进入常规上下文投影。
+- private 记忆不能通过后续事件提升为 shared/global。
+- 回放可以检测规则或配置漂移。
+- 来源事件始终是审计的权威依据。
+- 模型调用只接收已授权的上下文，且记忆正文按不可信数据处理，不能覆盖系统提示或触发写入。
 
-Applications with stronger domain constraints should add pre-derivation and post-projection
-policies around this runtime rather than letting agent text update memory directly.
-
+存在更强领域约束的应用，应在本运行时外层添加派生前和投影后的策略；不得让 Agent 文本直接更新记忆。

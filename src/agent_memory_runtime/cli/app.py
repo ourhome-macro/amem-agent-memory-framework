@@ -28,6 +28,7 @@ PATH_OPTION = typer.Option(help="Runtime data directory.")
 AGENT_OPTION = typer.Option("--agent")
 QUERY_OPTION = typer.Option("--query")
 SESSION_OPTION = typer.Option("--session")
+INSTRUCTION_OPTION = typer.Option("--instruction", help="Additional non-secret system instruction.")
 
 
 @app.command()
@@ -84,6 +85,23 @@ def project(
     context = runtime.project(MemoryQuery(agent_id=agent, text=query, session_id=session))
     console.print(context.projected_context)
     _print_trace(runtime.last_trace.to_dict())
+
+
+@app.command()
+def respond(
+    agent: Annotated[str, AGENT_OPTION],
+    query: Annotated[str, QUERY_OPTION],
+    session: Annotated[str | None, SESSION_OPTION] = None,
+    instruction: Annotated[str | None, INSTRUCTION_OPTION] = None,
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    runtime = _runtime(data_dir)
+    response = runtime.respond(
+        MemoryQuery(agent_id=agent, text=query, session_id=session),
+        instruction=instruction,
+    )
+    console.print(response.content)
+    _print_trace({**runtime.last_trace.to_dict(), **response.to_dict()})
 
 
 @app.command()

@@ -1,20 +1,20 @@
-# Architecture
+# 架构
 
-## Positioning
+## 定位
 
-Agent Memory Runtime is a production-oriented runtime for agent state, not a prompt helper.
-The runtime stores original events, derives typed memory candidates, reduces those candidates
-into official memory records, and only then lets retrieval project memory into context.
+Agent Memory Runtime 是面向生产环境的 Agent 状态运行时，不是 Prompt 辅助工具。
+运行时保存原始事件，从事件派生类型化的记忆候选，再将候选归并为正式记忆记录，
+最后才允许检索链路把记忆投影到上下文中。
 
-The root boundary is:
+根本边界如下：
 
 ```text
-event log is authority
-memory records are derived state
-context is a temporary projection
+事件日志是权威来源
+记忆记录是派生状态
+上下文是临时投影
 ```
 
-## Write Path
+## 写入链路
 
 ```text
 Event
@@ -26,10 +26,10 @@ Event
  -> RuntimeSnapshot
 ```
 
-The system rejects candidates without source events. Private memories cannot be promoted to
-shared/global memory by later writes, and sensitive labels cannot be silently dropped.
+系统拒绝没有来源事件的候选记忆。私有记忆不能通过后续写入提升为 shared/global 记忆，
+敏感标签也不能被静默移除。
 
-## Read Path
+## 读取链路
 
 ```text
 MemoryQuery
@@ -38,33 +38,38 @@ MemoryQuery
  -> AccessChecker
  -> scoring/rerank/budget
  -> ContextBuilder
+ -> DeepSeekChatClient (optional)
+ -> Agent response
 ```
 
-Hard filters remove wrong session/type/scope/layer/tag/status records. Access checking then
-blocks unauthorized private and sensitive records. Scoring combines keyword overlap, recency,
-salience, confidence, type boost, reinforcement, and source-link signals.
+硬过滤会移除会话、类型、作用域、层级、标签或状态不匹配的记录。随后访问校验会阻止
+未授权的 private 和 sensitive 记录。评分综合关键词重合度、时效性、显著性、置信度、
+类型加权、强化次数和来源链接信号。
 
-## Replay Path
+`DeepSeekChatClient` 是可选的末端读取消费者。它通过 OpenAI 兼容协议仅接收已投影的上下文，
+不持有 Store，也不具备记忆写入能力。要把模型输出转化为长期记忆，应用必须创建新的 `Event`
+并重新进入写入链路。
+
+## 回放链路
 
 ```text
 EventStore.list_events
  -> MemoryStore.clear
- -> apply each event through derivation and lifecycle
+ -> 逐事件应用派生和生命周期链路
  -> RuntimeSnapshot
- -> consistency comparison
+ -> 一致性比对
 ```
 
-Replay snapshots include `rule_version`, `config_hash`, `last_event_sequence`, and `state_hash`.
-Changing rules or configuration changes the state hash and is detectable.
+回放快照包含 `rule_version`、`config_hash`、`last_event_sequence` 和 `state_hash`。
+规则或配置变化会导致状态哈希变化，因此可被检测。
 
-## Stores
+## 存储接口
 
-The store interfaces are intentionally split:
+存储接口被有意拆分为：
 
-- `EventStore`: original events only.
-- `MemoryStore`: official derived `MemoryRecord` objects.
-- `SnapshotStore`: runtime snapshots and replay checkpoints.
+- `EventStore`：只保存原始事件。
+- `MemoryStore`：保存正式派生出的 `MemoryRecord` 对象。
+- `SnapshotStore`：保存运行时快照和回放检查点。
 
-In-memory, JSONL, and SQLite implementations are available. SQLite can be the backing database
-for all three roles, but the runtime still calls separate interfaces.
-
+框架提供内存、JSONL 和 SQLite 实现。SQLite 可以作为三类存储的底层数据库，但运行时仍通过
+相互独立的接口调用它们。

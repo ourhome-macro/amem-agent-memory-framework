@@ -11,6 +11,8 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Agent Memory Runtime Contributors" }]
 dependencies = [
+  "openai>=1.0",
+  "python-dotenv>=1.0",
   "typer>=0.12",
   "rich>=13.7",
   "PyYAML>=6.0",
@@ -38,4 +40,3 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-

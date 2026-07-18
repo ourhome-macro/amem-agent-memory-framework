@@ -16,14 +16,24 @@ class RetrievalWeights:
 
 
 @dataclass(frozen=True)
+class LLMConfig:
+    base_url: str = "https://api.deepseek.com"
+    api_key_env: str = "DEEPSEEK_API_KEY"
+    model: str = "deepseek-v4-flash"
+    temperature: float = 0.2
+    max_tokens: int = 512
+    timeout_seconds: float = 60.0
+
+
+@dataclass(frozen=True)
 class RuntimeConfig:
     rule_version: str = "builtin-v1"
     max_retrieval_results: int = 8
     context_token_budget: int = 900
     low_salience_archive_threshold: float = 0.12
     retrieval_weights: RetrievalWeights = field(default_factory=RetrievalWeights)
+    llm: LLMConfig = field(default_factory=LLMConfig)
 
     @property
     def config_hash(self) -> str:
         return stable_hash(asdict(self))
-

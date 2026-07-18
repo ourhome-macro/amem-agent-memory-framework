@@ -1,20 +1,22 @@
-# Agent Design
+# Agent 设计
 
-The runtime does not give an LLM write access to memory. Agent outputs should be converted into
-events first. Derivation rules and lifecycle reducers decide whether those events produce memory.
+运行时不向 LLM 授予记忆写入权限。Agent 输出应先转换为事件，随后由派生规则和生命周期归并器
+决定这些事件是否产生记忆。
 
-Expected integration pattern:
+推荐的集成模式：
 
 ```text
-Agent output
- -> structured event
+Agent 输出
+ -> 结构化事件
  -> runtime.ingest(event)
- -> retrieve/project on the next turn
+ -> 在下一轮执行检索/投影
 ```
 
-Prompt text can ask an LLM to summarize or propose a memory, but production writes should still
-pass through a typed event, a registered derivation rule, write guard, and reducer.
+Prompt 可以要求 LLM 总结或提出一条记忆，但生产写入仍必须经过类型化事件、已注册的派生规则、
+写入守卫和归并器。
 
-The context projection is intentionally lossy. It is a safe read model for the next agent turn,
-not a state object.
+上下文投影有意是有损的。它是下一轮 Agent 调用可安全读取的视图，而不是状态对象。
 
+当使用 `runtime.respond(query)` 时，运行时先完成检索和上下文投影，再将结果发送给模型。
+模型只拥有该次投影的读取权限。系统提示会把记忆内容视为不可信参考数据，避免记忆正文中的
+指令覆盖运行时约束；模型输出也不会被自动持久化。

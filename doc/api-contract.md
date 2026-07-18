@@ -1,58 +1,67 @@
-# API Contract
+# API 契约
 
-## Python Runtime
+## Python 运行时
 
 ### `AgentMemoryRuntime.ingest(event)`
 
-Input: `Event` or event-shaped dict.
+输入：`Event` 或符合事件结构的字典。
 
-Side effects:
+副作用：
 
-- appends event to `EventStore`
-- derives memory candidates
-- validates source and information flow
-- upserts official `MemoryRecord` objects
-- saves a `RuntimeSnapshot`
+- 将事件追加到 `EventStore`
+- 派生记忆候选
+- 校验来源和信息流
+- 新增或更新正式的 `MemoryRecord` 对象
+- 保存 `RuntimeSnapshot`
 
-Output: `IngestResult`.
+输出：`IngestResult`。
 
 ### `AgentMemoryRuntime.retrieve(query)`
 
-Input: `MemoryQuery` or query-shaped dict.
+输入：`MemoryQuery` 或符合查询结构的字典。
 
-Output: `(list[MemoryRecord], RuntimeTrace)`.
+输出：`(list[MemoryRecord], RuntimeTrace)`。
 
-No state mutation except updating `runtime.last_trace`.
+除更新 `runtime.last_trace` 外，不产生状态变更。
 
 ### `AgentMemoryRuntime.project(query)`
 
-Input: `MemoryQuery` or query-shaped dict.
+输入：`MemoryQuery` 或符合查询结构的字典。
 
-Output: `AgentContext` with selected memory ids, blocked count, projected context, projected
-memory payloads, and retrieval trace.
+输出：`AgentContext`，包含已选记忆 ID、阻止数量、投影上下文、已投影记忆载荷和检索追踪。
 
 ### `AgentMemoryRuntime.replay(events=None)`
 
-Input: optional event list. Defaults to current `EventStore`.
+输入：可选事件列表，默认使用当前 `EventStore`。
 
-Side effects:
+副作用：
 
-- clears `MemoryStore`
-- re-applies events through derivation/lifecycle
-- saves snapshot
+- 清空 `MemoryStore`
+- 通过派生和生命周期链路重新应用事件
+- 保存快照
 
-Output: `RuntimeSnapshot`.
+输出：`RuntimeSnapshot`。
 
-## CLI Contract
+### `AgentMemoryRuntime.respond(query, instruction=None)`
 
-The `amem` CLI exposes `init`, `ingest`, `derive`, `retrieve`, `project`, `replay`, `eval`, and
-three demos. Trace output must include:
+输入：`MemoryQuery` 或符合查询结构的字典，以及可选的非机密应用指令。
+
+处理：先执行 `project`，再通过 `DeepSeekChatClient` 调用 OpenAI 兼容的 Chat Completions 接口。
+密钥仅从 `DEEPSEEK_API_KEY` 环境变量或本地 `.env` 读取，绝不进入 `RuntimeConfig`、快照或追踪输出。
+
+输出：`AgentResponse`，包含模型回答、模型标识、可选用量与对应的 `AgentContext`。
+
+副作用：无记忆状态变更。模型输出需要由调用方显式转换为 `Event` 后才能进入写入链路。
+
+## CLI 契约
+
+`amem` CLI 提供 `init`、`ingest`、`derive`、`retrieve`、`project`、`respond`、`replay`、`eval`
+以及三个演示命令。追踪输出必须包含：
 
 - `selected_memory_ids`
-- score breakdown
-- blocked memory count
+- 评分明细
+- 被阻止的记忆数量
 - `rule_version`
 - `config_hash`
 - `last_event_sequence`
 - `state_hash`
-

@@ -17,3 +17,14 @@ class StoreError(AgentMemoryRuntimeError):
 class WriteGuardError(AgentMemoryRuntimeError):
     """Raised when a memory candidate violates information-flow constraints."""
 
+
+class LLMConfigurationError(AgentMemoryRuntimeError):
+    """Raised when the LLM provider configuration is incomplete or invalid."""
+
+
+class LLMRequestError(AgentMemoryRuntimeError):
+    """Raised when an LLM provider request cannot be completed."""
+
+
+class LLMResponseError(AgentMemoryRuntimeError):
+    """Raised when an LLM provider response has no usable assistant content."""

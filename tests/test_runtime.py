@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from agent_memory_runtime.config import RuntimeConfig
+from agent_memory_runtime.config import LLMConfig, RuntimeConfig
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.exceptions import WriteGuardError
+from agent_memory_runtime.llm import DeepSeekChatClient, LLMResponse
 from agent_memory_runtime.runtime import AgentMemoryRuntime
 
 
@@ -216,6 +217,49 @@ def test_replay_detects_rule_or_config_change() -> None:
     assert actual.state_hash != expected.state_hash
 
 
+def test_respond_uses_only_projected_context_and_does_not_write_memory() -> None:
+    client = _FakeChatClient()
+    runtime = AgentMemoryRuntime(llm_client=client)
+    runtime.ingest(_message_event())
+    record_count = len(runtime.memory_store.list_records())
+
+    response = runtime.respond(
+        MemoryQuery(agent_id="support_agent", text="What is the refund status?", session_id="s1")
+    )
+
+    assert response.content == "The gateway confirmation is still pending."
+    assert response.context.selected_memory_ids == ("episodic:s1:evt-1",)
+    assert len(runtime.memory_store.list_records()) == record_count
+    assert "episodic:s1:evt-1" in client.system_prompts[0]
+    assert "<memory_context>" in client.system_prompts[0]
+    assert client.user_prompts == ["What is the refund status?"]
+
+
+def test_deepseek_client_uses_openai_compatible_chat_completions_shape() -> None:
+    fake_client = _FakeOpenAIClient()
+    client = DeepSeekChatClient(
+        LLMConfig(model="deepseek-v4-flash", temperature=0.1, max_tokens=128),
+        client=fake_client,
+    )
+
+    response = client.complete(system_prompt="System prompt", user_prompt="User prompt")
+
+    assert response.content == "Compatible response"
+    assert response.model == "deepseek-v4-flash"
+    assert fake_client.chat.completions.calls == [
+        {
+            "model": "deepseek-v4-flash",
+            "messages": [
+                {"role": "system", "content": "System prompt"},
+                {"role": "user", "content": "User prompt"},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 128,
+            "stream": False,
+        }
+    ]
+
+
 def _message_event(
     *,
     event_id: str = "evt-1",
@@ -239,3 +283,59 @@ def _message_event(
             "salience": salience,
         },
     )
+
+
+class _FakeChatClient:
+    def __init__(self) -> None:
+        self.system_prompts: list[str] = []
+        self.user_prompts: list[str] = []
+
+    def complete(self, *, system_prompt: str, user_prompt: str) -> LLMResponse:
+        self.system_prompts.append(system_prompt)
+        self.user_prompts.append(user_prompt)
+        return LLMResponse(
+            content="The gateway confirmation is still pending.",
+            model="test-model",
+            response_id="response-test-1",
+            input_tokens=12,
+            output_tokens=8,
+        )
+
+
+class _FakeOpenAIClient:
+    def __init__(self) -> None:
+        self.chat = _FakeChat()
+
+
+class _FakeChat:
+    def __init__(self) -> None:
+        self.completions = _FakeCompletions()
+
+
+class _FakeCompletions:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def create(self, **kwargs: object) -> _FakeCompletion:
+        self.calls.append(kwargs)
+        return _FakeCompletion()
+
+
+class _FakeMessage:
+    content = "Compatible response"
+
+
+class _FakeChoice:
+    message = _FakeMessage()
+
+
+class _FakeUsage:
+    prompt_tokens = 9
+    completion_tokens = 4
+
+
+class _FakeCompletion:
+    choices = [_FakeChoice()]
+    model = "deepseek-v4-flash"
+    id = "chatcmpl-test-1"
+    usage = _FakeUsage()
