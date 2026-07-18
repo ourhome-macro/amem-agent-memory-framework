@@ -1,0 +1,8 @@
+cases:
+  - id: refund_strategy
+    agent: support_agent
+    session_id: support-001
+    query: refund status
+    expected_memory_ids:
+      - strategy:support-001:support_agent:refund_status
+
