@@ -55,6 +55,7 @@ MemoryQuery
  -> AccessChecker
  -> ContextBuilder
  -> OpenAICompatibleChatClient
+ -> AuditStore
  -> AgentResponse
 ```
 
@@ -63,6 +64,16 @@ MemoryQuery
 
 系统提示将投影记忆包裹为 `<memory_context>`，并声明其中的文本是不可信参考数据。这样可以防止
 记忆正文中的提示注入覆盖访问控制或诱导模型绕过状态边界。
+
+## 调用审计
+
+`respond` 在模型调用成功和失败时都会写入 `LLMCallTrace`。记录包含提供商、模型、模型响应 ID、
+输入输出 token、已选记忆 ID、被阻止数量，以及 `rule_version`、`config_hash`、
+`last_event_sequence` 和 `state_hash`。请求和回答只保留 SHA-256 哈希；系统提示、用户查询、
+投影上下文、回答正文、API 密钥和异常消息均不得写入审计记录。
+
+CLI 使用 `.amem/audit.jsonl` 保存审计记录，可通过 `amem audit` 调试。生产环境应将
+`AuditStore` 连接到受访问控制的持久化介质，并为审计数据配置独立保留和清理策略。
 
 ## 错误处理
 

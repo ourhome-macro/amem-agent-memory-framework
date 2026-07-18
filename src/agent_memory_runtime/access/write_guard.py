@@ -17,6 +17,21 @@ class WriteGuard:
             raise WriteGuardError(
                 f"memory candidate {candidate.memory_id} must reference an existing source event"
             )
+        if (
+            MemoryLabel.SENSITIVE.value in set(candidate.labels)
+            and candidate.scope == MemoryScope.GLOBAL.value
+        ):
+            raise WriteGuardError(
+                f"sensitive memory {candidate.memory_id} cannot use global scope"
+            )
+        if (
+            MemoryLabel.SENSITIVE.value in set(candidate.labels)
+            and candidate.scope == MemoryScope.SHARED.value
+            and not candidate.visible_to
+        ):
+            raise WriteGuardError(
+                f"shared sensitive memory {candidate.memory_id} requires visible_to"
+            )
         if candidate.scope == MemoryScope.PRIVATE.value and not candidate.owner_id:
             raise WriteGuardError(f"private memory {candidate.memory_id} requires owner_id")
         if current is not None:

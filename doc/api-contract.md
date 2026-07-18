@@ -8,11 +8,15 @@
 
 副作用：
 
-- 将事件追加到 `EventStore`
+- 在追加前执行敏感载荷检测、标签补全和最小化；原始敏感文本不进入 `EventStore`
+- 将最小化后的事件追加到 `EventStore`
 - 派生记忆候选
 - 校验来源和信息流
 - 新增或更新正式的 `MemoryRecord` 对象
 - 保存 `RuntimeSnapshot`
+
+当运行时注入共享 `TransactionManager`（例如 `SQLiteStoreBundle`）时，上述事件、记忆和快照
+副作用在一个事务内提交；任一校验失败会回滚全部写入。
 
 输出：`IngestResult`。
 
@@ -55,10 +59,15 @@
 
 副作用：无记忆状态变更。模型输出需要由调用方显式转换为 `Event` 后才能进入写入链路。
 
+无论调用成功或失败，都会追加一条 `LLMCallTrace` 到 `AuditStore`。该记录只包含调用元数据、
+选中记忆 ID、快照定位字段、用量以及请求/响应哈希；不包含查询、系统提示、上下文、回答、
+API 密钥或异常消息。
+
 ## CLI 契约
 
-`amem` CLI 提供 `init`、`ingest`、`derive`、`retrieve`、`project`、`respond`、`replay`、`eval`
-以及三个演示命令。追踪输出必须包含：
+`amem` CLI 提供 `init`、`ingest`、`derive`、`retrieve`、`project`、`respond`、`audit`、`replay`、
+`eval` 以及三个演示命令。`init` 会创建 `audit.jsonl`，`audit` 输出已持久化的无原文模型调用审计。
+每次子命令执行都会先输出 AMEM ASCII 启动横幅；随后追踪输出必须包含：
 
 - `selected_memory_ids`
 - 评分明细

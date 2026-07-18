@@ -11,6 +11,7 @@ Agent Memory Runtime 是一个面向有状态 Agent 的事件源记忆运行时�
 
 ```text
 Event
+ -> SensitiveDataSanitizer
  -> EventStore
  -> Derivation
  -> Lifecycle
@@ -50,6 +51,7 @@ amem retrieve --agent support_agent --query "refund status"
 amem project --agent support_agent --query "refund status"
 amem respond --agent support_agent --query "refund status"
 amem providers
+amem audit
 amem replay
 amem eval examples/evals/retrieval_cases.yml
 amem demo customer-support
@@ -59,6 +61,20 @@ amem demo mock-interviewer
 
 CLI 追踪输出包含已选记忆 ID、评分明细、被阻止的记忆数量，以及
 `rule_version`、`config_hash`、`last_event_sequence` 和 `state_hash`。
+每次执行 `amem` 子命令都会先输出 AMEM 启动横幅和运行时定位说明。
+
+## 数据安全与审计
+
+事件带有 `sensitive` 标签，或检测到银行卡号、凭据等敏感字段时，运行时会在写入
+`EventStore` 前自动标注并最小化其载荷。除路由所需的结构化标识外，文本和未知字段会被替换为
+`[redacted]`；敏感记忆不得使用 `global` 作用域。读取链路仍会执行标签、可见范围和作用域校验。
+
+`respond` 的每次成功或失败调用都会写入 `LLMCallTrace`。审计仅保留提供商、模型、记忆 ID、
+用量、快照定位字段及请求/响应哈希，不保存提示词、查询、投影上下文、模型回答或异常消息。CLI
+默认将这些记录保存在 `.amem/audit.jsonl`，可使用 `amem audit` 查看。
+
+生产部署使用 `SQLiteStoreBundle` 时，单次写入会将事件、派生记忆和运行时快照放入同一 SQLite
+事务；JSONL Store 适合本地演示和调试，不提供跨文件原子提交。
 
 ## OpenAI 兼容模型
 

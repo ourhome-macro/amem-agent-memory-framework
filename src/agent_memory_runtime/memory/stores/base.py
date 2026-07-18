@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from typing import Protocol
 
+from agent_memory_runtime.audit.llm_trace import LLMCallTrace
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 
@@ -44,3 +46,18 @@ class SnapshotStore(Protocol):
     def clear(self) -> None:
         ...
 
+
+class AuditStore(Protocol):
+    def append_trace(self, trace: LLMCallTrace) -> None:
+        ...
+
+    def list_traces(self) -> list[LLMCallTrace]:
+        ...
+
+    def clear(self) -> None:
+        ...
+
+
+class TransactionManager(Protocol):
+    def transaction(self) -> AbstractContextManager[None]:
+        ...

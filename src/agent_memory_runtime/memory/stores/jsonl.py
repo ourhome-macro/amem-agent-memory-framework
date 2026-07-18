@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from agent_memory_runtime.audit.llm_trace import LLMCallTrace
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 
@@ -85,3 +86,24 @@ class JsonlSnapshotStore:
     def clear(self) -> None:
         self.path.write_text("", encoding="utf-8")
 
+
+class JsonlAuditStore:
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.touch(exist_ok=True)
+
+    def append_trace(self, trace: LLMCallTrace) -> None:
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(trace.to_dict(), ensure_ascii=True, sort_keys=True) + "\n")
+
+    def list_traces(self) -> list[LLMCallTrace]:
+        traces: list[LLMCallTrace] = []
+        with self.path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    traces.append(LLMCallTrace.from_dict(json.loads(line)))
+        return traces
+
+    def clear(self) -> None:
+        self.path.write_text("", encoding="utf-8")

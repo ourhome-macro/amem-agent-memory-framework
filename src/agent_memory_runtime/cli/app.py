@@ -9,11 +9,13 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from agent_memory_runtime.cli.banner import BANNER
 from agent_memory_runtime.config import LLMConfig, RuntimeConfig, provider_presets
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.evals import evaluate_contains
 from agent_memory_runtime.memory.stores import (
+    JsonlAuditStore,
     JsonlEventStore,
     JsonlMemoryStore,
     JsonlSnapshotStore,
@@ -38,12 +40,18 @@ API_KEY_ENV_OPTION = typer.Option(
 )
 
 
+@app.callback()
+def print_startup_banner() -> None:
+    print(BANNER)
+
+
 @app.command()
 def init(path: Annotated[Path, PATH_OPTION] = DEFAULT_DATA_DIR) -> None:
     path.mkdir(parents=True, exist_ok=True)
     (path / "events.jsonl").touch(exist_ok=True)
     (path / "memories.jsonl").touch(exist_ok=True)
     (path / "snapshots.jsonl").touch(exist_ok=True)
+    (path / "audit.jsonl").touch(exist_ok=True)
     console.print(f"initialized {path}")
 
 
@@ -139,6 +147,13 @@ def list_providers() -> None:
     console.print(table)
 
 
+@app.command("audit")
+def show_audit(data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR) -> None:
+    runtime = _runtime(data_dir)
+    traces = [trace.to_dict() for trace in runtime.audit_store.list_traces()]
+    _print_trace({"llm_call_traces": traces})
+
+
 @app.command()
 def replay(data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR) -> None:
     runtime = _runtime(data_dir)
@@ -220,6 +235,7 @@ def _runtime(data_dir: Path, *, config: RuntimeConfig | None = None) -> AgentMem
         event_store=JsonlEventStore(data_dir / "events.jsonl"),
         memory_store=JsonlMemoryStore(data_dir / "memories.jsonl"),
         snapshot_store=JsonlSnapshotStore(data_dir / "snapshots.jsonl"),
+        audit_store=JsonlAuditStore(data_dir / "audit.jsonl"),
     )
 
 

@@ -36,6 +36,7 @@ def test_cli_ingest_retrieve_project_and_replay(tmp_path) -> None:
     )
 
     assert runner.invoke(cli_app.app, ["init", "--path", str(data_dir)]).exit_code == 0
+    assert (data_dir / "audit.jsonl").exists()
     assert (
         runner.invoke(cli_app.app, ["ingest", str(events), "--data-dir", str(data_dir)]).exit_code
         == 0
@@ -80,6 +81,10 @@ def test_cli_ingest_retrieve_project_and_replay(tmp_path) -> None:
     replay = runner.invoke(cli_app.app, ["replay", "--data-dir", str(data_dir)])
     assert replay.exit_code == 0
     assert "state_hash" in replay.output
+
+    audit = runner.invoke(cli_app.app, ["audit", "--data-dir", str(data_dir)])
+    assert audit.exit_code == 0
+    assert "llm_call_traces" in audit.output
 
 
 def test_cli_respond_uses_injected_llm_client(monkeypatch, tmp_path) -> None:
@@ -135,6 +140,9 @@ def test_cli_lists_supported_openai_compatible_providers() -> None:
     result = CliRunner().invoke(cli_app.app, ["providers"])
 
     assert result.exit_code == 0
+    assert result.output.count("Agent Memory Runtime") == 1
+    assert "Event-sourced memory for stateful agents." in result.output
+    assert "Safe context. Deterministic replay." in result.output
     for provider in ("deepseek", "openai", "gemini", "qwen", "zai", "kimi", "custom"):
         assert provider in result.output
 

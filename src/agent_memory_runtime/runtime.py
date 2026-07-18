@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from dataclasses import dataclass
 
+from agent_memory_runtime.access.sanitizer import sanitize_event
 from agent_memory_runtime.access.write_guard import WriteGuard
+from agent_memory_runtime.audit.llm_trace import build_llm_call_trace
 from agent_memory_runtime.audit.snapshot import RuntimeSnapshot, build_snapshot
 from agent_memory_runtime.audit.trace import RuntimeTrace
 from agent_memory_runtime.config import RuntimeConfig
@@ -15,11 +18,18 @@ from agent_memory_runtime.memory.derivation import DerivationEngine
 from agent_memory_runtime.memory.lifecycle import LifecycleReducer
 from agent_memory_runtime.memory.retrieval import RetrievalPipeline
 from agent_memory_runtime.memory.stores import (
+    InMemoryAuditStore,
     InMemoryEventStore,
     InMemoryMemoryStore,
     InMemorySnapshotStore,
 )
-from agent_memory_runtime.memory.stores.base import EventStore, MemoryStore, SnapshotStore
+from agent_memory_runtime.memory.stores.base import (
+    AuditStore,
+    EventStore,
+    MemoryStore,
+    SnapshotStore,
+    TransactionManager,
+)
 
 
 @dataclass(frozen=True)
@@ -66,6 +76,8 @@ class AgentMemoryRuntime:
         context_builder: ContextBuilder | None = None,
         write_guard: WriteGuard | None = None,
         llm_client: ChatClient | None = None,
+        audit_store: AuditStore | None = None,
+        transaction_manager: TransactionManager | None = None,
     ) -> None:
         self.config = config or RuntimeConfig()
         self.event_store = event_store or InMemoryEventStore()
@@ -77,18 +89,24 @@ class AgentMemoryRuntime:
         self.context_builder = context_builder or ContextBuilder(self.config)
         self.write_guard = write_guard or WriteGuard()
         self.llm_client = llm_client or OpenAICompatibleChatClient(self.config.llm)
+        self.audit_store = audit_store or InMemoryAuditStore()
+        self.transaction_manager = transaction_manager
         self.last_trace = RuntimeTrace()
 
     def ingest(self, event: Event | dict[str, object]) -> IngestResult:
         source_event = Event.from_dict(event) if isinstance(event, dict) else event
-        stored_event = self.event_store.append(source_event)
-        records = self.apply_event(stored_event)
-        self._save_snapshot()
-        return IngestResult(
-            event=stored_event,
-            candidates=tuple(self.derivation_engine.derive(stored_event)),
-            records=tuple(records),
-        )
+        sanitized_event = sanitize_event(source_event)
+        # EventStore is the replay source of truth, so derivation must consume its sanitized form.
+        with self._transaction():
+            # SQLiteStoreBundle makes the event, derived records, and checkpoint one unit of work.
+            stored_event = self.event_store.append(sanitized_event)
+            records = self.apply_event(stored_event)
+            self._save_snapshot()
+            return IngestResult(
+                event=stored_event,
+                candidates=tuple(self.derivation_engine.derive(stored_event)),
+                records=tuple(records),
+            )
 
     def apply_event(self, event: Event) -> list[MemoryRecord]:
         candidates = self.derivation_engine.derive(event)
@@ -163,22 +181,44 @@ class AgentMemoryRuntime:
         """Generate a response from an access-checked, non-persistent memory projection."""
         memory_query = _query_from_dict(query) if isinstance(query, dict) else query
         context = self.project(memory_query)
-        completion = self.llm_client.complete(
-            system_prompt=_system_prompt(
-                agent_id=memory_query.agent_id,
-                projected_context=context.projected_context,
-                instruction=instruction,
-            ),
-            user_prompt=memory_query.text,
+        system_prompt = _system_prompt(
+            agent_id=memory_query.agent_id,
+            projected_context=context.projected_context,
+            instruction=instruction,
         )
-        return _agent_response(memory_query.agent_id, context, completion)
+        try:
+            completion = self.llm_client.complete(
+                system_prompt=system_prompt,
+                user_prompt=memory_query.text,
+            )
+        except Exception as error:
+            # The trace retains only the exception type.
+            # Provider messages can contain sensitive data.
+            self._audit_llm_call(
+                agent_id=memory_query.agent_id,
+                context=context,
+                system_prompt=system_prompt,
+                user_prompt=memory_query.text,
+                error=error,
+            )
+            raise
+        response = _agent_response(memory_query.agent_id, context, completion)
+        self._audit_llm_call(
+            agent_id=memory_query.agent_id,
+            context=context,
+            system_prompt=system_prompt,
+            user_prompt=memory_query.text,
+            response=response,
+        )
+        return response
 
     def replay(self, events: list[Event] | None = None) -> RuntimeSnapshot:
         source_events = events if events is not None else self.event_store.list_events()
-        self.memory_store.clear()
-        for event in source_events:
-            self.apply_event(event)
-        return self._save_snapshot()
+        with self._transaction():
+            self.memory_store.clear()
+            for event in source_events:
+                self.apply_event(event)
+            return self._save_snapshot()
 
     def snapshot(self) -> RuntimeSnapshot:
         return build_snapshot(
@@ -191,6 +231,44 @@ class AgentMemoryRuntime:
         snapshot = self.snapshot()
         self.snapshot_store.save(snapshot.to_dict())
         return snapshot
+
+    def _transaction(self):
+        if self.transaction_manager is None:
+            return nullcontext()
+        return self.transaction_manager.transaction()
+
+    def _audit_llm_call(
+        self,
+        *,
+        agent_id: str,
+        context: AgentContext,
+        system_prompt: str,
+        user_prompt: str,
+        response: AgentResponse | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        snapshot = self.snapshot()
+        # build_llm_call_trace hashes prompt and response content before AuditStore sees them.
+        self.audit_store.append_trace(
+            build_llm_call_trace(
+                agent_id=agent_id,
+                provider=self.config.llm.provider,
+                model=response.model if response is not None else self.config.llm.model,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                selected_memory_ids=context.selected_memory_ids,
+                blocked_memory_count=context.blocked_memory_count,
+                rule_version=snapshot.rule_version,
+                config_hash=snapshot.config_hash,
+                last_event_sequence=snapshot.last_event_sequence,
+                state_hash=snapshot.state_hash,
+                response_content=response.content if response is not None else None,
+                response_id=response.response_id if response is not None else None,
+                input_tokens=response.input_tokens if response is not None else None,
+                output_tokens=response.output_tokens if response is not None else None,
+                error=error,
+            )
+        )
 
 
 def _query_from_dict(value: dict[str, object]) -> MemoryQuery:
