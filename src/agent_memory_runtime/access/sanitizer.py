@@ -35,8 +35,7 @@ _SENSITIVE_FIELD_MARKERS = {
     "ssn",
     "token",
 }
-# These fields are required to route and govern a derived record. Everything else is deny-by-default
-# once an event is classified as sensitive.
+# 这些字段用于派生和访问控制；事件被判定为敏感后，其余字段默认拒绝保留。
 _ROUTING_FIELD_NAMES = {
     "agent_id",
     "confidence",
@@ -76,7 +75,7 @@ def sanitize_event(event: Event) -> Event:
         {
             **event.to_dict(),
             "labels": labels,
-            # Persist and derive from the same minimized payload; do not keep a raw copy.
+            # 持久化和派生使用同一份最小化载荷，不能保留原始副本。
             "payload": _sanitize_payload(event.payload, sensitive_event=True),
         }
     )
@@ -114,7 +113,7 @@ def _sanitize_payload(
             _sanitize_payload(item, field_name=field_name, sensitive_event=sensitive_event)
             for item in value
         )
-    # A sensitive event may contain unclassified secret fields, including numeric PINs.
+    # 敏感事件可能含有未分类的机密字段，包括数值形式的 PIN。
     if sensitive_event and field_name not in _ROUTING_FIELD_NAMES:
         return "[redacted]"
     if isinstance(value, str):

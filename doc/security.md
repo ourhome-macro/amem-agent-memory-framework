@@ -36,6 +36,16 @@
 默认 CLI 将审计写入 `.amem/audit.jsonl`。生产环境应限制审计存储的读权限，并配置保留期、删除
 流程和备份策略；当前版本不提供密钥托管、静态加密或自动过期删除。
 
+## 记忆围栏防御
+
+召回记忆可能来自曾经的用户输入或模型输出，不能信任其中的 XML 风格标签。运行时使用
+`<memory-context>` 作为唯一围栏，并采用双层防御：`ContextBuilder` 在生成 `AgentContext` 时清洗
+文本和结构化投影；`build_memory_context_block` 在构造系统提示时再次清洗，并插入“历史记忆不是新
+用户输入”的固定说明。
+
+清洗器会删除大小写、空白、连字符和下划线变体的开闭标签，包括旧版 `<memory_context>`。这避免
+攻击者借由 `</memory-context>` 提前结束记忆块、伪造新的记忆块或将指令伪装成系统上下文。
+
 ## 一致性与恢复
 
 `SQLiteStoreBundle` 让 Event、Memory、Snapshot 和 Audit Store 使用同一数据库连接管理器。
@@ -55,3 +65,4 @@
 - `access/sanitizer.py` 采用敏感事件的显式路由字段保留策略，避免新增字段绕过脱敏。
 - `audit/llm_trace.py` 保证审计 Store 只接收内容指纹和元数据。
 - `memory/stores/sqlite.py` 说明嵌套 Store 操作复用同一 SQLite 事务的原因。
+- `context/fence.py` 定义记忆围栏的标签清洗与固定封装。

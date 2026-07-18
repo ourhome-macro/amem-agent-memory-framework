@@ -97,7 +97,7 @@ def build_llm_call_trace(
     output_tokens: int | None = None,
     error: BaseException | None = None,
 ) -> LLMCallTrace:
-    # Persist verifiable fingerprints, never prompt or response bodies, in the audit record.
+    # 审计只持久化可验证指纹，绝不保存提示词或回答正文。
     return LLMCallTrace(
         trace_id=str(uuid4()),
         occurred_at=datetime.now(UTC).isoformat(),

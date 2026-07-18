@@ -24,7 +24,7 @@ class SQLiteTransactionManager:
     @contextmanager
     def transaction(self) -> Iterator[None]:
         if self._active_connection() is not None:
-            # Runtime orchestration and individual Stores can nest without splitting the write unit.
+            # 运行时编排和单个 Store 可以嵌套，但不能拆分同一个写入单元。
             yield
             return
 
@@ -47,7 +47,7 @@ class SQLiteTransactionManager:
         if active is not None:
             yield active
             return
-        # Direct Store use remains safe by creating a short transaction around that one operation.
+        # Store 被直接使用时，也为该单次操作创建短事务。
         with self.transaction():
             connection = self._active_connection()
             if connection is None:
