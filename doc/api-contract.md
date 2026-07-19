@@ -59,6 +59,30 @@
 
 输出：`RuntimeSnapshot`。
 
+### `AgentMemoryRuntime.ingest_async(event)`
+
+输入：`Event` 或符合事件结构的字典。
+处理：
+
+- 先执行与 `ingest` 相同的敏感最小化。
+- 立即把最小化事件写入 `EventStore`。
+- 创建 `DerivationJob` 并写入 `derivation_queue`。
+- 保存当前 `RuntimeSnapshot`，但不派生 `MemoryRecord`。
+
+输出：`AsyncIngestResult`，包含已落库事件和队列任务。
+
+### `AgentMemoryRuntime.run_derivation_once()`
+
+输入：无。
+处理：从 `derivation_queue` 领取一个 pending job，按事件 ID 读取源事件并执行派生、审核、写入和快照保存。成功时任务标记为 `succeeded`；失败时增加 attempts，未超过重试次数则回到 `pending`，超过后进入 `dead_letter`。失败审计只记录错误类型和错误 hash。
+输出：处理后的 `DerivationJob`，若没有 pending job 则返回 `None`。
+
+### `AgentMemoryRuntime.approve_review_item(review_id, reviewer_id, reason=None)`
+
+输入：审核项 ID、审核人 ID 和可选原因。
+处理：读取 pending 审核项，把其中的 `MemoryCandidate` 按正常 `WriteGuard` 和 `LifecycleReducer` 写入 `MemoryStore`，随后把审核项标记为 approved 并写入 `human_review` 审计。
+输出：批准写入的 `MemoryRecord`；审核项不存在、已处理或源事件不存在时返回 `None`。
+
 ### `AgentMemoryRuntime.respond(query, instruction=None)`
 
 输入：`MemoryQuery` 或符合查询结构的字典，以及可选的非机密应用指令。
@@ -111,9 +135,19 @@
 
 ## CLI 契约
 
-`amem` CLI 提供 `init`、`ingest`、`derive`、`retrieve`、`project`、`respond`、`audit`、`replay`、
-`eval` 以及三个演示命令。`respond` 支持 `--stream`、`--fast` 和 `--retrieval-timeout-ms`。`init`
-会创建 `audit.jsonl`，`audit` 输出已持久化的无原文审计记录。
+`amem` CLI 提供 `init`、`ingest`、`derive`、`retrieve`、`project`、`respond`、`queue`、`retention`、
+`audit`、`replay`、`eval` 以及三个演示命令。`respond` 支持 `--stream`、`--fast` 和
+`--retrieval-timeout-ms`。`init` 会创建 `audit.jsonl` 和 `derivation_queue.jsonl`，`audit` 输出已持久化的无原文审计记录。
+
+治理命令：
+
+```powershell
+amem ingest examples/data/customer_support_events.jsonl --async-derive
+amem queue
+amem queue run-once
+amem retention plan --archive-after-seq 30 --archive-below-salience 0.2
+amem retention apply --delete-sensitive-after-seq 10
+```
 
 `audit` 支持：
 

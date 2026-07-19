@@ -10,12 +10,15 @@ from time import perf_counter
 from agent_memory_runtime.access.sanitizer import sanitize_event
 from agent_memory_runtime.access.write_guard import WriteGuard
 from agent_memory_runtime.audit.access_trace import AccessTrace
+from agent_memory_runtime.audit.decision import AuditDecision
+from agent_memory_runtime.audit.envelope import AuditEnvelope
 from agent_memory_runtime.audit.hashing import secure_hash
 from agent_memory_runtime.audit.llm_trace import build_llm_call_trace
 from agent_memory_runtime.audit.pii_trace import PiiTrace
 from agent_memory_runtime.audit.snapshot import RuntimeSnapshot, build_snapshot
 from agent_memory_runtime.audit.stores import InMemoryAuditStore
 from agent_memory_runtime.audit.stores.base import AuditStore
+from agent_memory_runtime.audit.subject import AuditSubject
 from agent_memory_runtime.audit.trace import RuntimeTrace
 from agent_memory_runtime.config import RuntimeConfig
 from agent_memory_runtime.context import AgentContext, ContextBuilder, build_memory_context_block
@@ -23,6 +26,12 @@ from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryCandidate, MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery, RetrievalTrace
 from agent_memory_runtime.exceptions import LLMResponseError
+from agent_memory_runtime.governance.queue import (
+    DerivationJob,
+    DerivationQueueStore,
+    InMemoryDerivationQueueStore,
+)
+from agent_memory_runtime.governance.review import ReviewGuard
 from agent_memory_runtime.llm import (
     ChatClient,
     LLMResponse,
@@ -50,6 +59,12 @@ class IngestResult:
     event: Event
     candidates: tuple[MemoryCandidate, ...]
     records: tuple[MemoryRecord, ...]
+
+
+@dataclass(frozen=True)
+class AsyncIngestResult:
+    event: Event
+    job: DerivationJob
 
 
 @dataclass(frozen=True)
@@ -103,6 +118,8 @@ class AgentMemoryRuntime:
         write_guard: WriteGuard | None = None,
         llm_client: ChatClient | None = None,
         audit_store: AuditStore | None = None,
+        derivation_queue: DerivationQueueStore | None = None,
+        review_guard: ReviewGuard | None = None,
         transaction_manager: TransactionManager | None = None,
     ) -> None:
         self.config = config or RuntimeConfig()
@@ -116,6 +133,8 @@ class AgentMemoryRuntime:
         self.write_guard = write_guard or WriteGuard()
         self.llm_client = llm_client or OpenAICompatibleChatClient(self.config.llm)
         self.audit_store = audit_store or InMemoryAuditStore()
+        self.derivation_queue = derivation_queue or InMemoryDerivationQueueStore()
+        self.review_guard = review_guard
         self.transaction_manager = transaction_manager
         self.last_trace = RuntimeTrace()
         self._fast_executor = ThreadPoolExecutor(max_workers=1)
@@ -136,6 +155,48 @@ class AgentMemoryRuntime:
                 records=tuple(records),
             )
 
+    def ingest_async(self, event: Event | dict[str, object]) -> AsyncIngestResult:
+        source_event = Event.from_dict(event) if isinstance(event, dict) else event
+        sanitized_event = sanitize_event(source_event)
+        with self._transaction():
+            stored_event = self.event_store.append(sanitized_event)
+            job = self.derivation_queue.enqueue(DerivationJob.new(stored_event.event_id))
+            snapshot = self._save_snapshot()
+            self._audit_pii_event(source_event, snapshot=snapshot)
+            return AsyncIngestResult(event=stored_event, job=job)
+
+    def run_derivation_once(self) -> DerivationJob | None:
+        job = self.derivation_queue.claim_next()
+        if job is None:
+            return None
+        event = self._event_by_id(job.event_id)
+        try:
+            if event is None:
+                raise RuntimeError(f"source event {job.event_id} was not found")
+            with self._transaction():
+                records = self.apply_event(event)
+                snapshot = self._save_snapshot()
+            completed = job.succeed()
+            self.derivation_queue.update(completed)
+            self._audit_governance_job(
+                completed,
+                snapshot=snapshot,
+                decision=AuditDecision.ALLOW.value,
+                outcome="succeeded",
+                memory_ids=tuple(record.memory_id for record in records),
+            )
+            return completed
+        except Exception as error:
+            failed = job.fail(error)
+            self.derivation_queue.update(failed)
+            self._audit_governance_job(
+                failed,
+                snapshot=self.snapshot(),
+                decision=AuditDecision.BLOCK.value,
+                outcome=failed.status,
+            )
+            return failed
+
     def apply_event(self, event: Event) -> list[MemoryRecord]:
         candidates = self.derivation_engine.derive(event)
         records: list[MemoryRecord] = []
@@ -143,16 +204,56 @@ class AgentMemoryRuntime:
         if event.event_id not in event_ids:
             event_ids.add(event.event_id)
         for candidate in candidates:
-            current = self.memory_store.get(candidate.memory_id)
-            self.write_guard.validate(
-                candidate,
-                source_event_exists=all(item in event_ids for item in candidate.source_event_ids),
-                current=current,
-            )
-            record = self.lifecycle.reduce(current, candidate, event)
-            self.memory_store.upsert(record)
+            if self.review_guard is not None:
+                review_item = self.review_guard.route_if_required(candidate)
+                if review_item is not None:
+                    self._audit_review_item(
+                        candidate,
+                        review_id=review_item.review_id,
+                        risk_score=review_item.risk.score,
+                        risk_reasons=review_item.risk.reasons,
+                        decision=AuditDecision.REVIEW.value,
+                        outcome="queued",
+                        snapshot=self.snapshot(),
+                    )
+                    continue
+            record = self._apply_candidate(candidate, event, event_ids=event_ids)
             records.append(record)
         return records
+
+    def approve_review_item(
+        self,
+        review_id: str,
+        *,
+        reviewer_id: str,
+        reason: str | None = None,
+    ) -> MemoryRecord | None:
+        if self.review_guard is None:
+            return None
+        item = self.review_guard.review_queue.get(review_id)
+        if item is None or item.status != "pending":
+            return None
+        event = self._event_by_id(item.candidate.source_event_ids[0])
+        if event is None:
+            return None
+        event_ids = {source.event_id for source in self.event_store.list_events()}
+        with self._transaction():
+            record = self._apply_candidate(item.candidate, event, event_ids=event_ids)
+            approved = item.approve(reviewer_id=reviewer_id, reason=reason)
+            self.review_guard.review_queue.update(approved)
+            snapshot = self._save_snapshot()
+        self._audit_review_item(
+            item.candidate,
+            review_id=review_id,
+            risk_score=item.risk.score,
+            risk_reasons=item.risk.reasons,
+            decision=AuditDecision.ALLOW.value,
+            outcome="approved",
+            snapshot=snapshot,
+            reviewer_id=reviewer_id,
+            memory_id=record.memory_id,
+        )
+        return record
 
     def retrieve(
         self,
@@ -433,6 +534,107 @@ class AgentMemoryRuntime:
         snapshot = self.snapshot()
         self.snapshot_store.save(snapshot.to_dict())
         return snapshot
+
+    def _apply_candidate(
+        self,
+        candidate: MemoryCandidate,
+        event: Event,
+        *,
+        event_ids: set[str],
+    ) -> MemoryRecord:
+        current = self.memory_store.get(candidate.memory_id)
+        self.write_guard.validate(
+            candidate,
+            source_event_exists=all(item in event_ids for item in candidate.source_event_ids),
+            current=current,
+        )
+        record = self.lifecycle.reduce(current, candidate, event)
+        self.memory_store.upsert(record)
+        return record
+
+    def _event_by_id(self, event_id: str) -> Event | None:
+        for event in self.event_store.list_events():
+            if event.event_id == event_id:
+                return event
+        return None
+
+    def _audit_governance_job(
+        self,
+        job: DerivationJob,
+        *,
+        snapshot: RuntimeSnapshot,
+        decision: str,
+        outcome: str,
+        memory_ids: tuple[str, ...] = (),
+    ) -> None:
+        self.audit_store.append_envelope(
+            AuditEnvelope(
+                audit_type="governance_job",
+                actor_id="runtime",
+                action="derive_pending",
+                outcome=outcome,
+                decision=decision,
+                subject=AuditSubject(subject_type="event", subject_id=job.event_id),
+                rule_version=snapshot.rule_version,
+                config_hash=snapshot.config_hash,
+                last_event_sequence=snapshot.last_event_sequence,
+                state_hash=snapshot.state_hash,
+                payload={
+                    "job_id": job.job_id,
+                    "job_status": job.status,
+                    "event_id": job.event_id,
+                    "attempts": job.attempts,
+                    "max_attempts": job.max_attempts,
+                    "error_type": job.error_type,
+                    "error_hash": job.error_hash,
+                    "memory_ids": list(memory_ids),
+                },
+            )
+        )
+
+    def _audit_review_item(
+        self,
+        candidate: MemoryCandidate,
+        *,
+        review_id: str,
+        risk_score: float,
+        risk_reasons: tuple[str, ...],
+        decision: str,
+        outcome: str,
+        snapshot: RuntimeSnapshot,
+        reviewer_id: str | None = None,
+        memory_id: str | None = None,
+    ) -> None:
+        self.audit_store.append_envelope(
+            AuditEnvelope(
+                audit_type="human_review",
+                actor_id=reviewer_id or "governance",
+                action="review_memory_candidate",
+                outcome=outcome,
+                decision=decision,
+                subject=AuditSubject(
+                    subject_type="memory_candidate",
+                    subject_id=candidate.memory_id,
+                    content_hash=secure_hash(candidate.content),
+                ),
+                rule_version=snapshot.rule_version,
+                config_hash=snapshot.config_hash,
+                last_event_sequence=snapshot.last_event_sequence,
+                state_hash=snapshot.state_hash,
+                payload={
+                    "review_id": review_id,
+                    "candidate_id": candidate.memory_id,
+                    "memory_id": memory_id,
+                    "memory_type": candidate.memory_type,
+                    "scope": candidate.scope,
+                    "layer": candidate.layer,
+                    "labels": list(candidate.labels),
+                    "risk_score": risk_score,
+                    "risk_reasons": list(risk_reasons),
+                    "source_event_ids": list(candidate.source_event_ids),
+                },
+            )
+        )
 
     def _project_context(
         self,

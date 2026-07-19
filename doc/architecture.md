@@ -111,3 +111,33 @@ EventStore.list_events
 
 审计 Store 已迁入 `audit/stores/`，旧的 `memory/stores` 导入路径保留兼容。SQLite 审计写入
 `audit_envelopes` 表，并兼容读取旧的 `llm_call_traces` 表。
+
+## 记忆治理链路
+
+治理模块位于 `src/agent_memory_runtime/governance/`，由四个子域组成：
+
+- `queue/`：`DerivationJob`、队列 Store 和队列消费入口。
+- `retention/`：归档、删除计划和执行器。
+- `review/`：候选记忆风险评分、审核队列和批准入口。
+- `pii/`：敏感值令牌化和可替换 Vault 接口。
+
+异步写入链路为：
+
+```text
+Event
+ -> SensitiveDataSanitizer
+ -> EventStore.append
+ -> DerivationQueue.enqueue
+
+DerivationJob
+ -> EventStore.get/list
+ -> DerivationEngine.derive
+ -> optional ReviewGuard
+ -> WriteGuard.validate
+ -> LifecycleReducer.reduce
+ -> MemoryStore.upsert
+ -> RuntimeSnapshot
+ -> AuditEnvelope(governance_job)
+```
+
+`ingest_async` 不会写入 `MemoryRecord`，因此当前用户请求不被完整治理链路阻塞。当前消息仍应由上层应用直接放入本轮 LLM prompt；长期记忆由队列 worker 后台生成。同步 `ingest` 保持原语义，适合测试、批处理和需要强一致写入的场景。

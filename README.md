@@ -46,6 +46,11 @@ pip install -e .[dev]
 ```powershell
 amem init
 amem ingest examples/data/customer_support_events.jsonl
+amem ingest examples/data/customer_support_events.jsonl --async-derive
+amem queue
+amem queue run-once
+amem retention plan
+amem retention apply
 amem derive
 amem retrieve --agent support_agent --query "refund status"
 amem project --agent support_agent --query "refund status"
@@ -149,11 +154,18 @@ src/agent_memory_runtime/
     stores/
   access/
   context/
-    audit/
+  audit/
+  governance/
   llm/
   evals/
   cli/
 ```
+
+## 记忆治理
+
+治理模块已经提供异步派生队列、保留策略、人工审核和 PII Vault。同步写入仍是默认路径；需要优化用户请求首字延迟时，使用 `ingest --async-derive` 或 Python 的 `runtime.ingest_async(event)` 先落 Event 并创建队列任务，再由 `runtime.run_derivation_once()` 或 `amem queue run-once` 后台派生记忆。
+
+Retention 可按事件序列年龄归档低价值 working memory，或删除过期 sensitive memory。Human Review 会把高风险 `MemoryCandidate` 先放进审核队列，批准后才进入 `MemoryStore`。PII Vault 负责把可逆敏感值换成 `${PII_...}` 令牌；runtime 的 `sanitize_event` 仍会作为兜底，阻止原文敏感载荷进入事件、记忆和审计。
 
 ## 设计来源
 

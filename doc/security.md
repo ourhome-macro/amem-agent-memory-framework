@@ -76,3 +76,11 @@
 - `audit/llm_trace.py` 保证审计 Store 只接收内容指纹和元数据。
 - `memory/stores/sqlite.py` 说明嵌套 Store 操作复用同一 SQLite 事务的原因。
 - `context/fence.py` 定义记忆围栏的标签清洗与固定封装。
+
+## 治理安全补充
+
+异步派生不会绕过写入前最小化。`ingest_async` 先把最小化后的事件写入 `EventStore`，队列 worker 之后只基于这份事件派生记忆。失败任务只在审计里记录 `error_type` 和 `error_hash`，不记录异常消息正文。
+
+Human Review 发生在 `MemoryCandidate` 写入 `MemoryStore` 之前。审核队列拿到的候选记忆已经继承 `sanitize_event` 的结果；如果源事件带 `sensitive` 标签，候选内容和非路由字段会先被替换为 `[redacted]`，审核系统不会成为绕过脱敏的侧门。
+
+PII Vault 用于应用接入层主动把可逆敏感值替换为 `${PII_...}` 令牌。当前 `SimpleEncryptedPiiVault` 只适合本地测试和演示；生产环境需要接入独立密钥管理、访问审计和保留/销毁策略。无论是否使用 Vault，runtime 的 `sanitize_event` 都仍然是强制兜底边界。

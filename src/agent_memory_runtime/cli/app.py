@@ -20,6 +20,12 @@ from agent_memory_runtime.config import (
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.evals import evaluate_contains
+from agent_memory_runtime.governance.queue import JsonlDerivationQueueStore
+from agent_memory_runtime.governance.retention import (
+    RetentionExecutor,
+    RetentionPlanner,
+    RetentionPolicy,
+)
 from agent_memory_runtime.memory.stores import (
     JsonlAuditStore,
     JsonlEventStore,
@@ -64,21 +70,31 @@ def init(path: Annotated[Path, PATH_OPTION] = DEFAULT_DATA_DIR) -> None:
     (path / "memories.jsonl").touch(exist_ok=True)
     (path / "snapshots.jsonl").touch(exist_ok=True)
     (path / "audit.jsonl").touch(exist_ok=True)
+    (path / "derivation_queue.jsonl").touch(exist_ok=True)
     console.print(f"initialized {path}")
 
 
 @app.command()
 def ingest(
     source: Path,
+    async_derive: Annotated[
+        bool,
+        typer.Option("--async-derive", help="Only persist events and enqueue derivation jobs."),
+    ] = False,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
     runtime = _runtime(data_dir)
     count = 0
     for event in _load_events(source):
-        runtime.ingest(event)
+        if async_derive:
+            runtime.ingest_async(event)
+        else:
+            runtime.ingest(event)
         count += 1
     _print_snapshot(runtime)
     console.print(f"ingested_events={count}")
+    if async_derive:
+        console.print(f"pending_derivation_jobs={runtime.derivation_queue.pending_count()}")
 
 
 @app.command()
@@ -193,6 +209,122 @@ def show_audit(
     )
 
 
+queue_app = typer.Typer(help="Derivation queue debugger.", invoke_without_command=True)
+app.add_typer(queue_app, name="queue")
+
+
+@queue_app.callback(invoke_without_command=True)
+def queue_status(
+    ctx: typer.Context,
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    if ctx.invoked_subcommand is not None:
+        return
+    runtime = _runtime(data_dir)
+    _print_trace(
+        {
+            "pending_derivation_jobs": runtime.derivation_queue.pending_count(),
+            "jobs": [job.to_dict() for job in runtime.derivation_queue.list_jobs()],
+        }
+    )
+
+
+@queue_app.command("run-once")
+def queue_run_once(data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR) -> None:
+    runtime = _runtime(data_dir)
+    job = runtime.run_derivation_once()
+    _print_trace(
+        {
+            "job": None if job is None else job.to_dict(),
+            "pending_derivation_jobs": runtime.derivation_queue.pending_count(),
+            "snapshot": runtime.snapshot().to_dict(),
+        }
+    )
+
+
+retention_app = typer.Typer(help="Retention policy debugger.")
+app.add_typer(retention_app, name="retention")
+
+
+def _retention_policy(
+    archive_after: int,
+    archive_below_salience: float | None,
+    delete_sensitive_after: int | None,
+) -> RetentionPolicy:
+    return RetentionPolicy(
+        archive_working_after_sequences=archive_after,
+        archive_below_salience=archive_below_salience,
+        delete_sensitive_after_sequences=delete_sensitive_after,
+    )
+
+
+@retention_app.command("plan")
+def retention_plan(
+    archive_after: Annotated[int, typer.Option("--archive-after-seq")] = 30,
+    archive_below_salience: Annotated[
+        float | None,
+        typer.Option("--archive-below-salience"),
+    ] = None,
+    delete_sensitive_after: Annotated[
+        int | None,
+        typer.Option("--delete-sensitive-after-seq"),
+    ] = None,
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    runtime = _runtime(data_dir)
+    plan = RetentionPlanner(
+        _retention_policy(archive_after, archive_below_salience, delete_sensitive_after)
+    ).plan(
+        runtime.memory_store.list_records(),
+        current_sequence=runtime.snapshot().last_event_sequence,
+    )
+    _print_trace(
+        {
+            "current_sequence": plan.current_sequence,
+            "actions": [
+                {
+                    "memory_id": action.memory_id,
+                    "action": action.action,
+                    "reason": action.reason,
+                }
+                for action in plan.actions
+            ],
+        }
+    )
+
+
+@retention_app.command("apply")
+def retention_apply(
+    archive_after: Annotated[int, typer.Option("--archive-after-seq")] = 30,
+    archive_below_salience: Annotated[
+        float | None,
+        typer.Option("--archive-below-salience"),
+    ] = None,
+    delete_sensitive_after: Annotated[
+        int | None,
+        typer.Option("--delete-sensitive-after-seq"),
+    ] = None,
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    runtime = _runtime(data_dir)
+    snapshot = runtime.snapshot()
+    plan = RetentionPlanner(
+        _retention_policy(archive_after, archive_below_salience, delete_sensitive_after)
+    ).plan(runtime.memory_store.list_records(), current_sequence=snapshot.last_event_sequence)
+    report = RetentionExecutor(
+        memory_store=runtime.memory_store,
+        audit_store=runtime.audit_store,
+    ).apply(plan, snapshot=snapshot)
+    runtime.snapshot_store.save(runtime.snapshot().to_dict())
+    _print_trace(
+        {
+            "archived_memory_ids": list(report.archived_memory_ids),
+            "deleted_memory_ids": list(report.deleted_memory_ids),
+            "snapshot": runtime.snapshot().to_dict(),
+        }
+    )
+
+
 @app.command()
 def replay(data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR) -> None:
     runtime = _runtime(data_dir)
@@ -294,6 +426,7 @@ def _runtime(data_dir: Path, *, config: RuntimeConfig | None = None) -> AgentMem
         memory_store=JsonlMemoryStore(data_dir / "memories.jsonl"),
         snapshot_store=JsonlSnapshotStore(data_dir / "snapshots.jsonl"),
         audit_store=JsonlAuditStore(data_dir / "audit.jsonl"),
+        derivation_queue=JsonlDerivationQueueStore(data_dir / "derivation_queue.jsonl"),
     )
 
 

@@ -93,6 +93,54 @@ def test_cli_ingest_retrieve_project_and_replay(tmp_path) -> None:
     assert '"audit_type": "access"' in access_audit.output
 
 
+def test_cli_async_ingest_and_queue_run_once(tmp_path) -> None:
+    runner = CliRunner()
+    data_dir = tmp_path / ".amem"
+    events = tmp_path / "events.jsonl"
+    events.write_text(
+        json.dumps(
+            {
+                "event_id": "evt-async-1",
+                "kind": "message.created",
+                "actor_id": "customer",
+                "session_id": "cli-s1",
+                "labels": ["private"],
+                "tags": ["refund"],
+                "payload": {
+                    "agent_id": "support_agent",
+                    "subject_id": "order",
+                    "text": "Async refund status memory.",
+                    "salience": 0.8,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert runner.invoke(cli_app.app, ["init", "--path", str(data_dir)]).exit_code == 0
+    assert (data_dir / "derivation_queue.jsonl").exists()
+    ingest = runner.invoke(
+        cli_app.app,
+        ["ingest", str(events), "--async-derive", "--data-dir", str(data_dir)],
+    )
+
+    assert ingest.exit_code == 0
+    assert "pending_derivation_jobs=1" in ingest.output
+    assert json.loads((data_dir / "memories.jsonl").read_text(encoding="utf-8") or "[]") == []
+
+    status = runner.invoke(cli_app.app, ["queue", "--data-dir", str(data_dir)])
+    assert status.exit_code == 0
+    assert '"status": "pending"' in status.output
+
+    run_once = runner.invoke(cli_app.app, ["queue", "run-once", "--data-dir", str(data_dir)])
+    assert run_once.exit_code == 0
+    assert '"status": "succeeded"' in run_once.output
+    assert "episodic:cli-s1:evt-async-1" in (data_dir / "memories.jsonl").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_cli_respond_uses_injected_llm_client(monkeypatch, tmp_path) -> None:
     runtime = AgentMemoryRuntime(llm_client=_FakeChatClient())
     runtime.ingest(

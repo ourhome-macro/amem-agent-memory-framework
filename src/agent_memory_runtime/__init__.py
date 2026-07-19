@@ -4,12 +4,18 @@ from agent_memory_runtime.config import (
     RuntimeConfig,
     provider_presets,
 )
-from agent_memory_runtime.runtime import AgentMemoryRuntime, AgentResponse, AgentResponseStreamEvent
+from agent_memory_runtime.runtime import (
+    AgentMemoryRuntime,
+    AgentResponse,
+    AgentResponseStreamEvent,
+    AsyncIngestResult,
+)
 
 __all__ = [
     "AgentMemoryRuntime",
     "AgentResponse",
     "AgentResponseStreamEvent",
+    "AsyncIngestResult",
     "FastResponseConfig",
     "LLMConfig",
     "RuntimeConfig",
