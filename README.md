@@ -53,6 +53,7 @@ amem respond --agent support_agent --query "refund status"
 amem respond --agent support_agent --query "refund status" --stream --fast
 amem providers
 amem audit
+amem audit --type access
 amem replay
 amem eval examples/evals/retrieval_cases.yml
 amem demo customer-support
@@ -71,9 +72,10 @@ CLI 追踪输出包含已选记忆 ID、评分明细、被阻止的记忆数量�
 `EventStore` 前自动标注并最小化其载荷。除路由所需的结构化标识外，文本和未知字段会被替换为
 `[redacted]`；敏感记忆不得使用 `global` 作用域。读取链路仍会执行标签、可见范围和作用域校验。
 
-`respond` 的每次成功或失败调用都会写入 `LLMCallTrace`。审计仅保留提供商、模型、记忆 ID、
-用量、快照定位字段及请求/响应哈希，不保存提示词、查询、投影上下文、模型回答或异常消息。CLI
-默认将这些记录保存在 `.amem/audit.jsonl`，可使用 `amem audit` 查看。
+运行时将 PII 检测、访问控制和 LLM 调用写入统一 `AuditEnvelope`。审计仅保留类型、决策、记忆
+ID、阻止原因、用量、快照定位字段及请求/上下文/回答哈希，不保存提示词、查询、投影上下文、模型
+回答或异常消息。CLI 默认将这些记录保存在 `.amem/audit.jsonl`，可使用 `amem audit`、
+`amem audit --type pii`、`amem audit --type access` 或 `amem audit --type llm_call` 查看。
 
 生产部署使用 `SQLiteStoreBundle` 时，单次写入会将事件、派生记忆和运行时快照放入同一 SQLite
 事务；JSONL Store 适合本地演示和调试，不提供跨文件原子提交。

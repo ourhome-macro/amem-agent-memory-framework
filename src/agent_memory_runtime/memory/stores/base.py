@@ -3,9 +3,17 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from typing import Protocol
 
-from agent_memory_runtime.audit.llm_trace import LLMCallTrace
+from agent_memory_runtime.audit.stores.base import AuditStore
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
+
+__all__ = [
+    "AuditStore",
+    "EventStore",
+    "MemoryStore",
+    "SnapshotStore",
+    "TransactionManager",
+]
 
 
 class EventStore(Protocol):
@@ -41,17 +49,6 @@ class SnapshotStore(Protocol):
         ...
 
     def latest(self) -> dict[str, object] | None:
-        ...
-
-    def clear(self) -> None:
-        ...
-
-
-class AuditStore(Protocol):
-    def append_trace(self, trace: LLMCallTrace) -> None:
-        ...
-
-    def list_traces(self) -> list[LLMCallTrace]:
         ...
 
     def clear(self) -> None:

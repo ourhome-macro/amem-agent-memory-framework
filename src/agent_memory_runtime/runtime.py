@@ -9,8 +9,13 @@ from time import perf_counter
 
 from agent_memory_runtime.access.sanitizer import sanitize_event
 from agent_memory_runtime.access.write_guard import WriteGuard
+from agent_memory_runtime.audit.access_trace import AccessTrace
+from agent_memory_runtime.audit.hashing import secure_hash
 from agent_memory_runtime.audit.llm_trace import build_llm_call_trace
+from agent_memory_runtime.audit.pii_trace import PiiTrace
 from agent_memory_runtime.audit.snapshot import RuntimeSnapshot, build_snapshot
+from agent_memory_runtime.audit.stores import InMemoryAuditStore
+from agent_memory_runtime.audit.stores.base import AuditStore
 from agent_memory_runtime.audit.trace import RuntimeTrace
 from agent_memory_runtime.config import RuntimeConfig
 from agent_memory_runtime.context import AgentContext, ContextBuilder, build_memory_context_block
@@ -28,13 +33,11 @@ from agent_memory_runtime.memory.derivation import DerivationEngine
 from agent_memory_runtime.memory.lifecycle import LifecycleReducer
 from agent_memory_runtime.memory.retrieval import RetrievalPipeline
 from agent_memory_runtime.memory.stores import (
-    InMemoryAuditStore,
     InMemoryEventStore,
     InMemoryMemoryStore,
     InMemorySnapshotStore,
 )
 from agent_memory_runtime.memory.stores.base import (
-    AuditStore,
     EventStore,
     MemoryStore,
     SnapshotStore,
@@ -125,7 +128,8 @@ class AgentMemoryRuntime:
             # SQLiteStoreBundle 将事件、派生记忆和快照放进同一原子写入单元。
             stored_event = self.event_store.append(sanitized_event)
             records = self.apply_event(stored_event)
-            self._save_snapshot()
+            snapshot = self._save_snapshot()
+            self._audit_pii_event(source_event, snapshot=snapshot)
             return IngestResult(
                 event=stored_event,
                 candidates=tuple(self.derivation_engine.derive(stored_event)),
@@ -156,7 +160,7 @@ class AgentMemoryRuntime:
     ) -> tuple[list[MemoryRecord], RuntimeTrace]:
         memory_query = _query_from_dict(query) if isinstance(query, dict) else query
         selected, trace = self.retrieval.retrieve(self.memory_store.list_records(), memory_query)
-        self._set_last_trace(trace, context_source="retrieval")
+        self._set_last_trace(trace, action="retrieve_memory", context_source="retrieval")
         return selected, self.last_trace
 
     def project(self, query: MemoryQuery | dict[str, object]) -> AgentContext:
@@ -164,6 +168,7 @@ class AgentMemoryRuntime:
         context = self._project_context(memory_query, context_source="retrieval")
         self._set_last_trace(
             context.trace,
+            action="project_context",
             context_source="retrieval",
             selected_memory_ids=context.selected_memory_ids,
         )
@@ -176,6 +181,7 @@ class AgentMemoryRuntime:
         if timeout_seconds <= 0:
             self._set_last_trace(
                 fallback_context.trace,
+                action="project_fast",
                 context_source="snapshot",
                 retrieval_timed_out=True,
                 selected_memory_ids=fallback_context.selected_memory_ids,
@@ -193,6 +199,7 @@ class AgentMemoryRuntime:
             future.cancel()
             self._set_last_trace(
                 fallback_context.trace,
+                action="project_fast",
                 context_source="snapshot",
                 retrieval_timed_out=True,
                 selected_memory_ids=fallback_context.selected_memory_ids,
@@ -201,6 +208,7 @@ class AgentMemoryRuntime:
 
         self._set_last_trace(
             context.trace,
+            action="project_fast",
             context_source="fast_retrieval",
             selected_memory_ids=context.selected_memory_ids,
         )
@@ -392,10 +400,12 @@ class AgentMemoryRuntime:
         )
         self._set_last_trace(
             context.trace,
+            action="respond_stream",
             context_source=response.context_source,
             retrieval_timed_out=bool(context.metadata.get("retrieval_timed_out", False)),
             first_token_ms=first_token_ms,
             selected_memory_ids=context.selected_memory_ids,
+            audit_access=False,
         )
         yield AgentResponseStreamEvent(
             type="completed",
@@ -462,14 +472,17 @@ class AgentMemoryRuntime:
         self,
         trace: RetrievalTrace,
         *,
+        action: str,
         context_source: str,
         retrieval_timed_out: bool = False,
         first_token_ms: int | None = None,
         selected_memory_ids: tuple[str, ...] | None = None,
+        audit_access: bool = True,
     ) -> None:
         snapshot = self.snapshot()
+        selected_ids = selected_memory_ids or trace.selected_memory_ids
         self.last_trace = RuntimeTrace(
-            selected_memory_ids=selected_memory_ids or trace.selected_memory_ids,
+            selected_memory_ids=selected_ids,
             blocked_memory_count=trace.blocked_count,
             score_breakdown={
                 result.memory_id: result.score.to_dict()
@@ -483,6 +496,54 @@ class AgentMemoryRuntime:
             context_source=context_source,
             retrieval_timed_out=retrieval_timed_out,
             first_token_ms=first_token_ms,
+        )
+        if audit_access:
+            self._audit_access_trace(
+                trace,
+                action=action,
+                selected_memory_ids=selected_ids,
+                context_source=context_source,
+                retrieval_timed_out=retrieval_timed_out,
+                snapshot=snapshot,
+            )
+
+    def _audit_access_trace(
+        self,
+        trace: RetrievalTrace,
+        *,
+        action: str,
+        selected_memory_ids: tuple[str, ...],
+        context_source: str,
+        retrieval_timed_out: bool,
+        snapshot: RuntimeSnapshot,
+    ) -> None:
+        access_trace = AccessTrace.from_retrieval(
+            trace,
+            action=action,
+            selected_memory_ids=selected_memory_ids,
+            context_source=context_source,
+            retrieval_timed_out=retrieval_timed_out,
+        )
+        self.audit_store.append_envelope(
+            access_trace.to_envelope(
+                rule_version=snapshot.rule_version,
+                config_hash=snapshot.config_hash,
+                last_event_sequence=snapshot.last_event_sequence,
+                state_hash=snapshot.state_hash,
+            )
+        )
+
+    def _audit_pii_event(self, event: Event, *, snapshot: RuntimeSnapshot) -> None:
+        pii_trace = PiiTrace.from_event(event)
+        if not pii_trace.has_findings:
+            return
+        self.audit_store.append_envelope(
+            pii_trace.to_envelope(
+                rule_version=snapshot.rule_version,
+                config_hash=snapshot.config_hash,
+                last_event_sequence=snapshot.last_event_sequence,
+                state_hash=snapshot.state_hash,
+            )
         )
 
     def _transaction(self):
@@ -502,6 +563,14 @@ class AgentMemoryRuntime:
         metadata: dict[str, object] | None = None,
     ) -> None:
         snapshot = self.snapshot()
+        audit_metadata = {
+            "system_prompt_hash": secure_hash(system_prompt),
+            "memory_context_hash": secure_hash(context.projected_context),
+            "user_query_hash": secure_hash(user_prompt),
+            "selected_memory_ids": list(context.selected_memory_ids),
+            "context_source": context.metadata.get("context_source", "retrieval"),
+            **dict(metadata or {}),
+        }
         # 审计写入前会将提示词和回答转换为哈希，AuditStore 不会接触原文。
         self.audit_store.append_trace(
             build_llm_call_trace(
@@ -521,7 +590,7 @@ class AgentMemoryRuntime:
                 input_tokens=response.input_tokens if response is not None else None,
                 output_tokens=response.output_tokens if response is not None else None,
                 error=error,
-                metadata=metadata,
+                metadata=audit_metadata,
             )
         )
 

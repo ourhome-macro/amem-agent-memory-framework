@@ -48,8 +48,9 @@ class RetrievalPipeline:
             score = score_record(record, planned, self.config)
             if score.total > 0:
                 scored.append(RetrievalResult(memory_id=record.memory_id, score=score))
+        ranked_results = rerank(scored)
         selected_results = apply_candidate_budget(
-            [item for item in rerank(scored) if not item.blocked],
+            [item for item in ranked_results if not item.blocked],
             planned.limit or self.config.max_retrieval_results,
         )
         selected = [record_by_id[item.memory_id] for item in selected_results]
@@ -58,7 +59,6 @@ class RetrievalPipeline:
             candidate_count=len(filtered),
             blocked_count=blocked_count,
             selected_memory_ids=tuple(item.memory_id for item in selected_results),
-            results=tuple(selected_results),
+            results=tuple(ranked_results),
         )
         return selected, trace
-

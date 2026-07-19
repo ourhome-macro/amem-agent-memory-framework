@@ -43,6 +43,7 @@ MemoryQuery
  -> AccessChecker
  -> scoring/rerank/budget
  -> ContextBuilder
+ -> AuditStore.append_envelope
  -> OpenAICompatibleChatClient（可选）
  -> AuditStore.append_trace
  -> Agent response
@@ -56,8 +57,9 @@ MemoryQuery
 Z.AI/GLM 和 Kimi 预设，并允许传入自定义兼容端点。它仅接收已投影的上下文，不持有 Store，也不具备记忆
 写入能力。要把模型输出转化为长期记忆，应用必须创建新的 `Event` 并重新进入写入链路。
 
-模型调用成功和失败都会生成 `LLMCallTrace`。审计记录保存调用来源、模型、选中记忆 ID、用量和
-回放定位信息；请求、上下文、回答和异常消息只参与哈希计算，不能从审计存储中读取原文。
+访问控制会生成 `access` 审计，记录已选记忆、阻止原因和上下文来源。模型调用成功和失败都会生成
+`LLMCallTrace`，并包装为 `llm_call` 类型 `AuditEnvelope`。审计记录保存调用来源、模型、选中记忆
+ID、用量和回放定位信息；请求、上下文、回答和异常消息只参与哈希计算，不能从审计存储中读取原文。
 
 ## 首字快路径
 
@@ -100,9 +102,12 @@ EventStore.list_events
 - `EventStore`：只保存原始事件。
 - `MemoryStore`：保存正式派生出的 `MemoryRecord` 对象。
 - `SnapshotStore`：保存运行时快照和回放检查点。
-- `AuditStore`：保存不含提示词和回答原文的 `LLMCallTrace`。
+- `AuditStore`：保存不含提示词、查询、记忆正文和回答原文的 `AuditEnvelope`。
 
 框架提供内存、JSONL 和 SQLite 实现。SQLite 可以作为三类存储的底层数据库，但运行时仍通过
 相互独立的接口调用它们。`SQLiteStoreBundle` 让 Event、Memory 与 Snapshot Store 共享一个
 事务管理器，因此一次 `ingest` 或 `replay` 要么全部提交，要么全部回滚。JSONL 各文件独立，
 不提供这一跨文件原子性保证。
+
+审计 Store 已迁入 `audit/stores/`，旧的 `memory/stores` 导入路径保留兼容。SQLite 审计写入
+`audit_envelopes` 表，并兼容读取旧的 `llm_call_traces` 表。

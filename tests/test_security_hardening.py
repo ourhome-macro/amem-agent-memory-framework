@@ -52,6 +52,16 @@ def test_sensitive_payload_is_redacted_before_event_and_memory_persistence() -> 
     assert card_number not in persisted
     assert cvv not in persisted
     assert "[redacted]" in persisted
+    pii_records = [
+        record for record in runtime.audit_store.list_envelopes() if record.audit_type == "pii"
+    ]
+    serialized_audit = json.dumps([record.to_dict() for record in pii_records], ensure_ascii=True)
+    assert len(pii_records) == 1
+    assert pii_records[0].decision == "redact"
+    assert pii_records[0].subject.subject_id == "evt-sensitive-1"
+    assert "card_number" in serialized_audit
+    assert card_number not in serialized_audit
+    assert cvv not in serialized_audit
 
 
 def test_detected_card_number_is_upgraded_to_sensitive_and_redacted() -> None:
@@ -200,6 +210,22 @@ def test_llm_audit_trace_records_provenance_without_prompt_or_response_content()
     assert "Customer asked about refund status." not in serialized
     assert trace.request_hash
     assert trace.response_hash
+    assert trace.metadata["system_prompt_hash"]
+    assert trace.metadata["memory_context_hash"]
+    assert trace.metadata["user_query_hash"]
+
+    llm_records = [
+        record for record in audit_store.list_envelopes() if record.audit_type == "llm_call"
+    ]
+    assert len(llm_records) == 1
+    assert llm_records[0].decision == "allow"
+    assert llm_records[0].subject.subject_type == "llm_call"
+    assert "What is the refund status?" not in json.dumps(
+        llm_records[0].to_dict(), ensure_ascii=True
+    )
+    assert "Refund gateway confirmation is pending." not in json.dumps(
+        llm_records[0].to_dict(), ensure_ascii=True
+    )
 
 
 def test_failed_llm_call_is_audited_without_raw_exception_message() -> None:
@@ -232,8 +258,11 @@ def test_jsonl_audit_store_persists_only_llm_trace_metadata(tmp_path) -> None:
 
     persisted = audit_path.read_text(encoding="utf-8")
     assert "response-1" in persisted
+    assert "audit_type" in persisted
     assert "What is the refund status?" not in persisted
     assert "Refund gateway confirmation is pending." not in persisted
+    assert JsonlAuditStore(audit_path).list_envelopes()[0].audit_type == "access"
+    assert JsonlAuditStore(audit_path).list_traces()[0].response_id == "response-1"
 
 
 def test_sqlite_ingest_rolls_back_event_memory_and_snapshot_when_validation_fails(tmp_path) -> None:

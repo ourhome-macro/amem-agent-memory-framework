@@ -85,6 +85,12 @@ def test_cli_ingest_retrieve_project_and_replay(tmp_path) -> None:
     audit = runner.invoke(cli_app.app, ["audit", "--data-dir", str(data_dir)])
     assert audit.exit_code == 0
     assert "llm_call_traces" in audit.output
+    access_audit = runner.invoke(
+        cli_app.app,
+        ["audit", "--type", "access", "--data-dir", str(data_dir)],
+    )
+    assert access_audit.exit_code == 0
+    assert '"audit_type": "access"' in access_audit.output
 
 
 def test_cli_respond_uses_injected_llm_client(monkeypatch, tmp_path) -> None:

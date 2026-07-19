@@ -27,11 +27,18 @@
 标签被移除，并拒绝任何使用 global 作用域的敏感记忆。shared 敏感记忆必须由调用方显式指定
 可见主体，并依然受标签授权约束。
 
-## 模型调用审计
+## 统一审计
 
-`LLMCallTrace` 记录模型提供商、模型、响应 ID、token 用量、选中记忆 ID、阻止数量和回放定位
-字段。它以 SHA-256 记录请求和回答的指纹，但不保存提示词、查询、上下文、回答、API 密钥或异常
-消息。失败调用也会记录错误类型，便于追踪而不泄露供应商返回的敏感内容。
+审计记录统一写为 `AuditEnvelope`，包含审计类型、操作者、动作、结果、决策、审查对象和回放定位
+字段。当前运行时会记录三类证据链：
+
+- `pii`：事件写入前检测到的银行卡号、凭据、口令、令牌等字段路径、类型和 hash。
+- `access`：检索/投影阶段已选记忆、阻止数量、阻止原因、上下文来源和超时降级状态。
+- `llm_call`：模型提供商、模型、响应 ID、token 用量、选中记忆 ID、阻止数量和 prompt 组成 hash。
+
+`LLMCallTrace` 仍用于模型调用细节，并被包装为 `AuditEnvelope`。它以 SHA-256 记录请求和回答的
+指纹，但不保存提示词、查询、上下文、回答、API 密钥或异常消息。失败调用也会记录错误类型，便于
+追踪而不泄露供应商返回的敏感内容。
 
 默认 CLI 将审计写入 `.amem/audit.jsonl`。生产环境应限制审计存储的读权限，并配置保留期、删除
 流程和备份策略；当前版本不提供密钥托管、静态加密或自动过期删除。
@@ -63,6 +70,9 @@
 
 - `runtime.py` 明确事件最小化、事务边界和失败调用审计的执行位置。
 - `access/sanitizer.py` 采用敏感事件的显式路由字段保留策略，避免新增字段绕过脱敏。
+- `audit/envelope.py` 统一审计记录外壳。
+- `audit/access_trace.py`、`audit/pii_trace.py` 和 `audit/moderation_trace.py` 定义审查证据模型。
+- `audit/stores/` 提供独立审计 Store，并兼容旧 memory store 导入路径。
 - `audit/llm_trace.py` 保证审计 Store 只接收内容指纹和元数据。
 - `memory/stores/sqlite.py` 说明嵌套 Store 操作复用同一 SQLite 事务的原因。
 - `context/fence.py` 定义记忆围栏的标签清洗与固定封装。

@@ -77,10 +77,11 @@ MemoryQuery
 
 ## 调用审计
 
-`respond` 在模型调用成功和失败时都会写入 `LLMCallTrace`。记录包含提供商、模型、模型响应 ID、
-输入输出 token、已选记忆 ID、被阻止数量，以及 `rule_version`、`config_hash`、
-`last_event_sequence` 和 `state_hash`。请求和回答只保留 SHA-256 哈希；系统提示、用户查询、
-投影上下文、回答正文、API 密钥和异常消息均不得写入审计记录。
+`respond` 在模型调用成功和失败时都会写入 `llm_call` 类型 `AuditEnvelope`，其中包装
+`LLMCallTrace`。记录包含提供商、模型、模型响应 ID、输入输出 token、已选记忆 ID、被阻止数量，
+以及 `rule_version`、`config_hash`、`last_event_sequence` 和 `state_hash`。请求和回答只保留
+SHA-256 哈希；metadata 额外记录 `system_prompt_hash`、`memory_context_hash` 和 `user_query_hash`。
+系统提示、用户查询、投影上下文、回答正文、API 密钥和异常消息均不得写入审计记录。
 
 `respond_stream` 使用同一组 OpenAI 兼容配置，只是将 Chat Completions 请求切换为 `stream=True`。
 运行时只把非空 content delta 作为 token 事件，并在首个 token 到达时记录 `first_token_ms`。流式完成后

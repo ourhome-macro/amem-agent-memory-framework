@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 
-from agent_memory_runtime.audit.llm_trace import LLMCallTrace
+from agent_memory_runtime.audit.stores.sqlite import SQLiteAuditStore
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 
@@ -189,24 +189,6 @@ class SQLiteSnapshotStore(SQLiteStore):
     def clear(self) -> None:
         with self._manager.connection() as connection:
             connection.execute("DELETE FROM snapshots")
-
-
-class SQLiteAuditStore(SQLiteStore):
-    def append_trace(self, trace: LLMCallTrace) -> None:
-        with self._manager.connection() as connection:
-            connection.execute(
-                "INSERT INTO llm_call_traces(trace_id, payload) VALUES (?, ?)",
-                (trace.trace_id, _serialize(trace.to_dict())),
-            )
-
-    def list_traces(self) -> list[LLMCallTrace]:
-        with self._manager.connection() as connection:
-            rows = connection.execute("SELECT payload FROM llm_call_traces ORDER BY id").fetchall()
-        return [LLMCallTrace.from_dict(json.loads(row[0])) for row in rows]
-
-    def clear(self) -> None:
-        with self._manager.connection() as connection:
-            connection.execute("DELETE FROM llm_call_traces")
 
 
 class SQLiteStoreBundle:

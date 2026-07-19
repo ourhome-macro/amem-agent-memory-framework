@@ -149,6 +149,14 @@ def test_access_blocks_other_agent_private_memory_from_context() -> None:
 
     assert context.selected_memory_ids == ()
     assert context.blocked_memory_count == 1
+    access_records = [
+        record for record in runtime.audit_store.list_envelopes() if record.audit_type == "access"
+    ]
+    assert access_records[-1].outcome == "blocked"
+    assert access_records[-1].payload["blocked_reasons"] == {
+        "episodic:s1:evt-1": "private_label_blocked"
+    }
+    assert "refund status" not in str(access_records[-1].to_dict())
 
 
 def test_sensitive_memory_does_not_enter_normal_context() -> None:

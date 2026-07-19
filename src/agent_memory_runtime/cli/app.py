@@ -9,6 +9,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from agent_memory_runtime.cli.audit import filter_audit_records
 from agent_memory_runtime.cli.banner import BANNER
 from agent_memory_runtime.config import (
     FastResponseConfig,
@@ -167,10 +168,29 @@ def list_providers() -> None:
 
 
 @app.command("audit")
-def show_audit(data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR) -> None:
+def show_audit(
+    audit_type: Annotated[str | None, typer.Option("--type")] = None,
+    outcome: Annotated[str | None, typer.Option("--outcome")] = None,
+    subject: Annotated[str | None, typer.Option("--subject")] = None,
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
     runtime = _runtime(data_dir)
+    try:
+        records = filter_audit_records(
+            runtime.audit_store.list_envelopes(),
+            audit_type=audit_type,
+            outcome=outcome,
+            subject=subject,
+        )
+    except ValueError as error:
+        raise typer.BadParameter(str(error)) from error
     traces = [trace.to_dict() for trace in runtime.audit_store.list_traces()]
-    _print_trace({"llm_call_traces": traces})
+    _print_trace(
+        {
+            "audit_records": [record.to_dict() for record in records],
+            "llm_call_traces": traces,
+        }
+    )
 
 
 @app.command()

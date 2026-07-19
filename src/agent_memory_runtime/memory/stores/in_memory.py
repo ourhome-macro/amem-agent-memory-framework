@@ -2,9 +2,16 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from agent_memory_runtime.audit.llm_trace import LLMCallTrace
+from agent_memory_runtime.audit.stores.in_memory import InMemoryAuditStore
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
+
+__all__ = [
+    "InMemoryAuditStore",
+    "InMemoryEventStore",
+    "InMemoryMemoryStore",
+    "InMemorySnapshotStore",
+]
 
 
 class InMemoryEventStore:
@@ -58,17 +65,3 @@ class InMemorySnapshotStore:
 
     def clear(self) -> None:
         self._snapshots.clear()
-
-
-class InMemoryAuditStore:
-    def __init__(self) -> None:
-        self._traces: list[LLMCallTrace] = []
-
-    def append_trace(self, trace: LLMCallTrace) -> None:
-        self._traces.append(trace)
-
-    def list_traces(self) -> list[LLMCallTrace]:
-        return list(self._traces)
-
-    def clear(self) -> None:
-        self._traces.clear()
