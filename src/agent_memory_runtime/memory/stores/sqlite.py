@@ -195,11 +195,14 @@ class SQLiteStoreBundle:
     """Creates stores that share one transaction manager and database file."""
 
     def __init__(self, path: str | Path) -> None:
+        from agent_memory_runtime.governance.queue import SQLiteDerivationQueueStore
+
         self._manager = SQLiteTransactionManager(path)
         self.event_store = SQLiteEventStore(self._manager)
         self.memory_store = SQLiteMemoryStore(self._manager)
         self.snapshot_store = SQLiteSnapshotStore(self._manager)
         self.audit_store = SQLiteAuditStore(self._manager)
+        self.derivation_queue = SQLiteDerivationQueueStore(self._manager)
 
     def transaction(self) -> AbstractContextManager[None]:
         return self._manager.transaction()

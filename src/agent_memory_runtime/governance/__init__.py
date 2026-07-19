@@ -3,8 +3,10 @@
 from agent_memory_runtime.governance.pii import PiiProtector, SimpleEncryptedPiiVault
 from agent_memory_runtime.governance.queue import (
     DerivationJob,
+    DerivationWorker,
     InMemoryDerivationQueueStore,
     JsonlDerivationQueueStore,
+    SQLiteDerivationQueueStore,
 )
 from agent_memory_runtime.governance.retention import (
     RetentionExecutor,
@@ -15,6 +17,7 @@ from agent_memory_runtime.governance.review import InMemoryReviewQueue, ReviewGu
 
 __all__ = [
     "DerivationJob",
+    "DerivationWorker",
     "InMemoryDerivationQueueStore",
     "InMemoryReviewQueue",
     "JsonlDerivationQueueStore",
@@ -23,5 +26,6 @@ __all__ = [
     "RetentionPlanner",
     "RetentionPolicy",
     "ReviewGuard",
+    "SQLiteDerivationQueueStore",
     "SimpleEncryptedPiiVault",
 ]

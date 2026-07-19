@@ -145,9 +145,40 @@
 amem ingest examples/data/customer_support_events.jsonl --async-derive
 amem queue
 amem queue run-once
+amem worker
 amem retention plan --archive-after-seq 30 --archive-below-salience 0.2
 amem retention apply --delete-sensitive-after-seq 10
+amem audit-dashboard --out .amem/audit.html
 ```
+
+## Tool Runtime API
+
+### `ToolRegistry.register(tool)`
+
+注册一个工具对象。工具对象需要提供 `name`、`description`、`side_effects` 和 `run(arguments)`。
+
+### `ToolExecutor.execute(request)`
+
+输入：`ToolRequest`，包含工具名、参数、调用者、Agent、会话和可选标签。
+
+处理：
+
+- 从 `ToolRegistry` 找到工具。
+- 用 `ToolPolicy` 校验 allowed/blocked tool 和 side effect 策略。
+- 执行工具并返回 `ToolResult`。
+- 写入 `tool_call` 审计。
+- 将结果规范化为 `Event(kind="tool.result")`。
+
+输出：`ToolExecution`，包含原始请求、工具结果和可进入记忆链路的事件。
+
+### 内置工具
+
+- `FunctionTool`：把 Python callable 包装为 function calling 工具。
+- `FileReadTool`：读取配置根目录内的 UTF-8 文本文件。
+- `FileWriteTool`：写入配置根目录内的 UTF-8 文本文件。
+- `WebSearchTool`：通过注入 provider 执行搜索。
+
+工具审计只保存参数 hash、输出 hash、字段名、错误类型和规范化事件 ID，不保存原始参数或输出正文。
 
 `audit` 支持：
 

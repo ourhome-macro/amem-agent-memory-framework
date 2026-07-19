@@ -9,6 +9,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from agent_memory_runtime.audit.dashboard import generate_audit_dashboard_html
 from agent_memory_runtime.cli.audit import filter_audit_records
 from agent_memory_runtime.cli.banner import BANNER
 from agent_memory_runtime.config import (
@@ -21,6 +22,7 @@ from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.evals import evaluate_contains
 from agent_memory_runtime.governance.queue import JsonlDerivationQueueStore
+from agent_memory_runtime.governance.queue.worker import DerivationWorker
 from agent_memory_runtime.governance.retention import (
     RetentionExecutor,
     RetentionPlanner,
@@ -209,6 +211,20 @@ def show_audit(
     )
 
 
+@app.command("audit-dashboard")
+def audit_dashboard(
+    out: Annotated[Path, typer.Option("--out", help="HTML dashboard output path.")],
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    runtime = _runtime(data_dir)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        generate_audit_dashboard_html(runtime.audit_store.list_envelopes()),
+        encoding="utf-8",
+    )
+    console.print(f"audit_dashboard={out}")
+
+
 queue_app = typer.Typer(help="Derivation queue debugger.", invoke_without_command=True)
 app.add_typer(queue_app, name="queue")
 
@@ -238,6 +254,39 @@ def queue_run_once(data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR
             "job": None if job is None else job.to_dict(),
             "pending_derivation_jobs": runtime.derivation_queue.pending_count(),
             "snapshot": runtime.snapshot().to_dict(),
+        }
+    )
+
+
+@app.command("worker")
+def worker(
+    forever: Annotated[
+        bool,
+        typer.Option("--forever", help="Keep polling until interrupted."),
+    ] = False,
+    max_jobs: Annotated[int | None, typer.Option("--max-jobs")] = None,
+    poll_interval_seconds: Annotated[
+        float,
+        typer.Option("--poll-interval-seconds"),
+    ] = 1.0,
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    runtime = _runtime(data_dir)
+    derivation_worker = DerivationWorker(
+        runtime,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+    if forever:
+        report = derivation_worker.run_forever(stop_after_jobs=max_jobs)
+    else:
+        report = derivation_worker.run_until_idle(max_jobs=max_jobs)
+    _print_trace(
+        {
+            "processed": report.processed,
+            "succeeded": report.succeeded,
+            "failed": report.failed,
+            "dead_lettered": report.dead_lettered,
+            "pending_derivation_jobs": runtime.derivation_queue.pending_count(),
         }
     )
 

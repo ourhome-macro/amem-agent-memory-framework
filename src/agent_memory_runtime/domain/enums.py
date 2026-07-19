@@ -6,6 +6,7 @@ from enum import StrEnum
 class EventKind(StrEnum):
     MESSAGE = "message.created"
     OBSERVATION = "observation.created"
+    TOOL_RESULT = "tool.result"
     PREFERENCE = "preference.updated"
     BELIEF = "belief.stated"
     RELATIONSHIP = "relationship.signal"
@@ -50,4 +51,3 @@ class MemoryStatus(StrEnum):
     ACTIVE = "active"
     ARCHIVED = "archived"
     CONFLICTED = "conflicted"
-

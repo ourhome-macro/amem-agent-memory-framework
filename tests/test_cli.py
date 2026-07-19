@@ -141,6 +141,52 @@ def test_cli_async_ingest_and_queue_run_once(tmp_path) -> None:
     )
 
 
+def test_cli_worker_and_audit_dashboard(tmp_path) -> None:
+    runner = CliRunner()
+    data_dir = tmp_path / ".amem"
+    dashboard = tmp_path / "audit.html"
+    events = tmp_path / "events.jsonl"
+    events.write_text(
+        json.dumps(
+            {
+                "event_id": "evt-worker-1",
+                "kind": "message.created",
+                "actor_id": "customer",
+                "session_id": "cli-s1",
+                "labels": ["private"],
+                "payload": {
+                    "agent_id": "support_agent",
+                    "subject_id": "order",
+                    "text": "Worker generated memory.",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    runner.invoke(cli_app.app, ["init", "--path", str(data_dir)])
+    runner.invoke(
+        cli_app.app,
+        ["ingest", str(events), "--async-derive", "--data-dir", str(data_dir)],
+    )
+    worker = runner.invoke(cli_app.app, ["worker", "--data-dir", str(data_dir)])
+
+    assert worker.exit_code == 0
+    assert '"processed": 1' in worker.output
+    assert '"succeeded": 1' in worker.output
+
+    dashboard_result = runner.invoke(
+        cli_app.app,
+        ["audit-dashboard", "--out", str(dashboard), "--data-dir", str(data_dir)],
+    )
+
+    assert dashboard_result.exit_code == 0
+    html = dashboard.read_text(encoding="utf-8")
+    assert "Agent Memory Runtime 审计面板" in html
+    assert "governance_job" in html
+
+
 def test_cli_respond_uses_injected_llm_client(monkeypatch, tmp_path) -> None:
     runtime = AgentMemoryRuntime(llm_client=_FakeChatClient())
     runtime.ingest(

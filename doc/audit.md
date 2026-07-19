@@ -100,6 +100,10 @@ context_source
 first_token_ms
 ```
 
+### `tool_call`
+
+工具调用审计由 `ToolExecutor` 写入，记录工具名、调用者、Agent、会话、参数键名、输入 hash、输出 hash、耗时、错误类型和规范化 `tool.result` 事件 ID。审计不保存工具参数原文、文件正文、搜索 query、工具输出正文或异常消息正文。
+
 ### `moderation`
 
 `ModerationTrace` 已定义为后续三层内容审核的审计骨架。当前版本不接真实敏感词、URL、分类器或
@@ -154,11 +158,13 @@ amem audit
 amem audit --type llm_call
 amem audit --type access
 amem audit --type pii
+amem audit --type tool_call
 amem audit --outcome blocked
 amem audit --subject event:evt-1
+amem audit-dashboard --out .amem/audit.html
 ```
 
-CLI 默认输出统一 `audit_records`，同时保留 `llm_call_traces` 字段以兼容旧调试脚本。
+CLI 默认输出统一 `audit_records`，同时保留 `llm_call_traces` 字段以兼容旧调试脚本。`audit-dashboard` 会生成静态 HTML 面板，用于查看审计类型、结果、决策分布和脱敏后的审计 JSON。
 
 ## 已知边界
 

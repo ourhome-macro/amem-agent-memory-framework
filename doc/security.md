@@ -84,3 +84,9 @@
 Human Review 发生在 `MemoryCandidate` 写入 `MemoryStore` 之前。审核队列拿到的候选记忆已经继承 `sanitize_event` 的结果；如果源事件带 `sensitive` 标签，候选内容和非路由字段会先被替换为 `[redacted]`，审核系统不会成为绕过脱敏的侧门。
 
 PII Vault 用于应用接入层主动把可逆敏感值替换为 `${PII_...}` 令牌。当前 `SimpleEncryptedPiiVault` 只适合本地测试和演示；生产环境需要接入独立密钥管理、访问审计和保留/销毁策略。无论是否使用 Vault，runtime 的 `sanitize_event` 都仍然是强制兜底边界。
+
+## 工具调用安全
+
+Tool Runtime 默认把工具调用视为外部副作用边界。`ToolPolicy` 先校验工具是否注册、是否允许、是否允许 side effect，再交给 `ToolExecutor` 执行。文件读写工具只能访问配置根目录内的路径；路径解析后如果逃逸根目录，会直接阻止调用。
+
+`tool_call` 审计只保存输入 hash、输出 hash、参数键名、错误类型和错误 hash，不保存搜索 query、文件正文、工具输出正文或异常消息正文。工具结果如果需要长期保留，必须先规范化为 `tool.result` 事件，再走事件最小化、派生和生命周期链路。

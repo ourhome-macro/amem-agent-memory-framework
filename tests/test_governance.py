@@ -3,13 +3,18 @@ from __future__ import annotations
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryCandidate, MemoryRecord
 from agent_memory_runtime.governance.pii import PiiProtector, SimpleEncryptedPiiVault
-from agent_memory_runtime.governance.queue import InMemoryDerivationQueueStore
+from agent_memory_runtime.governance.queue import (
+    InMemoryDerivationQueueStore,
+    SQLiteDerivationQueueStore,
+)
+from agent_memory_runtime.governance.queue.worker import DerivationWorker
 from agent_memory_runtime.governance.retention import (
     RetentionExecutor,
     RetentionPlanner,
     RetentionPolicy,
 )
 from agent_memory_runtime.governance.review import InMemoryReviewQueue, ReviewGuard
+from agent_memory_runtime.memory.stores.sqlite import SQLiteStoreBundle
 from agent_memory_runtime.runtime import AgentMemoryRuntime
 
 
@@ -69,6 +74,51 @@ def test_async_worker_retries_failed_job_without_losing_event_source() -> None:
     assert audit.decision == "block"
     assert audit.payload["error_type"] == "WriteGuardError"
     assert "Sensitive global preference" not in str(audit.to_dict())
+
+
+def test_sqlite_derivation_queue_recovers_pending_jobs_after_restart(tmp_path) -> None:
+    db_path = tmp_path / "runtime.sqlite"
+    bundle = SQLiteStoreBundle(db_path)
+    runtime = AgentMemoryRuntime(
+        event_store=bundle.event_store,
+        memory_store=bundle.memory_store,
+        snapshot_store=bundle.snapshot_store,
+        audit_store=bundle.audit_store,
+        derivation_queue=bundle.derivation_queue,
+        transaction_manager=bundle,
+    )
+    runtime.ingest_async(_message_event())
+
+    restarted = SQLiteStoreBundle(db_path)
+    restarted_runtime = AgentMemoryRuntime(
+        event_store=restarted.event_store,
+        memory_store=restarted.memory_store,
+        snapshot_store=restarted.snapshot_store,
+        audit_store=restarted.audit_store,
+        derivation_queue=SQLiteDerivationQueueStore(db_path),
+        transaction_manager=restarted,
+    )
+
+    assert restarted_runtime.derivation_queue.pending_count() == 1
+    job = restarted_runtime.run_derivation_once()
+
+    assert job is not None
+    assert job.status == "succeeded"
+    assert restarted_runtime.memory_store.get("episodic:s1:evt-1") is not None
+
+
+def test_derivation_worker_runs_until_queue_is_idle() -> None:
+    queue = InMemoryDerivationQueueStore()
+    runtime = AgentMemoryRuntime(derivation_queue=queue)
+    runtime.ingest_async(_message_event(event_id="evt-1"))
+    runtime.ingest_async(_message_event(event_id="evt-2"))
+
+    report = DerivationWorker(runtime).run_until_idle(max_jobs=10)
+
+    assert report.processed == 2
+    assert report.succeeded == 2
+    assert report.failed == 0
+    assert queue.pending_count() == 0
 
 
 def test_retention_policy_archives_old_working_memory_and_deletes_expired_sensitive() -> None:
@@ -180,9 +230,9 @@ def test_pii_vault_tokenizes_payload_and_keeps_raw_value_out_of_memory_shape() -
     assert vault.resolve(protected.tokens[0].token_id, owner_id="other_agent") is None
 
 
-def _message_event() -> Event:
+def _message_event(*, event_id: str = "evt-1") -> Event:
     return Event(
-        event_id="evt-1",
+        event_id=event_id,
         kind="message.created",
         actor_id="customer",
         session_id="s1",

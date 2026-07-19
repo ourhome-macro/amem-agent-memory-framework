@@ -29,6 +29,7 @@ Worker -> Derivation -> Lifecycle -> MemoryStore -> Snapshot
 
 - `InMemoryDerivationQueueStore`：单进程测试和嵌入式运行。
 - `JsonlDerivationQueueStore`：CLI 本地调试，可重启恢复 pending job。
+- `SQLiteDerivationQueueStore`：与 `SQLiteStoreBundle` 共用数据库，适合单机/内网 MVP。
 
 ## 保留策略
 
@@ -102,11 +103,13 @@ PII Vault 与现有 `sanitize_event` 是两条边界：
 amem ingest examples/data/customer_support_events.jsonl --async-derive
 amem queue
 amem queue run-once
+amem worker
 amem retention plan --archive-after-seq 30 --archive-below-salience 0.2
 amem retention apply --delete-sensitive-after-seq 10
 ```
 
 `amem ingest` 默认仍然同步派生。只有显式加 `--async-derive` 时，事件才会先进队列、后派生。
+`amem worker` 默认会处理到队列为空；使用 `--forever` 时会常驻轮询，适合作为开发期后台 worker。
 
 ## 审计类型
 

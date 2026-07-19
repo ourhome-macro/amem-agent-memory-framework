@@ -21,6 +21,7 @@ class EpisodicRule:
         if event.kind not in {
             EventKind.MESSAGE.value,
             EventKind.OBSERVATION.value,
+            EventKind.TOOL_RESULT.value,
             EventKind.NOTE.value,
         }:
             return []

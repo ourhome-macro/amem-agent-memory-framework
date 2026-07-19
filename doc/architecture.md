@@ -141,3 +141,21 @@ DerivationJob
 ```
 
 `ingest_async` 不会写入 `MemoryRecord`，因此当前用户请求不被完整治理链路阻塞。当前消息仍应由上层应用直接放入本轮 LLM prompt；长期记忆由队列 worker 后台生成。同步 `ingest` 保持原语义，适合测试、批处理和需要强一致写入的场景。
+
+## 工具调用链路
+
+外部动作统一经过 Tool Runtime：
+
+```text
+ToolRequest
+ -> ToolRegistry
+ -> ToolPolicy
+ -> ToolExecutor
+ -> ToolResult
+ -> AuditEnvelope(tool_call)
+ -> Event(tool.result)
+```
+
+`tool.result` 事件可以继续进入同步或异步记忆写入链路。工具层不允许直接写 `MemoryStore`，避免外部副作用绕过事件源、生命周期治理和审计回放。
+
+当前内置工具覆盖三类基础能力：function calling、根目录沙箱内的文件读写、provider 驱动的 web search。真实搜索服务、浏览器自动化、第三方 API 和 MCP 工具都应作为 Tool Runtime 的扩展工具接入。

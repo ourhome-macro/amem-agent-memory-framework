@@ -10,6 +10,7 @@ from agent_memory_runtime.runtime import (
     AgentResponseStreamEvent,
     AsyncIngestResult,
 )
+from agent_memory_runtime.tools import ToolExecutor, ToolRegistry, ToolRequest, ToolResult
 
 __all__ = [
     "AgentMemoryRuntime",
@@ -19,5 +20,9 @@ __all__ = [
     "FastResponseConfig",
     "LLMConfig",
     "RuntimeConfig",
+    "ToolExecutor",
+    "ToolRegistry",
+    "ToolRequest",
+    "ToolResult",
     "provider_presets",
 ]
