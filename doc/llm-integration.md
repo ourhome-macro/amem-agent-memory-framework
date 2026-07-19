@@ -23,6 +23,7 @@
 ```powershell
 amem providers
 amem respond --agent support_agent --query "退款进度怎么样" --provider qwen
+amem respond --agent support_agent --query "退款进度怎么样" --provider qwen --stream --fast
 amem respond --agent support_agent --query "退款进度怎么样" --provider custom --model example-chat --base-url https://models.example.com/v1 --api-key-env EXAMPLE_API_KEY
 ```
 
@@ -80,6 +81,11 @@ MemoryQuery
 输入输出 token、已选记忆 ID、被阻止数量，以及 `rule_version`、`config_hash`、
 `last_event_sequence` 和 `state_hash`。请求和回答只保留 SHA-256 哈希；系统提示、用户查询、
 投影上下文、回答正文、API 密钥和异常消息均不得写入审计记录。
+
+`respond_stream` 使用同一组 OpenAI 兼容配置，只是将 Chat Completions 请求切换为 `stream=True`。
+运行时只把非空 content delta 作为 token 事件，并在首个 token 到达时记录 `first_token_ms`。流式完成后
+聚合回答再写审计；审计 metadata 会标记 `stream`、`context_source` 和 `first_token_ms`，不会记录
+流式片段正文。
 
 CLI 使用 `.amem/audit.jsonl` 保存审计记录，可通过 `amem audit` 调试。生产环境应将
 `AuditStore` 连接到受访问控制的持久化介质，并为审计数据配置独立保留和清理策略。

@@ -3,9 +3,20 @@ from __future__ import annotations
 from agent_memory_runtime.domain.enums import MemoryLayer
 from agent_memory_runtime.domain.query import MemoryQuery
 
+_ARCHIVAL_QUERY_MARKERS = (
+    "previous",
+    "last time",
+    "remember",
+    "之前",
+    "以前",
+    "上次",
+    "还记得",
+    "曾经",
+)
+
 
 def normalize_query(query: MemoryQuery) -> MemoryQuery:
-    layers = query.layers or (MemoryLayer.CORE.value, MemoryLayer.WORKING.value)
+    layers = query.layers or _default_layers(query.text)
     return MemoryQuery(
         agent_id=query.agent_id,
         text=query.text,
@@ -18,3 +29,13 @@ def normalize_query(query: MemoryQuery) -> MemoryQuery:
         limit=query.limit,
     )
 
+
+def _default_layers(text: str) -> tuple[str, ...]:
+    normalized = text.casefold()
+    if any(marker in normalized for marker in _ARCHIVAL_QUERY_MARKERS):
+        return (
+            MemoryLayer.CORE.value,
+            MemoryLayer.WORKING.value,
+            MemoryLayer.ARCHIVAL.value,
+        )
+    return (MemoryLayer.CORE.value, MemoryLayer.WORKING.value)

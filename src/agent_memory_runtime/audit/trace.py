@@ -12,6 +12,9 @@ class RuntimeTrace:
     config_hash: str = ""
     last_event_sequence: int = 0
     state_hash: str = ""
+    context_source: str = "retrieval"
+    retrieval_timed_out: bool = False
+    first_token_ms: int | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -22,5 +25,7 @@ class RuntimeTrace:
             "config_hash": self.config_hash,
             "last_event_sequence": self.last_event_sequence,
             "state_hash": self.state_hash,
+            "context_source": self.context_source,
+            "retrieval_timed_out": self.retrieval_timed_out,
+            "first_token_ms": self.first_token_ms,
         }
-

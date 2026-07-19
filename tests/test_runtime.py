@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
-from agent_memory_runtime.config import LLMConfig, RuntimeConfig, provider_presets
+from agent_memory_runtime.config import (
+    FastResponseConfig,
+    LLMConfig,
+    RuntimeConfig,
+    provider_presets,
+)
 from agent_memory_runtime.domain.event import Event
+from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.exceptions import WriteGuardError
-from agent_memory_runtime.llm import DeepSeekChatClient, LLMResponse, OpenAICompatibleChatClient
+from agent_memory_runtime.llm import (
+    DeepSeekChatClient,
+    LLMResponse,
+    LLMStreamEvent,
+    OpenAICompatibleChatClient,
+)
+from agent_memory_runtime.memory.stores import InMemoryMemoryStore
 from agent_memory_runtime.runtime import AgentMemoryRuntime
 
 
@@ -203,6 +217,50 @@ def test_context_budget_keeps_high_salience_memory() -> None:
     assert context.selected_memory_ids == ("episodic:s1:high",)
 
 
+def test_snapshot_tracks_hot_working_memory_ids_for_fast_path() -> None:
+    runtime = AgentMemoryRuntime(config=RuntimeConfig(fast_response=FastResponseConfig()))
+    runtime.ingest(
+        _message_event(event_id="low", salience=0.2, text="refund status low value note")
+    )
+    runtime.ingest(
+        _message_event(event_id="high", salience=0.95, text="refund status critical update")
+    )
+
+    snapshot = runtime.snapshot_store.latest()
+
+    assert snapshot is not None
+    assert snapshot["hot_memory_ids"][0] == "episodic:s1:high"
+
+
+def test_archival_memory_is_loaded_only_for_recall_queries() -> None:
+    runtime = AgentMemoryRuntime()
+    runtime.memory_store.upsert(
+        MemoryRecord(
+            memory_id="archival:s1:refund-history",
+            memory_type="episodic",
+            scope="private",
+            layer="archival",
+            session_id="s1",
+            subject_id="refund",
+            content="Previous refund discussion required gateway confirmation.",
+            source_event_ids=("evt-old",),
+            rule_id="test",
+            owner_id="support_agent",
+            salience=0.9,
+        )
+    )
+
+    ordinary = runtime.project(
+        MemoryQuery(agent_id="support_agent", text="refund status", session_id="s1")
+    )
+    recall = runtime.project(
+        MemoryQuery(agent_id="support_agent", text="上次 refund 怎么处理的", session_id="s1")
+    )
+
+    assert ordinary.selected_memory_ids == ()
+    assert recall.selected_memory_ids == ("archival:s1:refund-history",)
+
+
 def test_replay_detects_rule_or_config_change() -> None:
     runtime = AgentMemoryRuntime()
     runtime.ingest(_message_event())
@@ -260,6 +318,54 @@ def test_respond_uses_only_projected_context_and_does_not_write_memory() -> None
     assert client.user_prompts == ["What is the refund status?"]
 
 
+def test_respond_fast_falls_back_to_snapshot_when_full_retrieval_times_out() -> None:
+    client = _FakeChatClient()
+    memory_store = _SlowListMemoryStore()
+    runtime = AgentMemoryRuntime(
+        config=RuntimeConfig(
+            fast_response=FastResponseConfig(retrieval_timeout_ms=1),
+        ),
+        memory_store=memory_store,
+        llm_client=client,
+    )
+    runtime.ingest(_message_event())
+    memory_store.list_delay_seconds = 0.05
+
+    response = runtime.respond_fast(
+        MemoryQuery(agent_id="support_agent", text="refund status", session_id="s1")
+    )
+
+    assert response.context_source == "snapshot"
+    assert response.context.metadata["retrieval_timed_out"] is True
+    assert response.context.selected_memory_ids == ("episodic:s1:evt-1",)
+    assert runtime.last_trace.retrieval_timed_out is True
+    assert "episodic:s1:evt-1" in client.system_prompts[0]
+    assert client.user_prompts == ["refund status"]
+
+
+def test_respond_stream_yields_first_token_and_audits_latency_metadata() -> None:
+    client = _FakeStreamingChatClient()
+    runtime = AgentMemoryRuntime(llm_client=client)
+    runtime.ingest(_message_event())
+
+    events = list(
+        runtime.respond_stream(
+            MemoryQuery(agent_id="support_agent", text="refund status", session_id="s1")
+        )
+    )
+
+    completed = events[-1].response
+    assert [event.type for event in events] == ["started", "token", "token", "completed"]
+    assert "".join(event.delta for event in events if event.type == "token") == "streamed answer"
+    assert completed is not None
+    assert completed.content == "streamed answer"
+    assert completed.first_token_ms is not None
+    assert runtime.last_trace.first_token_ms == completed.first_token_ms
+    trace = runtime.audit_store.list_traces()[0]
+    assert trace.metadata["stream"] is True
+    assert trace.metadata["first_token_ms"] == completed.first_token_ms
+
+
 def test_recalled_memory_cannot_escape_the_fixed_context_fence() -> None:
     client = _FakeChatClient()
     runtime = AgentMemoryRuntime(llm_client=client)
@@ -308,6 +414,35 @@ def test_deepseek_client_uses_openai_compatible_chat_completions_shape() -> None
             "stream": False,
         }
     ]
+
+
+def test_openai_compatible_client_streams_chat_completion_deltas() -> None:
+    fake_client = _FakeOpenAIClient()
+    client = OpenAICompatibleChatClient(
+        LLMConfig(model="deepseek-v4-flash", temperature=0.1, max_tokens=128),
+        client=fake_client,
+    )
+
+    events = list(client.stream_complete(system_prompt="System prompt", user_prompt="User prompt"))
+
+    assert [event.delta for event in events if event.type == "token"] == [
+        "Compatible ",
+        "stream",
+    ]
+    assert events[-1].type == "completed"
+    assert events[-1].response_id == "chatcmpl-stream-test"
+    assert events[-1].input_tokens == 9
+    assert events[-1].output_tokens == 4
+    assert fake_client.chat.completions.calls[-1] == {
+        "model": "deepseek-v4-flash",
+        "messages": [
+            {"role": "system", "content": "System prompt"},
+            {"role": "user", "content": "User prompt"},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 128,
+        "stream": True,
+    }
 
 
 def test_generic_client_applies_provider_specific_request_body() -> None:
@@ -364,6 +499,32 @@ class _FakeChatClient:
         )
 
 
+class _FakeStreamingChatClient:
+    def stream_complete(self, *, system_prompt: str, user_prompt: str):
+        assert "<memory-context>" in system_prompt
+        assert user_prompt == "refund status"
+        yield LLMStreamEvent(type="token", delta="streamed ", model="test-stream-model")
+        yield LLMStreamEvent(type="token", delta="answer", model="test-stream-model")
+        yield LLMStreamEvent(
+            type="completed",
+            model="test-stream-model",
+            response_id="stream-response-1",
+            input_tokens=10,
+            output_tokens=2,
+        )
+
+
+class _SlowListMemoryStore(InMemoryMemoryStore):
+    def __init__(self) -> None:
+        super().__init__()
+        self.list_delay_seconds = 0.0
+
+    def list_records(self):
+        if self.list_delay_seconds > 0:
+            time.sleep(self.list_delay_seconds)
+        return super().list_records()
+
+
 class _FakeOpenAIClient:
     def __init__(self) -> None:
         self.chat = _FakeChat()
@@ -380,6 +541,8 @@ class _FakeCompletions:
 
     def create(self, **kwargs: object) -> _FakeCompletion:
         self.calls.append(kwargs)
+        if kwargs.get("stream") is True:
+            return _FakeStream()
         return _FakeCompletion()
 
 
@@ -401,3 +564,32 @@ class _FakeCompletion:
     model = "deepseek-v4-flash"
     id = "chatcmpl-test-1"
     usage = _FakeUsage()
+
+
+class _FakeStream:
+    def __iter__(self):
+        return iter(
+            [
+                _FakeStreamChunk("Compatible "),
+                _FakeStreamChunk("stream"),
+                _FakeStreamChunk("", usage=_FakeUsage()),
+            ]
+        )
+
+
+class _FakeStreamDelta:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class _FakeStreamChoice:
+    def __init__(self, content: str) -> None:
+        self.delta = _FakeStreamDelta(content)
+
+
+class _FakeStreamChunk:
+    def __init__(self, content: str, *, usage: _FakeUsage | None = None) -> None:
+        self.id = "chatcmpl-stream-test"
+        self.model = "deepseek-v4-flash"
+        self.choices = [_FakeStreamChoice(content)] if content else []
+        self.usage = usage

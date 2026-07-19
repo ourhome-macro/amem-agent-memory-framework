@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import nullcontext
 from dataclasses import dataclass
+from time import perf_counter
 
 from agent_memory_runtime.access.sanitizer import sanitize_event
 from agent_memory_runtime.access.write_guard import WriteGuard
@@ -12,8 +16,14 @@ from agent_memory_runtime.config import RuntimeConfig
 from agent_memory_runtime.context import AgentContext, ContextBuilder, build_memory_context_block
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryCandidate, MemoryRecord
-from agent_memory_runtime.domain.query import MemoryQuery
-from agent_memory_runtime.llm import ChatClient, LLMResponse, OpenAICompatibleChatClient
+from agent_memory_runtime.domain.query import MemoryQuery, RetrievalTrace
+from agent_memory_runtime.exceptions import LLMResponseError
+from agent_memory_runtime.llm import (
+    ChatClient,
+    LLMResponse,
+    LLMStreamEvent,
+    OpenAICompatibleChatClient,
+)
 from agent_memory_runtime.memory.derivation import DerivationEngine
 from agent_memory_runtime.memory.lifecycle import LifecycleReducer
 from agent_memory_runtime.memory.retrieval import RetrievalPipeline
@@ -48,6 +58,8 @@ class AgentResponse:
     response_id: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    first_token_ms: int | None = None
+    context_source: str = "retrieval"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -57,9 +69,20 @@ class AgentResponse:
             "response_id": self.response_id,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "first_token_ms": self.first_token_ms,
+            "context_source": self.context_source,
             "selected_memory_ids": list(self.context.selected_memory_ids),
             "blocked_memory_count": self.context.blocked_memory_count,
         }
+
+
+@dataclass(frozen=True)
+class AgentResponseStreamEvent:
+    type: str
+    delta: str = ""
+    response: AgentResponse | None = None
+    context: AgentContext | None = None
+    first_token_ms: int | None = None
 
 
 class AgentMemoryRuntime:
@@ -92,6 +115,7 @@ class AgentMemoryRuntime:
         self.audit_store = audit_store or InMemoryAuditStore()
         self.transaction_manager = transaction_manager
         self.last_trace = RuntimeTrace()
+        self._fast_executor = ThreadPoolExecutor(max_workers=1)
 
     def ingest(self, event: Event | dict[str, object]) -> IngestResult:
         source_event = Event.from_dict(event) if isinstance(event, dict) else event
@@ -132,45 +156,58 @@ class AgentMemoryRuntime:
     ) -> tuple[list[MemoryRecord], RuntimeTrace]:
         memory_query = _query_from_dict(query) if isinstance(query, dict) else query
         selected, trace = self.retrieval.retrieve(self.memory_store.list_records(), memory_query)
-        snapshot = self.snapshot()
-        self.last_trace = RuntimeTrace(
-            selected_memory_ids=trace.selected_memory_ids,
-            blocked_memory_count=trace.blocked_count,
-            score_breakdown={
-                result.memory_id: result.score.to_dict()
-                for result in trace.results
-                if not result.blocked
-            },
-            rule_version=snapshot.rule_version,
-            config_hash=snapshot.config_hash,
-            last_event_sequence=snapshot.last_event_sequence,
-            state_hash=snapshot.state_hash,
-        )
+        self._set_last_trace(trace, context_source="retrieval")
         return selected, self.last_trace
 
     def project(self, query: MemoryQuery | dict[str, object]) -> AgentContext:
         memory_query = _query_from_dict(query) if isinstance(query, dict) else query
-        selected, trace = self.retrieval.retrieve(self.memory_store.list_records(), memory_query)
-        context = self.context_builder.build(
-            agent_id=memory_query.agent_id,
-            records=selected,
-            trace=trace,
-        )
-        snapshot = self.snapshot()
-        self.last_trace = RuntimeTrace(
+        context = self._project_context(memory_query, context_source="retrieval")
+        self._set_last_trace(
+            context.trace,
+            context_source="retrieval",
             selected_memory_ids=context.selected_memory_ids,
-            blocked_memory_count=context.blocked_memory_count,
-            score_breakdown={
-                result.memory_id: result.score.to_dict()
-                for result in trace.results
-                if not result.blocked
-            },
-            rule_version=snapshot.rule_version,
-            config_hash=snapshot.config_hash,
-            last_event_sequence=snapshot.last_event_sequence,
-            state_hash=snapshot.state_hash,
         )
         return context
+
+    def project_fast(self, query: MemoryQuery | dict[str, object]) -> AgentContext:
+        memory_query = _query_from_dict(query) if isinstance(query, dict) else query
+        fallback_context = self._project_from_snapshot(memory_query)
+        timeout_seconds = max(0, self.config.fast_response.retrieval_timeout_ms) / 1000
+        if timeout_seconds <= 0:
+            self._set_last_trace(
+                fallback_context.trace,
+                context_source="snapshot",
+                retrieval_timed_out=True,
+                selected_memory_ids=fallback_context.selected_memory_ids,
+            )
+            return fallback_context
+
+        future = self._fast_executor.submit(
+            self._project_context,
+            memory_query,
+            context_source="fast_retrieval",
+        )
+        try:
+            context = future.result(timeout=timeout_seconds)
+        except FutureTimeoutError:
+            future.cancel()
+            self._set_last_trace(
+                fallback_context.trace,
+                context_source="snapshot",
+                retrieval_timed_out=True,
+                selected_memory_ids=fallback_context.selected_memory_ids,
+            )
+            return fallback_context
+
+        self._set_last_trace(
+            context.trace,
+            context_source="fast_retrieval",
+            selected_memory_ids=context.selected_memory_ids,
+        )
+        return context
+
+    def close(self) -> None:
+        self._fast_executor.shutdown(wait=False, cancel_futures=True)
 
     def respond(
         self,
@@ -211,6 +248,162 @@ class AgentMemoryRuntime:
         )
         return response
 
+    def respond_fast(
+        self,
+        query: MemoryQuery | dict[str, object],
+        *,
+        instruction: str | None = None,
+    ) -> AgentResponse:
+        memory_query = _query_from_dict(query) if isinstance(query, dict) else query
+        context = self.project_fast(memory_query)
+        system_prompt = _system_prompt(
+            agent_id=memory_query.agent_id,
+            projected_context=context.projected_context,
+            instruction=instruction,
+        )
+        try:
+            completion = self.llm_client.complete(
+                system_prompt=system_prompt,
+                user_prompt=memory_query.text,
+            )
+        except Exception as error:
+            self._audit_llm_call(
+                agent_id=memory_query.agent_id,
+                context=context,
+                system_prompt=system_prompt,
+                user_prompt=memory_query.text,
+                error=error,
+                metadata={"context_source": context.metadata.get("context_source", "snapshot")},
+            )
+            raise
+        response = _agent_response(memory_query.agent_id, context, completion)
+        self._audit_llm_call(
+            agent_id=memory_query.agent_id,
+            context=context,
+            system_prompt=system_prompt,
+            user_prompt=memory_query.text,
+            response=response,
+            metadata={"context_source": response.context_source},
+        )
+        return response
+
+    def respond_stream(
+        self,
+        query: MemoryQuery | dict[str, object],
+        *,
+        instruction: str | None = None,
+        fast_path: bool = True,
+    ) -> Iterator[AgentResponseStreamEvent]:
+        memory_query = _query_from_dict(query) if isinstance(query, dict) else query
+        started_at = perf_counter()
+        context = self.project_fast(memory_query) if fast_path else self.project(memory_query)
+        system_prompt = _system_prompt(
+            agent_id=memory_query.agent_id,
+            projected_context=context.projected_context,
+            instruction=instruction,
+        )
+        yield AgentResponseStreamEvent(type="started", context=context)
+
+        first_token_ms: int | None = None
+        content_parts: list[str] = []
+        model = self.config.llm.model
+        response_id: str | None = None
+        input_tokens: int | None = None
+        output_tokens: int | None = None
+        try:
+            stream_complete = getattr(self.llm_client, "stream_complete", None)
+            if callable(stream_complete):
+                for event in stream_complete(
+                    system_prompt=system_prompt,
+                    user_prompt=memory_query.text,
+                ):
+                    model, response_id, input_tokens, output_tokens = _merge_stream_metadata(
+                        event,
+                        model=model,
+                        response_id=response_id,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                    )
+                    if event.type != "token" or not event.delta:
+                        continue
+                    if first_token_ms is None:
+                        first_token_ms = _elapsed_ms(started_at)
+                    content_parts.append(event.delta)
+                    yield AgentResponseStreamEvent(
+                        type="token",
+                        delta=event.delta,
+                        first_token_ms=first_token_ms,
+                    )
+            else:
+                completion = self.llm_client.complete(
+                    system_prompt=system_prompt,
+                    user_prompt=memory_query.text,
+                )
+                first_token_ms = _elapsed_ms(started_at)
+                content_parts.append(completion.content)
+                model = completion.model
+                response_id = completion.response_id
+                input_tokens = completion.input_tokens
+                output_tokens = completion.output_tokens
+                yield AgentResponseStreamEvent(
+                    type="token",
+                    delta=completion.content,
+                    first_token_ms=first_token_ms,
+                )
+            if first_token_ms is None or not content_parts:
+                raise LLMResponseError("Streaming completion produced no assistant content.")
+        except Exception as error:
+            self._audit_llm_call(
+                agent_id=memory_query.agent_id,
+                context=context,
+                system_prompt=system_prompt,
+                user_prompt=memory_query.text,
+                error=error,
+                metadata={
+                    "stream": True,
+                    "context_source": context.metadata.get("context_source", "snapshot"),
+                    "first_token_ms": first_token_ms,
+                },
+            )
+            raise
+
+        response = AgentResponse(
+            agent_id=memory_query.agent_id,
+            content="".join(content_parts),
+            model=model,
+            context=context,
+            response_id=response_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            first_token_ms=first_token_ms,
+            context_source=str(context.metadata.get("context_source", "retrieval")),
+        )
+        self._audit_llm_call(
+            agent_id=memory_query.agent_id,
+            context=context,
+            system_prompt=system_prompt,
+            user_prompt=memory_query.text,
+            response=response,
+            metadata={
+                "stream": True,
+                "context_source": response.context_source,
+                "first_token_ms": first_token_ms,
+            },
+        )
+        self._set_last_trace(
+            context.trace,
+            context_source=response.context_source,
+            retrieval_timed_out=bool(context.metadata.get("retrieval_timed_out", False)),
+            first_token_ms=first_token_ms,
+            selected_memory_ids=context.selected_memory_ids,
+        )
+        yield AgentResponseStreamEvent(
+            type="completed",
+            response=response,
+            context=context,
+            first_token_ms=first_token_ms,
+        )
+
     def replay(self, events: list[Event] | None = None) -> RuntimeSnapshot:
         source_events = events if events is not None else self.event_store.list_events()
         with self._transaction():
@@ -231,6 +424,67 @@ class AgentMemoryRuntime:
         self.snapshot_store.save(snapshot.to_dict())
         return snapshot
 
+    def _project_context(
+        self,
+        query: MemoryQuery,
+        *,
+        context_source: str,
+        records: list[MemoryRecord] | None = None,
+    ) -> AgentContext:
+        selected, trace = self.retrieval.retrieve(
+            self.memory_store.list_records() if records is None else records,
+            query,
+        )
+        return self.context_builder.build(
+            agent_id=query.agent_id,
+            records=selected,
+            trace=trace,
+            metadata={"context_source": context_source, "retrieval_timed_out": False},
+        )
+
+    def _project_from_snapshot(self, query: MemoryQuery) -> AgentContext:
+        snapshot = self.snapshot_store.latest() or {}
+        hot_memory_ids = tuple(str(item) for item in snapshot.get("hot_memory_ids", ()))
+        records = [
+            record
+            for memory_id in hot_memory_ids
+            if (record := self.memory_store.get(memory_id)) is not None
+        ]
+        selected, trace = self.retrieval.retrieve(records, query)
+        return self.context_builder.build(
+            agent_id=query.agent_id,
+            records=selected,
+            trace=trace,
+            metadata={"context_source": "snapshot", "retrieval_timed_out": True},
+        )
+
+    def _set_last_trace(
+        self,
+        trace: RetrievalTrace,
+        *,
+        context_source: str,
+        retrieval_timed_out: bool = False,
+        first_token_ms: int | None = None,
+        selected_memory_ids: tuple[str, ...] | None = None,
+    ) -> None:
+        snapshot = self.snapshot()
+        self.last_trace = RuntimeTrace(
+            selected_memory_ids=selected_memory_ids or trace.selected_memory_ids,
+            blocked_memory_count=trace.blocked_count,
+            score_breakdown={
+                result.memory_id: result.score.to_dict()
+                for result in trace.results
+                if not result.blocked
+            },
+            rule_version=snapshot.rule_version,
+            config_hash=snapshot.config_hash,
+            last_event_sequence=snapshot.last_event_sequence,
+            state_hash=snapshot.state_hash,
+            context_source=context_source,
+            retrieval_timed_out=retrieval_timed_out,
+            first_token_ms=first_token_ms,
+        )
+
     def _transaction(self):
         if self.transaction_manager is None:
             return nullcontext()
@@ -245,6 +499,7 @@ class AgentMemoryRuntime:
         user_prompt: str,
         response: AgentResponse | None = None,
         error: Exception | None = None,
+        metadata: dict[str, object] | None = None,
     ) -> None:
         snapshot = self.snapshot()
         # 审计写入前会将提示词和回答转换为哈希，AuditStore 不会接触原文。
@@ -266,6 +521,7 @@ class AgentMemoryRuntime:
                 input_tokens=response.input_tokens if response is not None else None,
                 output_tokens=response.output_tokens if response is not None else None,
                 error=error,
+                metadata=metadata,
             )
         )
 
@@ -288,6 +544,26 @@ def _optional_str(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _merge_stream_metadata(
+    event: LLMStreamEvent,
+    *,
+    model: str,
+    response_id: str | None,
+    input_tokens: int | None,
+    output_tokens: int | None,
+) -> tuple[str, str | None, int | None, int | None]:
+    return (
+        event.model or model,
+        event.response_id or response_id,
+        event.input_tokens if event.input_tokens is not None else input_tokens,
+        event.output_tokens if event.output_tokens is not None else output_tokens,
+    )
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return max(0, int((perf_counter() - started_at) * 1000))
 
 
 def _system_prompt(
@@ -322,4 +598,5 @@ def _agent_response(
         response_id=completion.response_id,
         input_tokens=completion.input_tokens,
         output_tokens=completion.output_tokens,
+        context_source=str(context.metadata.get("context_source", "retrieval")),
     )

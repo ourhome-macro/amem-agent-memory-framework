@@ -96,6 +96,7 @@ def build_llm_call_trace(
     input_tokens: int | None = None,
     output_tokens: int | None = None,
     error: BaseException | None = None,
+    metadata: dict[str, object] | None = None,
 ) -> LLMCallTrace:
     # 审计只持久化可验证指纹，绝不保存提示词或回答正文。
     return LLMCallTrace(
@@ -117,6 +118,7 @@ def build_llm_call_trace(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         error_type=type(error).__name__ if error is not None else None,
+        metadata=dict(metadata or {}),
     )
 
 

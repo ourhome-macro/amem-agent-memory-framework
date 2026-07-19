@@ -1,38 +1,26 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from typing import Any
 
 from agent_memory_runtime.config import LLMConfig
 from agent_memory_runtime.exceptions import LLMConfigurationError, LLMRequestError, LLMResponseError
-from agent_memory_runtime.llm.models import LLMResponse
+from agent_memory_runtime.llm.models import LLMResponse, LLMStreamEvent
 
 
 class OpenAICompatibleChatClient:
-    """Non-streaming client for providers implementing OpenAI Chat Completions."""
+    """OpenAI Chat Completions client with non-streaming and streaming modes."""
 
     def __init__(self, config: LLMConfig, *, client: Any | None = None) -> None:
         self.config = config
         self._client = client
 
     def complete(self, *, system_prompt: str, user_prompt: str) -> LLMResponse:
-        request: dict[str, object] = {
-            "model": self.config.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "stream": False,
-        }
-        if self.config.temperature is not None:
-            request["temperature"] = self.config.temperature
-        if self.config.max_tokens > 0:
-            request["max_tokens"] = self.config.max_tokens
-        if self.config.extra_body:
-            request["extra_body"] = self.config.extra_body
-
         try:
-            response = self._get_client().chat.completions.create(**request)
+            response = self._get_client().chat.completions.create(
+                **self._request(system_prompt=system_prompt, user_prompt=user_prompt, stream=False)
+            )
         except (LLMConfigurationError, LLMResponseError):
             raise
         except Exception as error:
@@ -56,6 +44,74 @@ class OpenAICompatibleChatClient:
             input_tokens=_optional_int(getattr(usage, "prompt_tokens", None)),
             output_tokens=_optional_int(getattr(usage, "completion_tokens", None)),
         )
+
+    def stream_complete(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> Iterator[LLMStreamEvent]:
+        try:
+            chunks = self._get_client().chat.completions.create(
+                **self._request(system_prompt=system_prompt, user_prompt=user_prompt, stream=True)
+            )
+        except (LLMConfigurationError, LLMResponseError):
+            raise
+        except Exception as error:
+            raise LLMRequestError(
+                f"{self.config.provider} streaming request failed: {type(error).__name__}."
+            ) from error
+
+        model = self.config.model
+        response_id: str | None = None
+        input_tokens: int | None = None
+        output_tokens: int | None = None
+        emitted_content = False
+        for chunk in chunks:
+            response_id = _optional_str(getattr(chunk, "id", response_id))
+            model = str(getattr(chunk, "model", None) or model)
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                input_tokens = _optional_int(getattr(usage, "prompt_tokens", None))
+                output_tokens = _optional_int(getattr(usage, "completion_tokens", None))
+
+            for delta in _chunk_deltas(chunk):
+                emitted_content = True
+                yield LLMStreamEvent(
+                    type="token",
+                    delta=delta,
+                    model=model,
+                    response_id=response_id,
+                )
+
+        if not emitted_content:
+            raise LLMResponseError(
+                f"{self.config.provider} returned an empty streaming assistant message."
+            )
+        yield LLMStreamEvent(
+            type="completed",
+            model=model,
+            response_id=response_id,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+
+    def _request(self, *, system_prompt: str, user_prompt: str, stream: bool) -> dict[str, object]:
+        request: dict[str, object] = {
+            "model": self.config.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": stream,
+        }
+        if self.config.temperature is not None:
+            request["temperature"] = self.config.temperature
+        if self.config.max_tokens > 0:
+            request["max_tokens"] = self.config.max_tokens
+        if self.config.extra_body:
+            request["extra_body"] = self.config.extra_body
+        return request
 
     def _get_client(self) -> Any:
         if self._client is not None:
@@ -115,3 +171,13 @@ def _optional_int(value: object) -> int | None:
         return int(value)
     except (TypeError, ValueError) as error:
         raise LLMRequestError("Provider returned an invalid token usage value.") from error
+
+
+def _chunk_deltas(chunk: object) -> list[str]:
+    deltas: list[str] = []
+    for choice in getattr(chunk, "choices", ()) or ():
+        delta = getattr(choice, "delta", None)
+        content = getattr(delta, "content", None)
+        if isinstance(content, str) and content:
+            deltas.append(content)
+    return deltas

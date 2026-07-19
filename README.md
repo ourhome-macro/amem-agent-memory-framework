@@ -50,6 +50,7 @@ amem derive
 amem retrieve --agent support_agent --query "refund status"
 amem project --agent support_agent --query "refund status"
 amem respond --agent support_agent --query "refund status"
+amem respond --agent support_agent --query "refund status" --stream --fast
 amem providers
 amem audit
 amem replay
@@ -60,7 +61,8 @@ amem demo mock-interviewer
 ```
 
 CLI 追踪输出包含已选记忆 ID、评分明细、被阻止的记忆数量，以及
-`rule_version`、`config_hash`、`last_event_sequence` 和 `state_hash`。
+`rule_version`、`config_hash`、`last_event_sequence` 和 `state_hash`。流式和快路径响应还会输出
+`context_source`、`retrieval_timed_out` 和 `first_token_ms`。
 每次执行 `amem` 子命令都会先输出 AMEM 启动横幅和运行时定位说明。
 
 ## 数据安全与审计
@@ -97,6 +99,7 @@ MOONSHOT_API_KEY=你的_Kimi_API_密钥
 amem init
 amem ingest examples/data/customer_support_events.jsonl
 amem respond --agent support_agent --query "退款进度怎么样"
+amem respond --agent support_agent --query "退款进度怎么样" --stream --fast
 amem respond --agent support_agent --query "退款进度怎么样" --provider kimi
 amem respond --agent support_agent --query "退款进度怎么样" --provider custom --model example-chat --base-url https://models.example.com/v1 --api-key-env EXAMPLE_API_KEY
 ```

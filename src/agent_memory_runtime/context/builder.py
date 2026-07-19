@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from agent_memory_runtime.access.projection import project_record
 from agent_memory_runtime.config import RuntimeConfig
@@ -18,6 +18,7 @@ class AgentContext:
     projected_context: str
     memories: tuple[dict[str, object], ...]
     trace: RetrievalTrace
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 class ContextBuilder:
@@ -30,6 +31,7 @@ class ContextBuilder:
         agent_id: str,
         records: list[MemoryRecord],
         trace: RetrievalTrace,
+        metadata: dict[str, object] | None = None,
     ) -> AgentContext:
         selected = select_under_budget(records, token_budget=self.config.context_token_budget)
         # 结构化投影和文本投影都先移除伪造围栏，避免下游调用绕过第一层防护。
@@ -41,6 +43,7 @@ class ContextBuilder:
             projected_context=format_context(selected),
             memories=projected,
             trace=trace,
+            metadata=dict(metadata or {}),
         )
 
 

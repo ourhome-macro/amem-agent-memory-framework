@@ -10,7 +10,12 @@ from rich.console import Console
 from rich.table import Table
 
 from agent_memory_runtime.cli.banner import BANNER
-from agent_memory_runtime.config import LLMConfig, RuntimeConfig, provider_presets
+from agent_memory_runtime.config import (
+    FastResponseConfig,
+    LLMConfig,
+    RuntimeConfig,
+    provider_presets,
+)
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.evals import evaluate_contains
@@ -20,7 +25,7 @@ from agent_memory_runtime.memory.stores import (
     JsonlMemoryStore,
     JsonlSnapshotStore,
 )
-from agent_memory_runtime.runtime import AgentMemoryRuntime
+from agent_memory_runtime.runtime import AgentMemoryRuntime, AgentResponse
 
 app = typer.Typer(help="Agent Memory Runtime debugger.")
 console = Console(markup=False)
@@ -37,6 +42,12 @@ BASE_URL_OPTION = typer.Option("--base-url", help="Override the provider base UR
 API_KEY_ENV_OPTION = typer.Option(
     "--api-key-env",
     help="Environment variable that holds the API key.",
+)
+FAST_OPTION = typer.Option("--fast", help="Use snapshot-backed low-latency context.")
+STREAM_OPTION = typer.Option("--stream", help="Stream assistant tokens as they arrive.")
+RETRIEVAL_TIMEOUT_OPTION = typer.Option(
+    "--retrieval-timeout-ms",
+    help="Maximum full retrieval wait before snapshot fallback.",
 )
 
 
@@ -112,11 +123,15 @@ def respond(
     model: Annotated[str | None, MODEL_OPTION] = None,
     base_url: Annotated[str | None, BASE_URL_OPTION] = None,
     api_key_env: Annotated[str | None, API_KEY_ENV_OPTION] = None,
+    fast: Annotated[bool, FAST_OPTION] = False,
+    stream: Annotated[bool, STREAM_OPTION] = False,
+    retrieval_timeout_ms: Annotated[int, RETRIEVAL_TIMEOUT_OPTION] = 150,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
     runtime = _runtime(
         data_dir,
         config=RuntimeConfig(
+            fast_response=FastResponseConfig(retrieval_timeout_ms=retrieval_timeout_ms),
             llm=_llm_config(
                 provider=provider,
                 model=model,
@@ -125,11 +140,15 @@ def respond(
             )
         ),
     )
-    response = runtime.respond(
-        MemoryQuery(agent_id=agent, text=query, session_id=session),
-        instruction=instruction,
-    )
-    console.print(response.content)
+    memory_query = MemoryQuery(agent_id=agent, text=query, session_id=session)
+    if stream:
+        response = _stream_response(runtime, memory_query, instruction=instruction, fast=fast)
+    elif fast:
+        response = runtime.respond_fast(memory_query, instruction=instruction)
+        console.print(response.content)
+    else:
+        response = runtime.respond(memory_query, instruction=instruction)
+        console.print(response.content)
     _print_trace({**runtime.last_trace.to_dict(), **response.to_dict()})
 
 
@@ -225,6 +244,25 @@ def _run_demo(filename: str, agent: str, query: str) -> None:
     context = runtime.project(MemoryQuery(agent_id=agent, text=query))
     console.print(context.projected_context)
     _print_trace(runtime.last_trace.to_dict())
+
+
+def _stream_response(
+    runtime: AgentMemoryRuntime,
+    query: MemoryQuery,
+    *,
+    instruction: str | None,
+    fast: bool,
+) -> AgentResponse:
+    response: AgentResponse | None = None
+    for event in runtime.respond_stream(query, instruction=instruction, fast_path=fast):
+        if event.type == "token":
+            console.print(event.delta, end="")
+        elif event.type == "completed":
+            response = event.response
+    console.print()
+    if response is None:
+        raise RuntimeError("Streaming response did not complete.")
+    return response
 
 
 def _runtime(data_dir: Path, *, config: RuntimeConfig | None = None) -> AgentMemoryRuntime:

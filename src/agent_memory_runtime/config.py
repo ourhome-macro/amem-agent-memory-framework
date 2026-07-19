@@ -17,6 +17,12 @@ class RetrievalWeights:
 
 
 @dataclass(frozen=True)
+class FastResponseConfig:
+    retrieval_timeout_ms: int = 150
+    snapshot_hot_memory_limit: int = 8
+
+
+@dataclass(frozen=True)
 class ProviderPreset:
     provider: str
     base_url: str
@@ -140,6 +146,7 @@ class RuntimeConfig:
     context_token_budget: int = 900
     low_salience_archive_threshold: float = 0.12
     retrieval_weights: RetrievalWeights = field(default_factory=RetrievalWeights)
+    fast_response: FastResponseConfig = field(default_factory=FastResponseConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
 
     @property

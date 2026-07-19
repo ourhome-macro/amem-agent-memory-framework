@@ -59,6 +59,27 @@ Z.AI/GLM 和 Kimi 预设，并允许传入自定义兼容端点。它仅接收�
 模型调用成功和失败都会生成 `LLMCallTrace`。审计记录保存调用来源、模型、选中记忆 ID、用量和
 回放定位信息；请求、上下文、回答和异常消息只参与哈希计算，不能从审计存储中读取原文。
 
+## 首字快路径
+
+低延迟响应不改变默认 `project` 和 `respond` 语义。调用方显式使用 `project_fast`、`respond_fast`
+或 `respond_stream(fast_path=True)` 时，运行时先准备 Snapshot 热点记忆上下文，同时在独立线程中执行
+完整检索。完整检索在配置的毫秒预算内完成则使用完整上下文；超时则用 Snapshot 上下文继续调用模型。
+
+```text
+RuntimeSnapshot.hot_memory_ids
+ -> MemoryStore.get
+ -> RetrievalPipeline
+ -> AccessChecker
+ -> ContextBuilder
+ -> respond_stream
+```
+
+Snapshot 只保存热点记忆 ID，不保存记忆正文；按 ID 读取出的记录仍然经过检索和访问校验，因此
+private、sensitive、visible_to、上下文预算和记忆围栏不会被快路径绕过。
+
+默认查询只检索 core/working 层。查询出现“之前、上次、还记得”等回忆意图时，planner 才把
+archival 层纳入候选，避免普通问题为归档记忆付出额外首字延迟。
+
 ## 回放链路
 
 ```text
