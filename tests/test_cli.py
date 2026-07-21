@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
+from typing import Any
 
 from typer.testing import CliRunner
 
 import agent_memory_runtime.cli.app as cli_app
+import agent_memory_runtime.cli.chat as cli_chat
+from agent_memory_runtime.agent import AgentRunEvent
+from agent_memory_runtime.config import LLMConfig
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.llm import LLMResponse
+from agent_memory_runtime.memory.stores import SQLiteStoreBundle
 from agent_memory_runtime.runtime import AgentMemoryRuntime
 
 
@@ -247,6 +253,208 @@ def test_cli_lists_supported_openai_compatible_providers() -> None:
         assert provider in result.output
 
 
+def test_cli_chat_jsonl_mode_is_banner_free_and_machine_readable(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runtime = _FakeBusinessRuntime()
+    context = _fake_chat_context(runtime)
+    monkeypatch.setattr(cli_chat, "build_chat_context", lambda data_dir, config: context)
+
+    result = CliRunner().invoke(
+        cli_app.app,
+        [
+            "chat",
+            "--prompt",
+            "hello",
+            "--mode",
+            "jsonl",
+            "--no-remember",
+            "--session",
+            "session-jsonl",
+        ],
+    )
+
+    assert result.exit_code == 0
+    lines = [json.loads(line) for line in result.output.splitlines() if line.strip()]
+    assert [line["type"] for line in lines] == [
+        "model.output.delta",
+        "run.completed",
+    ]
+    assert "Agent Memory Runtime" not in result.output
+    assert runtime.requests[0].session_id == "session-jsonl"
+
+
+def test_cli_chat_interactive_commands_switch_session_and_show_status(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runtime = _FakeBusinessRuntime()
+    context = _fake_chat_context(runtime)
+    monkeypatch.setattr(cli_chat, "build_chat_context", lambda data_dir, config: context)
+
+    result = CliRunner().invoke(
+        cli_app.app,
+        [
+            "--no-banner",
+            "chat",
+            "--no-remember",
+            "--session",
+            "session-one",
+        ],
+        input="/status\n/new session-two\nhello\n/exit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "provider" in result.output
+    assert "session=session-two" in result.output
+    assert "done" in result.output
+    assert "[completed]" in result.output
+    assert runtime.requests[0].session_id == "session-two"
+
+
+def test_cli_chat_interactively_decides_child_tool_approval(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    runtime = _FakeApprovalRuntime()
+    context = _fake_chat_context(runtime)
+    monkeypatch.setattr(cli_chat, "build_chat_context", lambda data_dir, config: context)
+
+    result = CliRunner().invoke(
+        cli_app.app,
+        ["--no-banner", "chat", "--no-remember", "--session", "approval-session"],
+        input="save it\ny\n/exit\n",
+    )
+
+    assert result.exit_code == 0
+    assert "approval required" in result.output
+    assert "saved" in result.output
+    assert runtime.approvals == [("approval-1", True)]
+    assert runtime.resumed == ["run-approval"]
+
+
+def test_cli_chat_remembers_completed_turn_atomically(monkeypatch, tmp_path) -> None:
+    runtime = _FakeBusinessRuntime()
+    bundle = SQLiteStoreBundle(tmp_path / "chat.sqlite")
+    memory_runtime = AgentMemoryRuntime(
+        event_store=bundle.event_store,
+        memory_store=bundle.memory_store,
+        snapshot_store=bundle.snapshot_store,
+        audit_store=bundle.audit_store,
+        derivation_queue=bundle.derivation_queue,
+        transaction_manager=bundle,
+    )
+    context = SimpleNamespace(
+        config=LLMConfig.for_provider("deepseek", model="test-model"),
+        runtime=runtime,
+        bundle=bundle,
+        memory_runtime=memory_runtime,
+        reconfigure=lambda new_config: None,
+    )
+    monkeypatch.setattr(cli_chat, "build_chat_context", lambda data_dir, config: context)
+
+    result = CliRunner().invoke(
+        cli_app.app,
+        [
+            "--no-banner",
+            "chat",
+            "--prompt",
+            "remember this",
+            "--mode",
+            "text",
+            "--session",
+            "remember-session",
+        ],
+    )
+
+    assert result.exit_code == 0
+    events = bundle.event_store.list_events()
+    assert [event.actor_id for event in events] == ["user", "assistant"]
+    assert all("cli-chat" in event.tags for event in events)
+    assert events[1].caused_by_event_id == events[0].event_id
+
+
 class _FakeChatClient:
     def complete(self, *, system_prompt: str, user_prompt: str) -> LLMResponse:
         return LLMResponse(content="Gateway confirmation is pending.", model="test-model")
+
+
+class _FakeBusinessRuntime:
+    def __init__(self) -> None:
+        self.requests: list[Any] = []
+
+    async def run(self, request: Any) -> Any:
+        self.requests.append(request)
+        yield AgentRunEvent(
+            type="model.output.delta",
+            run_id="run-chat",
+            sequence=1,
+            tenant_id=request.tenant_id,
+            agent_id=request.agent_id,
+            session_id=request.session_id,
+            data={"delta": "done"},
+        )
+        yield AgentRunEvent(
+            type="run.completed",
+            run_id="run-chat",
+            sequence=2,
+            tenant_id=request.tenant_id,
+            agent_id=request.agent_id,
+            session_id=request.session_id,
+            data={"output": "done", "input_tokens": 3, "output_tokens": 1},
+        )
+
+
+class _FakeApprovalRuntime:
+    def __init__(self) -> None:
+        self.approvals: list[tuple[str, bool]] = []
+        self.resumed: list[str] = []
+
+    async def run(self, request: Any) -> Any:
+        yield AgentRunEvent(
+            type="approval.required",
+            run_id="run-approval",
+            sequence=1,
+            tenant_id=request.tenant_id,
+            agent_id=request.agent_id,
+            session_id=request.session_id,
+            data={
+                "approval_id": "approval-1",
+                "call_id": "call-1",
+                "tool_name": "record.write",
+            },
+        )
+
+    async def decide_approval(self, approval_id: str, **values: Any) -> None:
+        self.approvals.append((approval_id, bool(values["approved"])))
+
+    async def resume(self, run_id: str, **identity: Any) -> Any:
+        self.resumed.append(run_id)
+        yield AgentRunEvent(
+            type="model.output.delta",
+            run_id=run_id,
+            sequence=2,
+            tenant_id=str(identity["tenant_id"]),
+            agent_id="assistant",
+            session_id="approval-session",
+            data={"delta": "saved"},
+        )
+        yield AgentRunEvent(
+            type="run.completed",
+            run_id=run_id,
+            sequence=3,
+            tenant_id=str(identity["tenant_id"]),
+            agent_id="assistant",
+            session_id="approval-session",
+            data={"output": "saved", "input_tokens": 4, "output_tokens": 1},
+        )
+
+
+def _fake_chat_context(runtime: Any) -> Any:
+    config = LLMConfig.for_provider("deepseek", model="test-model")
+    return SimpleNamespace(
+        config=config,
+        runtime=runtime,
+        reconfigure=lambda new_config: None,
+    )

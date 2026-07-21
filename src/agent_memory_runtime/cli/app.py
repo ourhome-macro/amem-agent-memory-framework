@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Annotated, Any
+from uuid import uuid4
 
 import typer
 import yaml
@@ -12,6 +14,7 @@ from rich.table import Table
 from agent_memory_runtime.audit.dashboard import generate_audit_dashboard_html
 from agent_memory_runtime.cli.audit import filter_audit_records
 from agent_memory_runtime.cli.banner import BANNER
+from agent_memory_runtime.cli.chat import ChatMode, ChatSettings, run_chat
 from agent_memory_runtime.config import (
     FastResponseConfig,
     LLMConfig,
@@ -58,11 +61,19 @@ RETRIEVAL_TIMEOUT_OPTION = typer.Option(
     "--retrieval-timeout-ms",
     help="Maximum full retrieval wait before snapshot fallback.",
 )
+NO_BANNER_OPTION = typer.Option(
+    "--no-banner",
+    help="Suppress the human startup banner for machine-readable output.",
+)
 
 
 @app.callback()
-def print_startup_banner() -> None:
-    print(BANNER)
+def print_startup_banner(
+    ctx: typer.Context,
+    no_banner: Annotated[bool, NO_BANNER_OPTION] = False,
+) -> None:
+    if not no_banner and ctx.invoked_subcommand != "chat":
+        print(BANNER)
 
 
 @app.command()
@@ -169,6 +180,75 @@ def respond(
         response = runtime.respond(memory_query, instruction=instruction)
         console.print(response.content)
     _print_trace({**runtime.last_trace.to_dict(), **response.to_dict()})
+
+
+@app.command()
+def chat(
+    prompt: Annotated[
+        str | None,
+        typer.Option("--prompt", "-p", help="Run one turn instead of opening the shell."),
+    ] = None,
+    mode: Annotated[
+        ChatMode,
+        typer.Option("--mode", help="auto, interactive, text, or jsonl."),
+    ] = ChatMode.AUTO,
+    agent: Annotated[str, AGENT_OPTION] = "assistant",
+    session: Annotated[str | None, SESSION_OPTION] = None,
+    tenant: Annotated[str, typer.Option("--tenant")] = "default",
+    user: Annotated[str | None, typer.Option("--user")] = None,
+    instruction: Annotated[str | None, INSTRUCTION_OPTION] = None,
+    provider: Annotated[str, PROVIDER_OPTION] = "deepseek",
+    model: Annotated[str | None, MODEL_OPTION] = None,
+    base_url: Annotated[str | None, BASE_URL_OPTION] = None,
+    api_key_env: Annotated[str | None, API_KEY_ENV_OPTION] = None,
+    max_tokens: Annotated[int, typer.Option("--max-tokens", min=1)] = 4096,
+    timeout_seconds: Annotated[
+        float,
+        typer.Option("--timeout-seconds", min=0.1),
+    ] = 120.0,
+    remember: Annotated[
+        bool,
+        typer.Option(
+            "--remember/--no-remember",
+            help="Persist completed turns into the memory event stream.",
+        ),
+    ] = True,
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    try:
+        settings = ChatSettings(
+            agent_id=agent,
+            session_id=session or f"cli-{uuid4().hex[:12]}",
+            tenant_id=tenant,
+            user_id=user,
+            instruction=instruction,
+            remember=remember,
+        )
+        config = _llm_config(
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            api_key_env=api_key_env,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+        )
+        exit_code = asyncio.run(
+            run_chat(
+                settings=settings,
+                config=config,
+                data_dir=data_dir,
+                console=console,
+                mode=mode,
+                prompt=prompt,
+            )
+        )
+    except ValueError as error:
+        raise typer.BadParameter(str(error)) from error
+    except KeyboardInterrupt as error:
+        console.print("interrupted")
+        raise typer.Exit(code=130) from error
+    if exit_code:
+        raise typer.Exit(code=exit_code)
 
 
 @app.command("providers")
@@ -485,6 +565,8 @@ def _llm_config(
     model: str | None,
     base_url: str | None,
     api_key_env: str | None,
+    max_tokens: int = 512,
+    timeout_seconds: float = 60.0,
 ) -> LLMConfig:
     try:
         return LLMConfig.for_provider(
@@ -492,6 +574,8 @@ def _llm_config(
             model=model,
             base_url=base_url,
             api_key_env=api_key_env,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
         )
     except ValueError as error:
         raise typer.BadParameter(str(error)) from error

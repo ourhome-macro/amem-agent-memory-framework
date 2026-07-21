@@ -1,5 +1,47 @@
 # Agent Memory Runtime
 
+## v0.4：受控多 Agent 编排与交互式 CLI
+
+本版本在 `BusinessAgentRuntime` 之上增加可选的 `AgentOrchestrator`：使用静态注册表和有界 DAG 完成父子委派、依赖并行、审批暂停/恢复、取消传播、租约 fencing、全局预算结算与 SQLite 持久化。它不是允许 Agent 自由拉起 Agent 的开放式 swarm；图、白名单、深度、节点数、扇出和并发度都由宿主应用显式控制。
+
+```python
+from agent_memory_runtime import (
+    AgentDefinition,
+    AgentDefinitionRegistry,
+    AgentGraph,
+    AgentOrchestrator,
+    DelegatedTask,
+    OrchestrationRequest,
+)
+
+registry = AgentDefinitionRegistry()
+registry.register(AgentDefinition("research", research_runtime))
+registry.register(AgentDefinition("writer", writer_runtime))
+
+orchestrator = AgentOrchestrator(registry=registry)
+request = OrchestrationRequest(
+    graph=AgentGraph(
+        tasks=(
+            DelegatedTask("facts", "research", "收集事实"),
+            DelegatedTask("answer", "writer", "形成答复", depends_on=("facts",)),
+        ),
+        output_task_ids=("answer",),
+    ),
+    tenant_id="tenant-1",
+    request_id="request-1",
+)
+```
+
+CLI 新增了受 Pi 极简 harness 交互启发的 `chat` 命令，但保留本项目的持久状态、身份隔离和人工审批语义：
+
+```powershell
+amem chat --agent assistant --session demo
+amem chat -p "总结今天的事项" --mode text
+amem chat -p "总结今天的事项" --mode jsonl --no-remember
+```
+
+交互模式支持 `/status`、`/providers`、`/model`、`/provider`、`/session`、`/new`、`/history` 和 `/exit`。完整设计、事件协议、恢复语义、SQLite schema v4 与生产边界见 [`doc/controlled-orchestration-cli-v0.4.0.md`](doc/controlled-orchestration-cli-v0.4.0.md)。
+
 ## v0.3：通用业务 Agent 框架
 
 项目现在同时提供两个边界清晰的运行时：

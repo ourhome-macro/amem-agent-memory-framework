@@ -196,6 +196,44 @@ _MIGRATIONS = (
             """,
         ),
     ),
+    _Migration(
+        version=4,
+        name="controlled_agent_orchestrations",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS agent_orchestrations (
+                orchestration_id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                UNIQUE(tenant_id, request_id)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_agent_orchestrations_tenant_status
+            ON agent_orchestrations(tenant_id, status)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS agent_delegations (
+                orchestration_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY(orchestration_id, task_id),
+                FOREIGN KEY(orchestration_id)
+                    REFERENCES agent_orchestrations(orchestration_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_agent_delegations_run_status
+            ON agent_delegations(orchestration_id, status)
+            """,
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = _MIGRATIONS[-1].version

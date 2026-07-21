@@ -46,6 +46,39 @@ SQLite agent payload 可通过 `StateCodec` 编码；默认 `JsonStateCodec` 是
 KMS/信封加密 codec 或全盘加密。完整状态机和故障矩阵见
 [`business-agent-runtime-v0.3.0.md`](business-agent-runtime-v0.3.0.md)。
 
+## 受控多 Agent 编排
+
+### `AgentOrchestrator.run(request)`
+
+输入：包含有向无环 `AgentGraph`、tenant/user/session/request 身份的
+`OrchestrationRequest`。所有节点必须预先注册，并通过 `OrchestrationPolicy` 的 Agent 白名单、节点、
+扇出、深度、并发、Token 和超时校验。
+
+输出：`AsyncIterator[OrchestrationEvent]`。根节点可以并行执行；下游节点只在全部依赖完成后启动。
+父编排 ID 由 tenant + request_id 确定性生成，并发重复请求只会得到 busy、终态重放或同一执行流，
+不会创建第二个逻辑编排。
+
+### `AgentOrchestrator.resume(...)`
+
+恢复等待人工审批、对账或因可重试超时回到 pending 的编排。节点子请求 ID 固定，已完成子 Run
+直接重放，运行中的子 Run 返回 busy 并由调度器有界重试。
+
+### `AgentOrchestrator.decide_approval(...)` / `reconcile_tool_call(...)`
+
+人工决定必须同时匹配父 tenant/user、task_id 和节点 child_run_id。即使多个 Agent 共享同一个
+`AgentStateStore`，也不能使用一个节点的入口处理另一个 Run 的 approval/call。
+
+### `AgentOrchestrator.cancel(...)`
+
+先原子取消父编排，再传播 cooperative token、显式取消已知子 Run，并用乐观重试把未终止节点
+收敛到 cancelled。
+
+### `OrchestrationStateStore`
+
+持久化父 Run、节点记录、请求幂等键、乐观版本和 fenced lease。内建
+`InMemoryOrchestrationStore` 与 `SQLiteOrchestrationStore`；完整协议、预算和故障边界见
+[`controlled-orchestration-cli-v0.4.0.md`](controlled-orchestration-cli-v0.4.0.md)。
+
 ## Python 运行时
 
 ### `AgentMemoryRuntime.ingest(event)`

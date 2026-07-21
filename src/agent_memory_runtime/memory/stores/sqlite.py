@@ -15,6 +15,7 @@ from agent_memory_runtime.memory.stores.sqlite_manager import (
 )
 
 if TYPE_CHECKING:
+    from agent_memory_runtime.agent.orchestration.stores import OrchestrationStateStore
     from agent_memory_runtime.agent.stores import StateCodec
 
 
@@ -135,6 +136,9 @@ class SQLiteStoreBundle:
         *,
         agent_state_codec: StateCodec | None = None,
     ) -> None:
+        from agent_memory_runtime.agent.orchestration.stores import (
+            SQLiteOrchestrationStore,
+        )
         from agent_memory_runtime.agent.stores import SQLiteAgentStateStore
         from agent_memory_runtime.governance.queue import SQLiteDerivationQueueStore
 
@@ -145,6 +149,10 @@ class SQLiteStoreBundle:
         self.audit_store = SQLiteAuditStore(self._manager)
         self.derivation_queue = SQLiteDerivationQueueStore(self._manager)
         self.agent_state_store = SQLiteAgentStateStore(
+            self._manager,
+            codec=agent_state_codec,
+        )
+        self.orchestration_store: OrchestrationStateStore = SQLiteOrchestrationStore(
             self._manager,
             codec=agent_state_codec,
         )
