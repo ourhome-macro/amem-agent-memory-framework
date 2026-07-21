@@ -4,5 +4,36 @@ cases:
     session_id: support-001
     query: refund status
     expected_memory_ids:
-      - strategy:support-001:support_agent:refund_status
-
+      - v3:strategy:default:support_agent:support_agent:refund_status
+  - id: cross_session_response_style
+    agent: companion
+    tenant_id: eval-tenant
+    user_id: alice
+    session_id: current-session
+    session_policy: profile
+    query: 请按我的偏好回答，简洁一点
+    k: 5
+    expected_memory_ids:
+      - v3:belief:eval-tenant:alice:companion:response_style
+    forbidden_memory_ids:
+      - v3:belief:eval-tenant:bob:companion:response_style
+  - id: chinese_refund_progress
+    agent: companion
+    tenant_id: eval-tenant
+    user_id: alice
+    session_id: current-session
+    session_policy: profile
+    query: 退款进度怎么样
+    k: 3
+    expected_memory_ids:
+      - v2:episodic:eval-tenant:current-session:eval-refund
+  - id: archived_cross_session_recall
+    agent: companion
+    tenant_id: eval-tenant
+    user_id: alice
+    session_id: current-session
+    session_policy: profile
+    query: 还记得上次演唱会订票吗
+    k: 5
+    expected_memory_ids:
+      - v2:episodic:eval-tenant:old-session:eval-archive

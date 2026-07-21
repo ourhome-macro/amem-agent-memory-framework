@@ -38,6 +38,7 @@ Event
 
 ```text
 MemoryQuery
+ -> store candidate query（identity/layer/status/tag/lexical indexes）
  -> RetrievalPipeline
  -> hard filters
  -> AccessChecker
@@ -82,6 +83,16 @@ private、sensitive、visible_to、上下文预算和记忆围栏不会被快路
 默认查询只检索 core/working 层。查询出现“之前、上次、还记得”等回忆意图时，planner 才把
 archival 层纳入候选，避免普通问题为归档记忆付出额外首字延迟。
 
+跨会话不是一个隐式布尔开关。`exact` 保持指定 session 的旧语义；`profile` 只允许 Core 和显式
+启用的 Archival 跨 session，Working 始终会话隔离；`all` 仅用于显式历史/运维读取。无论选择哪种
+模式，tenant/user 边界都会在候选截断前过滤，Agent scope/label/visible_to 仍由 AccessChecker
+复核。SQLite schema v5 将常用过滤字段投影为列，并使用 `memory_terms`、`memory_tags` 做词项和标签
+索引，避免每次请求反序列化全量记忆。
+
+个性化注入是独立的可信投影，不会把召回自由文本提升为系统指令。只有 Core belief 的白名单 key
+及结构化 value 通过枚举/格式校验后，才会生成 `<personalization-profile>`；原始记忆正文继续位于
+不可信 memory fence 内。
+
 ## 回放链路
 
 ```text
@@ -95,6 +106,11 @@ EventStore.list_events
 回放快照包含 `rule_version`、`config_hash`、`last_event_sequence` 和 `state_hash`。
 规则或配置变化会导致状态哈希变化，因此可被检测。
 
+Retention 删除先写 `MemoryTombstone`，再移除派生投影。Tombstone 保存删除覆盖到的 event sequence；
+Replay 和读取链路都拒绝不高于该水位的候选，所以删除不会被旧事件回放或 JSONL 部分写入复活。
+SQLite 下计划、Tombstone、投影、审计和 Snapshot 刷新共享事务。Snapshot 保存后按配置裁剪，避免
+检查点无限增长。
+
 ## 存储接口
 
 存储接口被有意拆分为：
@@ -102,6 +118,7 @@ EventStore.list_events
 - `EventStore`：只保存原始事件。
 - `MemoryStore`：保存正式派生出的 `MemoryRecord` 对象。
 - `SnapshotStore`：保存运行时快照和回放检查点。
+- `TombstoneStore`：保存不可由旧事件越过的删除水位。
 - `AuditStore`：保存不含提示词、查询、记忆正文和回答原文的 `AuditEnvelope`。
 
 框架提供内存、JSONL 和 SQLite 实现。SQLite 可以作为三类存储的底层数据库，但运行时仍通过
@@ -159,3 +176,14 @@ ToolRequest
 `tool.result` 事件可以继续进入同步或异步记忆写入链路。工具层不允许直接写 `MemoryStore`，避免外部副作用绕过事件源、生命周期治理和审计回放。
 
 当前内置工具覆盖三类基础能力：function calling、根目录沙箱内的文件读写、provider 驱动的 web search。真实搜索服务、浏览器自动化、第三方 API 和 MCP 工具都应作为 Tool Runtime 的扩展工具接入。
+
+## Agent 上下文窗口
+
+业务 Agent 的模型调用预算不是事后统计。每一轮调用前，`TokenEstimator` 会计算完整消息、工具
+schema 与协议开销，并预留最大输出；可配置的单价进一步形成最坏成本上界。超过软阈值时按完整
+assistant/tool 消息组压缩旧历史，保留系统规则、原始任务、最近消息和未完成工具协议；压缩结果先
+写入 Checkpoint。超过模型窗口或 Run Token/成本硬限制时，请求在供应商调用前终止。
+
+结构化输出由 `OutputContract` 约束。Provider-native JSON Schema 只是优化，本地 Draft 2020-12
+校验始终执行。无效结果不会作为流式 delta 对外发送；有限修复失败后 Run 明确进入 failed，而不是
+把不满足契约的字符串伪装为业务对象。

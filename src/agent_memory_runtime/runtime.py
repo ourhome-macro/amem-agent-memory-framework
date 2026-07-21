@@ -48,17 +48,21 @@ from agent_memory_runtime.llm import (
 from agent_memory_runtime.memory.derivation import DerivationEngine
 from agent_memory_runtime.memory.lifecycle import LifecycleReducer
 from agent_memory_runtime.memory.retrieval import RetrievalPipeline
+from agent_memory_runtime.memory.retrieval.planner import normalize_query
 from agent_memory_runtime.memory.stores import (
     InMemoryEventStore,
     InMemoryMemoryStore,
     InMemorySnapshotStore,
+    InMemoryTombstoneStore,
 )
 from agent_memory_runtime.memory.stores.base import (
     EventStore,
     MemoryStore,
     SnapshotStore,
+    TombstoneStore,
     TransactionManager,
 )
+from agent_memory_runtime.tokens import AdaptiveTokenEstimator, TokenEstimator
 
 
 @dataclass(frozen=True)
@@ -129,15 +133,22 @@ class AgentMemoryRuntime:
         review_guard: ReviewGuard | None = None,
         transaction_manager: TransactionManager | None = None,
         worker_id: str | None = None,
+        token_estimator: TokenEstimator | None = None,
+        tombstone_store: TombstoneStore | None = None,
     ) -> None:
         self.config = config or RuntimeConfig()
         self.event_store = event_store or InMemoryEventStore()
         self.memory_store = memory_store or InMemoryMemoryStore()
         self.snapshot_store = snapshot_store or InMemorySnapshotStore()
+        self.tombstone_store = tombstone_store or InMemoryTombstoneStore()
         self.derivation_engine = derivation_engine or DerivationEngine()
         self.lifecycle = lifecycle or LifecycleReducer(self.config)
         self.retrieval = retrieval or RetrievalPipeline(self.config)
-        self.context_builder = context_builder or ContextBuilder(self.config)
+        self.token_estimator = token_estimator or AdaptiveTokenEstimator()
+        self.context_builder = context_builder or ContextBuilder(
+            self.config,
+            token_estimator=self.token_estimator,
+        )
         self.write_guard = write_guard or WriteGuard()
         self.llm_client = llm_client or OpenAICompatibleChatClient(self.config.llm)
         self.audit_store = audit_store or InMemoryAuditStore()
@@ -257,6 +268,8 @@ class AgentMemoryRuntime:
         if event.event_id not in event_ids:
             event_ids.add(event.event_id)
         for candidate in candidates:
+            if self._candidate_is_tombstoned(candidate, event):
+                continue
             if self.review_guard is not None:
                 review_item = self.review_guard.route_if_required(candidate)
                 if review_item is not None:
@@ -289,6 +302,8 @@ class AgentMemoryRuntime:
         event = self._event_by_id(item.candidate.source_event_ids[0])
         if event is None:
             return None
+        if self._candidate_is_tombstoned(item.candidate, event):
+            return None
         event_ids = {source.event_id for source in self.event_store.list_events()}
         with self._transaction():
             record = self._apply_candidate(item.candidate, event, event_ids=event_ids)
@@ -313,7 +328,10 @@ class AgentMemoryRuntime:
         query: MemoryQuery | dict[str, object],
     ) -> tuple[list[MemoryRecord], RuntimeTrace]:
         memory_query = _query_from_dict(query) if isinstance(query, dict) else query
-        selected, trace = self.retrieval.retrieve(self.memory_store.list_records(), memory_query)
+        selected, trace = self.retrieval.retrieve(
+            self._records_for_query(memory_query),
+            memory_query,
+        )
         self._set_last_trace(trace, action="retrieve_memory", context_source="retrieval")
         return selected, self.last_trace
 
@@ -383,6 +401,7 @@ class AgentMemoryRuntime:
         system_prompt = _system_prompt(
             agent_id=memory_query.agent_id,
             projected_context=context.projected_context,
+            personalization_context=context.personalization_context,
             instruction=instruction,
         )
         try:
@@ -421,6 +440,7 @@ class AgentMemoryRuntime:
         system_prompt = _system_prompt(
             agent_id=memory_query.agent_id,
             projected_context=context.projected_context,
+            personalization_context=context.personalization_context,
             instruction=instruction,
         )
         try:
@@ -462,6 +482,7 @@ class AgentMemoryRuntime:
         system_prompt = _system_prompt(
             agent_id=memory_query.agent_id,
             projected_context=context.projected_context,
+            personalization_context=context.personalization_context,
             instruction=instruction,
         )
         yield AgentResponseStreamEvent(type="started", context=context)
@@ -583,10 +604,26 @@ class AgentMemoryRuntime:
             records=self.memory_store.list_records(),
         )
 
+    def refresh_snapshot(self) -> RuntimeSnapshot:
+        return self._save_snapshot()
+
     def _save_snapshot(self) -> RuntimeSnapshot:
         snapshot = self.snapshot()
         self.snapshot_store.save(snapshot.to_dict())
+        prune = getattr(self.snapshot_store, "prune", None)
+        if callable(prune):
+            prune(keep_last=self.config.fast_response.snapshot_retention_limit)
         return snapshot
+
+    def _candidate_is_tombstoned(
+        self,
+        candidate: MemoryCandidate,
+        event: Event,
+    ) -> bool:
+        tombstone = self.tombstone_store.get(candidate.memory_id)
+        if tombstone is None or tombstone.tenant_id != candidate.tenant_id:
+            return False
+        return event.sequence <= tombstone.deleted_through_sequence
 
     def _apply_candidate(
         self,
@@ -742,7 +779,7 @@ class AgentMemoryRuntime:
         records: list[MemoryRecord] | None = None,
     ) -> AgentContext:
         selected, trace = self.retrieval.retrieve(
-            self.memory_store.list_records() if records is None else records,
+            self._records_for_query(query) if records is None else records,
             query,
         )
         return self.context_builder.build(
@@ -759,6 +796,7 @@ class AgentMemoryRuntime:
             record
             for memory_id in hot_memory_ids
             if (record := self.memory_store.get(memory_id)) is not None
+            and not self._record_is_tombstoned(record)
         ]
         selected, trace = self.retrieval.retrieve(records, query)
         return self.context_builder.build(
@@ -766,6 +804,30 @@ class AgentMemoryRuntime:
             records=selected,
             trace=trace,
             metadata={"context_source": "snapshot", "retrieval_timed_out": True},
+        )
+
+    def _records_for_query(self, query: MemoryQuery) -> list[MemoryRecord]:
+        planned = normalize_query(query)
+        query_records = getattr(self.memory_store, "query_records", None)
+        if callable(query_records):
+            records = query_records(
+                planned,
+                limit=self.config.max_retrieval_candidates,
+                offset=0,
+            )
+        else:
+            records = self.memory_store.list_records()
+        # A tombstone is the authoritative deletion watermark. This read-time
+        # guard prevents a JSONL crash between tombstone persistence and physical
+        # projection removal from making deleted content visible again.
+        return [record for record in records if not self._record_is_tombstoned(record)]
+
+    def _record_is_tombstoned(self, record: MemoryRecord) -> bool:
+        tombstone = self.tombstone_store.get(record.memory_id)
+        return bool(
+            tombstone is not None
+            and tombstone.tenant_id == record.tenant_id
+            and record.last_event_sequence <= tombstone.deleted_through_sequence
         )
 
     def _set_last_trace(
@@ -964,6 +1026,7 @@ def _query_from_dict(value: dict[str, object]) -> MemoryQuery:
         tags=tuple(str(item) for item in value.get("tags", ())),
         source_memory_ids=tuple(str(item) for item in value.get("source_memory_ids", ())),
         limit=int(value["limit"]) if value.get("limit") is not None else None,
+        session_policy=str(value.get("session_policy") or "exact"),
     )
 
 
@@ -997,6 +1060,7 @@ def _system_prompt(
     *,
     agent_id: str,
     projected_context: str,
+    personalization_context: str,
     instruction: str | None,
 ) -> str:
     parts = [
@@ -1007,6 +1071,8 @@ def _system_prompt(
     ]
     if instruction and instruction.strip():
         parts.append(f"应用指令：{instruction.strip()}")
+    if personalization_context.strip():
+        parts.append(personalization_context.strip())
     # 第二层防护：再次清洗并以唯一的固定围栏隔离召回记忆。
     parts.append(build_memory_context_block(projected_context))
     return "\n".join(parts)

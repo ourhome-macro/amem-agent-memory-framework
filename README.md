@@ -1,5 +1,46 @@
 # Agent Memory Runtime
 
+## v0.5：跨会话记忆与上下文生产强化
+
+v0.5 完成 P0/P1 生产缺口：Core/Archival 记忆可按显式会话策略跨会话召回，长期偏好与策略使用不含 session 的稳定 ID；Working 记忆仍保持会话隔离，tenant/user/agent 权限边界不会被跨会话策略绕过。中文检索使用 CJK 二元词，SQLite schema v5 提供结构化候选列、词项/标签索引和分页读取。
+
+`BusinessAgentRuntime` 现在会在每次模型调用前计算完整 messages、tool schema、预留输出和可选美元成本；超过软阈值时先持久化压缩后的 Checkpoint，超过硬预算则在请求供应商之前失败。`OutputContract` 提供 Draft 2020-12 JSON Schema 校验、受控修复和可选 provider-native JSON Schema 请求，未通过校验的流式正文不会暴露给适配层。
+
+```python
+from agent_memory_runtime import AgentRequest, OutputContract
+from agent_memory_runtime.domain.enums import MemorySessionPolicy
+from agent_memory_runtime.domain.query import MemoryQuery
+
+query = MemoryQuery(
+    agent_id="assistant",
+    text="按我的偏好回答",
+    tenant_id="tenant-1",
+    user_id="user-1",
+    session_id="current-session",
+    session_policy=MemorySessionPolicy.PROFILE.value,
+)
+
+request = AgentRequest(
+    agent_id="assistant",
+    message="给出处理结果",
+    output_contract=OutputContract(
+        name="result",
+        schema={
+            "type": "object",
+            "properties": {"answer": {"type": "string"}},
+            "required": ["answer"],
+            "additionalProperties": False,
+        },
+    ),
+)
+```
+
+Retention 删除会先写入持久化 Tombstone；读取和 replay 都遵守删除水位。后台 Worker 使用常量内存汇总周期结果，Snapshot 数量有界。检索评测输出 Recall@K、Precision@K、MRR、nDCG 和越权负样本结果，失败时 CLI 返回非零退出码。完整设计与升级说明见 [`doc/p0-p1-memory-production-hardening-v0.5.0.md`](doc/p0-p1-memory-production-hardening-v0.5.0.md)。
+
+用于简历的 STAR 拆解、牛客公开写法调研、真实指标口径和面试追问清单见
+[`doc/resume-project-star-v0.5.0.md`](doc/resume-project-star-v0.5.0.md)；可用
+`py -3.12 benchmarks\validate_runtime.py --records 10000 --iterations 100` 复现规模数据。
+
 ## v0.4：受控多 Agent 编排与交互式 CLI
 
 本版本在 `BusinessAgentRuntime` 之上增加可选的 `AgentOrchestrator`：使用静态注册表和有界 DAG 完成父子委派、依赖并行、审批暂停/恢复、取消传播、租约 fencing、全局预算结算与 SQLite 持久化。它不是允许 Agent 自由拉起 Agent 的开放式 swarm；图、白名单、深度、节点数、扇出和并发度都由宿主应用显式控制。
@@ -164,8 +205,10 @@ amem queue
 amem queue run-once
 amem retention plan
 amem retention apply
+amem retention worker --forever --interval-seconds 300
 amem derive
-amem retrieve --agent support_agent --query "refund status"
+amem retrieve --agent support_agent --query "refund status" --session support-001
+amem retrieve --agent assistant --query "按我的偏好回答" --tenant tenant-1 --user user-1 --session current --session-policy profile
 amem project --agent support_agent --query "refund status"
 amem respond --agent support_agent --query "refund status"
 amem respond --agent support_agent --query "refund status" --stream --fast
@@ -175,6 +218,7 @@ amem audit --type access
 amem audit-dashboard --out .amem/audit.html
 amem worker
 amem replay
+amem ingest examples/data/memory_eval_events.jsonl
 amem eval examples/evals/retrieval_cases.yml
 amem demo customer-support
 amem demo personal-assistant

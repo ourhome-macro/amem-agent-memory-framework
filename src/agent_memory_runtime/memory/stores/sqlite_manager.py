@@ -234,6 +234,79 @@ _MIGRATIONS = (
             """,
         ),
     ),
+    _Migration(
+        version=5,
+        name="indexed_memory_projection",
+        statements=(
+            "ALTER TABLE memories ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'",
+            "ALTER TABLE memories ADD COLUMN user_id TEXT",
+            "ALTER TABLE memories ADD COLUMN agent_id TEXT",
+            "ALTER TABLE memories ADD COLUMN session_id TEXT NOT NULL DEFAULT 'default'",
+            "ALTER TABLE memories ADD COLUMN layer TEXT NOT NULL DEFAULT 'working'",
+            "ALTER TABLE memories ADD COLUMN status TEXT NOT NULL DEFAULT 'active'",
+            "ALTER TABLE memories ADD COLUMN memory_type TEXT NOT NULL DEFAULT 'episodic'",
+            "ALTER TABLE memories ADD COLUMN scope TEXT NOT NULL DEFAULT 'private'",
+            "ALTER TABLE memories ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE memories ADD COLUMN salience REAL NOT NULL DEFAULT 0.5",
+            "ALTER TABLE memories ADD COLUMN search_indexed INTEGER NOT NULL DEFAULT 0",
+            """
+            UPDATE memories
+            SET tenant_id = COALESCE(json_extract(payload, '$.tenant_id'), 'default'),
+                user_id = json_extract(payload, '$.user_id'),
+                agent_id = COALESCE(
+                    json_extract(payload, '$.agent_id'),
+                    json_extract(payload, '$.owner_id')
+                ),
+                session_id = COALESCE(json_extract(payload, '$.session_id'), 'default'),
+                layer = COALESCE(json_extract(payload, '$.layer'), 'working'),
+                status = COALESCE(json_extract(payload, '$.status'), 'active'),
+                memory_type = COALESCE(json_extract(payload, '$.memory_type'), 'episodic'),
+                scope = COALESCE(json_extract(payload, '$.scope'), 'private'),
+                updated_at = COALESCE(json_extract(payload, '$.updated_at'), ''),
+                salience = COALESCE(json_extract(payload, '$.salience'), 0.5)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_identity_layer_status
+            ON memories(tenant_id, user_id, layer, status)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_session_layer_status
+            ON memories(tenant_id, session_id, layer, status)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_type_scope
+            ON memories(tenant_id, memory_type, scope)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_recency_salience
+            ON memories(tenant_id, updated_at, salience)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS memory_terms (
+                memory_id TEXT NOT NULL,
+                term TEXT NOT NULL,
+                PRIMARY KEY(memory_id, term),
+                FOREIGN KEY(memory_id) REFERENCES memories(memory_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memory_terms_term
+            ON memory_terms(term, memory_id)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS memory_tags (
+                memory_id TEXT NOT NULL,
+                tag TEXT NOT NULL,
+                PRIMARY KEY(memory_id, tag),
+                FOREIGN KEY(memory_id) REFERENCES memories(memory_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memory_tags_tag
+            ON memory_tags(tag, memory_id)
+            """,
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = _MIGRATIONS[-1].version

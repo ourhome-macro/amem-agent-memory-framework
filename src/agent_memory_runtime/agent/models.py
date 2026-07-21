@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import json
+import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
+
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
+
+_PROVIDER_SCHEMA_NAME_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 def utc_now_iso() -> str:
@@ -201,6 +208,53 @@ class ModelGatewayStreamEvent:
 
 
 @dataclass(frozen=True)
+class OutputContract:
+    name: str
+    schema: dict[str, Any]
+    strict: bool = True
+    max_repair_attempts: int = 1
+    provider_native: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("output contract name cannot be empty")
+        if self.provider_native and not _PROVIDER_SCHEMA_NAME_RE.fullmatch(self.name):
+            raise ValueError(
+                "provider-native output contract name must contain only letters, "
+                "numbers, underscores, or hyphens and be at most 64 characters"
+            )
+        if self.max_repair_attempts < 0:
+            raise ValueError("output contract max_repair_attempts cannot be negative")
+        if not isinstance(self.schema, dict):
+            raise ValueError("output contract schema must be a JSON object")
+        _ensure_json_serializable(self.schema, label="output contract schema")
+        try:
+            Draft202012Validator.check_schema(self.schema)
+        except SchemaError as error:
+            raise ValueError("output contract schema is not valid Draft 2020-12") from error
+        object.__setattr__(self, "schema", deepcopy(self.schema))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "schema": deepcopy(self.schema),
+            "strict": self.strict,
+            "max_repair_attempts": self.max_repair_attempts,
+            "provider_native": self.provider_native,
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> OutputContract:
+        return cls(
+            name=str(value["name"]),
+            schema=_dict(value.get("schema")),
+            strict=bool(value.get("strict", True)),
+            max_repair_attempts=int(value.get("max_repair_attempts", 1)),
+            provider_native=bool(value.get("provider_native", False)),
+        )
+
+
+@dataclass(frozen=True)
 class AgentRequest:
     agent_id: str
     message: str
@@ -212,6 +266,7 @@ class AgentRequest:
     instructions: tuple[str, ...] = ()
     module_names: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+    output_contract: OutputContract | None = None
 
     def __post_init__(self) -> None:
         if not self.agent_id.strip():
@@ -236,10 +291,14 @@ class AgentRequest:
             "instructions": list(self.instructions),
             "module_names": list(self.module_names),
             "metadata": dict(self.metadata),
+            "output_contract": (
+                None if self.output_contract is None else self.output_contract.to_dict()
+            ),
         }
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> AgentRequest:
+        raw_output_contract = value.get("output_contract")
         return cls(
             agent_id=str(value["agent_id"]),
             message=str(value["message"]),
@@ -251,6 +310,11 @@ class AgentRequest:
             instructions=tuple(str(item) for item in _list(value.get("instructions"))),
             module_names=tuple(str(item) for item in _list(value.get("module_names"))),
             metadata=_dict(value.get("metadata")),
+            output_contract=(
+                OutputContract.from_dict(_dict(raw_output_contract))
+                if isinstance(raw_output_contract, dict)
+                else None
+            ),
         )
 
 
@@ -273,6 +337,7 @@ class AgentRun:
     lease_owner: str | None = None
     lease_token: str | None = None
     lease_expires_at: str | None = None
+    cost_usd: float = 0.0
 
     @classmethod
     def new(cls, request: AgentRequest, *, run_id: str | None = None) -> AgentRun:
@@ -305,6 +370,7 @@ class AgentRun:
             "lease_owner": self.lease_owner,
             "lease_token": self.lease_token,
             "lease_expires_at": self.lease_expires_at,
+            "cost_usd": self.cost_usd,
         }
 
     @classmethod
@@ -327,6 +393,7 @@ class AgentRun:
             lease_owner=_optional_str(value.get("lease_owner")),
             lease_token=_optional_str(value.get("lease_token")),
             lease_expires_at=_optional_str(value.get("lease_expires_at")),
+            cost_usd=float(value.get("cost_usd") or 0.0),
         )
 
 
@@ -338,6 +405,10 @@ class AgentCheckpoint:
     final_output: str | None = None
     version: int = 0
     updated_at: str = field(default_factory=utc_now_iso)
+    compaction_count: int = 0
+    compacted_message_count: int = 0
+    last_estimated_input_tokens: int = 0
+    output_repair_attempts: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -347,6 +418,10 @@ class AgentCheckpoint:
             "final_output": self.final_output,
             "version": self.version,
             "updated_at": self.updated_at,
+            "compaction_count": self.compaction_count,
+            "compacted_message_count": self.compacted_message_count,
+            "last_estimated_input_tokens": self.last_estimated_input_tokens,
+            "output_repair_attempts": self.output_repair_attempts,
         }
 
     @classmethod
@@ -363,6 +438,12 @@ class AgentCheckpoint:
             final_output=_optional_str(value.get("final_output")),
             version=int(value.get("version") or 0),
             updated_at=str(value.get("updated_at") or utc_now_iso()),
+            compaction_count=int(value.get("compaction_count") or 0),
+            compacted_message_count=int(value.get("compacted_message_count") or 0),
+            last_estimated_input_tokens=int(
+                value.get("last_estimated_input_tokens") or 0
+            ),
+            output_repair_attempts=int(value.get("output_repair_attempts") or 0),
         )
 
 

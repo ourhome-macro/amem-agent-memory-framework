@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from agent_memory_runtime.domain.enums import MemorySessionPolicy
+
 
 @dataclass(frozen=True)
 class MemoryQuery:
@@ -17,6 +19,13 @@ class MemoryQuery:
     # Appended to preserve the pre-v0.2 positional constructor contract.
     tenant_id: str = "default"
     user_id: str | None = None
+    session_policy: str = MemorySessionPolicy.EXACT.value
+
+    def __post_init__(self) -> None:
+        try:
+            MemorySessionPolicy(self.session_policy)
+        except ValueError as error:
+            raise ValueError(f"unsupported memory session policy: {self.session_policy}") from error
 
 
 @dataclass(frozen=True)

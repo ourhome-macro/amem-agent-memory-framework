@@ -6,13 +6,17 @@ from threading import RLock
 from agent_memory_runtime.audit.stores.in_memory import InMemoryAuditStore
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
+from agent_memory_runtime.domain.query import MemoryQuery
+from agent_memory_runtime.domain.tombstone import MemoryTombstone
 from agent_memory_runtime.exceptions import EventConflictError
+from agent_memory_runtime.memory.stores.query import select_candidates
 
 __all__ = [
     "InMemoryAuditStore",
     "InMemoryEventStore",
     "InMemoryMemoryStore",
     "InMemorySnapshotStore",
+    "InMemoryTombstoneStore",
 ]
 
 
@@ -64,6 +68,20 @@ class InMemoryMemoryStore:
     def list_records(self) -> list[MemoryRecord]:
         return sorted(self._records.values(), key=lambda item: item.memory_id)
 
+    def query_records(
+        self,
+        query: MemoryQuery,
+        *,
+        limit: int,
+        offset: int = 0,
+    ) -> list[MemoryRecord]:
+        return select_candidates(
+            self.list_records(),
+            query,
+            limit=limit,
+            offset=offset,
+        )
+
     def replace_all(self, records: list[MemoryRecord]) -> None:
         self._records = {record.memory_id: record for record in records}
 
@@ -85,3 +103,41 @@ class InMemorySnapshotStore:
 
     def clear(self) -> None:
         self._snapshots.clear()
+
+    def prune(self, *, keep_last: int) -> int:
+        keep = max(0, keep_last)
+        removed = max(0, len(self._snapshots) - keep)
+        if removed:
+            self._snapshots = self._snapshots[-keep:] if keep else []
+        return removed
+
+
+class InMemoryTombstoneStore:
+    def __init__(self) -> None:
+        self._tombstones: dict[str, MemoryTombstone] = {}
+
+    def put(self, tombstone: MemoryTombstone) -> None:
+        current = self._tombstones.get(tombstone.memory_id)
+        if (
+            current is None
+            or tombstone.deleted_through_sequence >= current.deleted_through_sequence
+        ):
+            self._tombstones[tombstone.memory_id] = MemoryTombstone.from_dict(
+                tombstone.to_dict()
+            )
+
+    def get(self, memory_id: str) -> MemoryTombstone | None:
+        value = self._tombstones.get(memory_id)
+        return None if value is None else MemoryTombstone.from_dict(value.to_dict())
+
+    def list_tombstones(self) -> list[MemoryTombstone]:
+        return [
+            MemoryTombstone.from_dict(item.to_dict())
+            for item in sorted(
+                self._tombstones.values(),
+                key=lambda value: value.memory_id,
+            )
+        ]
+
+    def clear(self) -> None:
+        self._tombstones.clear()

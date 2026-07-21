@@ -43,6 +43,7 @@ def test_cli_ingest_retrieve_project_and_replay(tmp_path) -> None:
 
     assert runner.invoke(cli_app.app, ["init", "--path", str(data_dir)]).exit_code == 0
     assert (data_dir / "audit.jsonl").exists()
+    assert (data_dir / "tombstones.jsonl").exists()
     assert (
         runner.invoke(cli_app.app, ["ingest", str(events), "--data-dir", str(data_dir)]).exit_code
         == 0
@@ -97,6 +98,88 @@ def test_cli_ingest_retrieve_project_and_replay(tmp_path) -> None:
     )
     assert access_audit.exit_code == 0
     assert '"audit_type": "access"' in access_audit.output
+
+
+def test_cli_cross_session_profile_retention_worker_and_eval_gate(tmp_path) -> None:
+    runner = CliRunner()
+    data_dir = tmp_path / ".amem"
+    events = tmp_path / "profile-events.jsonl"
+    cases = tmp_path / "failing-eval.yml"
+    events.write_text(
+        json.dumps(
+            {
+                "event_id": "profile-cli-1",
+                "kind": "preference.updated",
+                "actor_id": "user-1",
+                "session_id": "old-session",
+                "tenant_id": "tenant-1",
+                "user_id": "user-1",
+                "agent_id": "assistant",
+                "labels": ["private"],
+                "payload": {
+                    "agent_id": "assistant",
+                    "subject_id": "user-1",
+                    "key": "response_style",
+                    "preference": "Keep answers concise.",
+                    "value": "concise",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cases.write_text(
+        "cases:\n"
+        "  - id: expected-failure\n"
+        "    agent: assistant\n"
+        "    query: missing\n"
+        "    expected_memory_ids: [missing-memory]\n",
+        encoding="utf-8",
+    )
+    runner.invoke(cli_app.app, ["--no-banner", "init", "--path", str(data_dir)])
+    ingest = runner.invoke(
+        cli_app.app,
+        ["--no-banner", "ingest", str(events), "--data-dir", str(data_dir)],
+    )
+    assert ingest.exit_code == 0
+
+    retrieve = runner.invoke(
+        cli_app.app,
+        [
+            "--no-banner",
+            "retrieve",
+            "--agent",
+            "assistant",
+            "--query",
+            "my response style",
+            "--session",
+            "new-session",
+            "--tenant",
+            "tenant-1",
+            "--user",
+            "user-1",
+            "--session-policy",
+            "profile",
+            "--data-dir",
+            str(data_dir),
+        ],
+    )
+    assert retrieve.exit_code == 0
+    assert "v3:belief:tenant-1:user-1:assistant:response_style" in retrieve.output
+
+    retention = runner.invoke(
+        cli_app.app,
+        ["--no-banner", "retention", "worker", "--data-dir", str(data_dir)],
+    )
+    assert retention.exit_code == 0
+    assert '"planned_actions"' in retention.output
+
+    evaluation = runner.invoke(
+        cli_app.app,
+        ["--no-banner", "eval", str(cases), "--data-dir", str(data_dir)],
+    )
+    assert evaluation.exit_code == 1
+    assert '"failed": 1' in evaluation.output
 
 
 def test_cli_async_ingest_and_queue_run_once(tmp_path) -> None:

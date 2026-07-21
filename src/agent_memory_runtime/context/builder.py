@@ -5,9 +5,12 @@ from dataclasses import dataclass, field
 from agent_memory_runtime.access.projection import project_record
 from agent_memory_runtime.config import RuntimeConfig
 from agent_memory_runtime.context.fence import sanitize_context
+from agent_memory_runtime.context.personalization import build_personalization_profile
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import RetrievalTrace
 from agent_memory_runtime.memory.compression import select_under_budget
+from agent_memory_runtime.memory.compression.budget import estimate_tokens
+from agent_memory_runtime.tokens import AdaptiveTokenEstimator, TokenEstimator
 
 
 @dataclass(frozen=True)
@@ -19,11 +22,19 @@ class AgentContext:
     memories: tuple[dict[str, object], ...]
     trace: RetrievalTrace
     metadata: dict[str, object] = field(default_factory=dict)
+    personalization_context: str = ""
+    personalization: dict[str, str] = field(default_factory=dict)
 
 
 class ContextBuilder:
-    def __init__(self, config: RuntimeConfig | None = None) -> None:
+    def __init__(
+        self,
+        config: RuntimeConfig | None = None,
+        *,
+        token_estimator: TokenEstimator | None = None,
+    ) -> None:
         self.config = config or RuntimeConfig()
+        self.token_estimator = token_estimator or AdaptiveTokenEstimator()
 
     def build(
         self,
@@ -33,7 +44,21 @@ class ContextBuilder:
         trace: RetrievalTrace,
         metadata: dict[str, object] | None = None,
     ) -> AgentContext:
-        selected = select_under_budget(records, token_budget=self.config.context_token_budget)
+        selected = select_under_budget(
+            records,
+            token_budget=self.config.context_token_budget,
+            estimator=self.token_estimator,
+            model=self.config.llm.model,
+        )
+        estimated_tokens = sum(
+            estimate_tokens(
+                record,
+                estimator=self.token_estimator,
+                model=self.config.llm.model,
+            )
+            for record in selected
+        )
+        personalization = build_personalization_profile(selected)
         # 结构化投影和文本投影都先移除伪造围栏，避免下游调用绕过第一层防护。
         projected = tuple(_sanitize_projection(project_record(record)) for record in selected)
         return AgentContext(
@@ -43,7 +68,13 @@ class ContextBuilder:
             projected_context=format_context(selected),
             memories=projected,
             trace=trace,
-            metadata=dict(metadata or {}),
+            metadata={
+                **dict(metadata or {}),
+                "estimated_memory_tokens": estimated_tokens,
+                "memory_token_budget": self.config.context_token_budget,
+            },
+            personalization_context=personalization.render(),
+            personalization=dict(personalization.values),
         )
 
 

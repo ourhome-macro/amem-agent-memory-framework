@@ -20,6 +20,7 @@ class RetrievalWeights:
 class FastResponseConfig:
     retrieval_timeout_ms: int = 150
     snapshot_hot_memory_limit: int = 8
+    snapshot_retention_limit: int = 32
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,7 @@ class LLMConfig:
 class RuntimeConfig:
     rule_version: str = "builtin-v1"
     max_retrieval_results: int = 8
+    max_retrieval_candidates: int = 256
     context_token_budget: int = 900
     low_salience_archive_threshold: float = 0.12
     retrieval_weights: RetrievalWeights = field(default_factory=RetrievalWeights)

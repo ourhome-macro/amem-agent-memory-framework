@@ -93,6 +93,7 @@ def build_chat_context(data_dir: Path, config: LLMConfig) -> ChatRuntimeContext:
         snapshot_store=bundle.snapshot_store,
         audit_store=bundle.audit_store,
         derivation_queue=bundle.derivation_queue,
+        tombstone_store=bundle.tombstone_store,
         transaction_manager=bundle,
     )
     runtime = BusinessAgentRuntime(

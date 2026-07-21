@@ -196,15 +196,16 @@ def test_human_review_quarantines_high_risk_candidate_until_approval() -> None:
     assert runtime.memory_store.list_records() == []
     pending = review_queue.pending_items()
     assert len(pending) == 1
-    assert pending[0].candidate.memory_id == "belief:s1:support_agent:[redacted]"
+    expected_id = "v3:belief:default:user:support_agent:%5Bredacted%5D"
+    assert pending[0].candidate.memory_id == expected_id
     assert "medical preference" not in pending[0].candidate.content
 
     approved = runtime.approve_review_item(pending[0].review_id, reviewer_id="operator")
 
     assert approved is not None
-    assert approved.memory_id == "belief:s1:support_agent:[redacted]"
+    assert approved.memory_id == expected_id
     assert review_queue.pending_items() == []
-    assert runtime.memory_store.get("belief:s1:support_agent:[redacted]") is not None
+    assert runtime.memory_store.get(expected_id) is not None
     decisions = [envelope.decision for envelope in runtime.audit_store.list_envelopes()]
     assert "review" in decisions
     assert "allow" in decisions

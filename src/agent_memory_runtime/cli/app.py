@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from threading import Event as ThreadEvent
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -21,21 +22,25 @@ from agent_memory_runtime.config import (
     RuntimeConfig,
     provider_presets,
 )
+from agent_memory_runtime.domain.enums import MemorySessionPolicy
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.query import MemoryQuery
-from agent_memory_runtime.evals import evaluate_contains
+from agent_memory_runtime.evals import evaluate_retrieval
 from agent_memory_runtime.governance.queue import JsonlDerivationQueueStore
 from agent_memory_runtime.governance.queue.worker import DerivationWorker
 from agent_memory_runtime.governance.retention import (
+    RetentionCycle,
     RetentionExecutor,
     RetentionPlanner,
     RetentionPolicy,
+    RetentionWorker,
 )
 from agent_memory_runtime.memory.stores import (
     JsonlAuditStore,
     JsonlEventStore,
     JsonlMemoryStore,
     JsonlSnapshotStore,
+    JsonlTombstoneStore,
 )
 from agent_memory_runtime.runtime import AgentMemoryRuntime, AgentResponse
 
@@ -47,6 +52,12 @@ PATH_OPTION = typer.Option(help="Runtime data directory.")
 AGENT_OPTION = typer.Option("--agent")
 QUERY_OPTION = typer.Option("--query")
 SESSION_OPTION = typer.Option("--session")
+TENANT_OPTION = typer.Option("--tenant", help="Tenant identity used for access control.")
+USER_OPTION = typer.Option("--user", help="User identity used for access control.")
+SESSION_POLICY_OPTION = typer.Option(
+    "--session-policy",
+    help="Memory session scope: exact, profile, or all.",
+)
 INSTRUCTION_OPTION = typer.Option("--instruction", help="Additional non-secret system instruction.")
 PROVIDER_OPTION = typer.Option("--provider", help="OpenAI-compatible provider preset or custom.")
 MODEL_OPTION = typer.Option("--model", help="Override the provider default model.")
@@ -84,6 +95,7 @@ def init(path: Annotated[Path, PATH_OPTION] = DEFAULT_DATA_DIR) -> None:
     (path / "snapshots.jsonl").touch(exist_ok=True)
     (path / "audit.jsonl").touch(exist_ok=True)
     (path / "derivation_queue.jsonl").touch(exist_ok=True)
+    (path / "tombstones.jsonl").touch(exist_ok=True)
     console.print(f"initialized {path}")
 
 
@@ -122,10 +134,25 @@ def retrieve(
     agent: Annotated[str, AGENT_OPTION],
     query: Annotated[str, QUERY_OPTION],
     session: Annotated[str | None, SESSION_OPTION] = None,
+    tenant: Annotated[str, TENANT_OPTION] = "default",
+    user: Annotated[str | None, USER_OPTION] = None,
+    session_policy: Annotated[
+        MemorySessionPolicy,
+        SESSION_POLICY_OPTION,
+    ] = MemorySessionPolicy.EXACT,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
     runtime = _runtime(data_dir)
-    records, trace = runtime.retrieve(MemoryQuery(agent_id=agent, text=query, session_id=session))
+    records, trace = runtime.retrieve(
+        _memory_query(
+            agent=agent,
+            text=query,
+            session=session,
+            tenant=tenant,
+            user=user,
+            session_policy=session_policy,
+        )
+    )
     _print_records(records)
     _print_trace(trace.to_dict())
 
@@ -135,10 +162,25 @@ def project(
     agent: Annotated[str, AGENT_OPTION],
     query: Annotated[str, QUERY_OPTION],
     session: Annotated[str | None, SESSION_OPTION] = None,
+    tenant: Annotated[str, TENANT_OPTION] = "default",
+    user: Annotated[str | None, USER_OPTION] = None,
+    session_policy: Annotated[
+        MemorySessionPolicy,
+        SESSION_POLICY_OPTION,
+    ] = MemorySessionPolicy.EXACT,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
     runtime = _runtime(data_dir)
-    context = runtime.project(MemoryQuery(agent_id=agent, text=query, session_id=session))
+    context = runtime.project(
+        _memory_query(
+            agent=agent,
+            text=query,
+            session=session,
+            tenant=tenant,
+            user=user,
+            session_policy=session_policy,
+        )
+    )
     console.print(context.projected_context)
     _print_trace(runtime.last_trace.to_dict())
 
@@ -148,6 +190,12 @@ def respond(
     agent: Annotated[str, AGENT_OPTION],
     query: Annotated[str, QUERY_OPTION],
     session: Annotated[str | None, SESSION_OPTION] = None,
+    tenant: Annotated[str, TENANT_OPTION] = "default",
+    user: Annotated[str | None, USER_OPTION] = None,
+    session_policy: Annotated[
+        MemorySessionPolicy,
+        SESSION_POLICY_OPTION,
+    ] = MemorySessionPolicy.EXACT,
     instruction: Annotated[str | None, INSTRUCTION_OPTION] = None,
     provider: Annotated[str, PROVIDER_OPTION] = "deepseek",
     model: Annotated[str | None, MODEL_OPTION] = None,
@@ -170,7 +218,14 @@ def respond(
             )
         ),
     )
-    memory_query = MemoryQuery(agent_id=agent, text=query, session_id=session)
+    memory_query = _memory_query(
+        agent=agent,
+        text=query,
+        session=session,
+        tenant=tenant,
+        user=user,
+        session_policy=session_policy,
+    )
     if stream:
         response = _stream_response(runtime, memory_query, instruction=instruction, fast=fast)
     elif fast:
@@ -194,8 +249,8 @@ def chat(
     ] = ChatMode.AUTO,
     agent: Annotated[str, AGENT_OPTION] = "assistant",
     session: Annotated[str | None, SESSION_OPTION] = None,
-    tenant: Annotated[str, typer.Option("--tenant")] = "default",
-    user: Annotated[str | None, typer.Option("--user")] = None,
+    tenant: Annotated[str, TENANT_OPTION] = "default",
+    user: Annotated[str | None, USER_OPTION] = None,
     instruction: Annotated[str | None, INSTRUCTION_OPTION] = None,
     provider: Annotated[str, PROVIDER_OPTION] = "deepseek",
     model: Annotated[str | None, MODEL_OPTION] = None,
@@ -443,13 +498,72 @@ def retention_apply(
     report = RetentionExecutor(
         memory_store=runtime.memory_store,
         audit_store=runtime.audit_store,
+        tombstone_store=runtime.tombstone_store,
+        transaction_manager=runtime.transaction_manager,
     ).apply(plan, snapshot=snapshot)
-    runtime.snapshot_store.save(runtime.snapshot().to_dict())
+    runtime.refresh_snapshot()
     _print_trace(
         {
             "archived_memory_ids": list(report.archived_memory_ids),
             "deleted_memory_ids": list(report.deleted_memory_ids),
             "snapshot": runtime.snapshot().to_dict(),
+        }
+    )
+
+
+@retention_app.command("worker")
+def retention_worker(
+    forever: Annotated[
+        bool,
+        typer.Option("--forever", help="Run retention cycles until interrupted."),
+    ] = False,
+    max_cycles: Annotated[int | None, typer.Option("--max-cycles", min=1)] = None,
+    interval_seconds: Annotated[
+        float,
+        typer.Option("--interval-seconds", min=0.1),
+    ] = 300.0,
+    archive_after: Annotated[int, typer.Option("--archive-after-seq", min=0)] = 30,
+    archive_below_salience: Annotated[
+        float | None,
+        typer.Option("--archive-below-salience", min=0, max=1),
+    ] = None,
+    delete_sensitive_after: Annotated[
+        int | None,
+        typer.Option("--delete-sensitive-after-seq", min=0),
+    ] = None,
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    runtime = _runtime(data_dir)
+    retention = RetentionWorker(
+        runtime,
+        policy=_retention_policy(
+            archive_after,
+            archive_below_salience,
+            delete_sensitive_after,
+        ),
+        interval_seconds=interval_seconds,
+    )
+    if not forever:
+        cycle = retention.run_once()
+        _print_retention_cycle(cycle)
+        return
+
+    stop_event = ThreadEvent()
+    try:
+        report = retention.run_forever(
+            stop_event=stop_event,
+            max_cycles=max_cycles,
+            on_cycle=_print_retention_cycle,
+        )
+    except KeyboardInterrupt:
+        stop_event.set()
+        console.print("retention_worker=interrupted")
+        return
+    _print_trace(
+        {
+            "cycles": report.cycles,
+            "archived": report.archived,
+            "deleted": report.deleted,
         }
     )
 
@@ -477,26 +591,57 @@ def eval_cases(
 ) -> None:
     runtime = _runtime(data_dir)
     payload = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
-    table = Table("case_id", "passed", "expected", "selected")
+    table = Table("case_id", "passed", "R@K", "P@K", "MRR", "nDCG", "selected")
+    results = []
     for case in payload.get("cases", []):
         query = MemoryQuery(
             agent_id=str(case["agent"]),
             text=str(case["query"]),
             session_id=case.get("session_id"),
+            tenant_id=str(case.get("tenant_id") or "default"),
+            user_id=(None if case.get("user_id") is None else str(case["user_id"])),
+            session_policy=str(case.get("session_policy") or "exact"),
+            limit=int(case["limit"]) if case.get("limit") is not None else None,
         )
         context = runtime.project(query)
-        result = evaluate_contains(
+        result = evaluate_retrieval(
             str(case["id"]),
             [str(item) for item in case.get("expected_memory_ids", [])],
             list(context.selected_memory_ids),
+            forbidden=[str(item) for item in case.get("forbidden_memory_ids", [])],
+            relevance={
+                str(key): float(value)
+                for key, value in dict(case.get("relevance") or {}).items()
+            },
+            k=int(case.get("k") or query.limit or runtime.config.max_retrieval_results),
         )
         table.add_row(
             result.case_id,
             str(result.passed),
-            ", ".join(result.expected_memory_ids),
+            f"{result.recall_at_k:.3f}",
+            f"{result.precision_at_k:.3f}",
+            f"{result.reciprocal_rank:.3f}",
+            f"{result.ndcg_at_k:.3f}",
             ", ".join(result.selected_memory_ids),
         )
+        results.append(result)
     console.print(table)
+    passed = sum(result.passed for result in results)
+    _print_trace(
+        {
+            "cases": len(results),
+            "passed": passed,
+            "failed": len(results) - passed,
+            "mean_recall_at_k": _mean([result.recall_at_k for result in results]),
+            "mean_precision_at_k": _mean([result.precision_at_k for result in results]),
+            "mean_reciprocal_rank": _mean(
+                [result.reciprocal_rank for result in results]
+            ),
+            "mean_ndcg_at_k": _mean([result.ndcg_at_k for result in results]),
+        }
+    )
+    if passed != len(results):
+        raise typer.Exit(code=1)
 
 
 demo_app = typer.Typer(help="Bundled demos.")
@@ -546,6 +691,41 @@ def _stream_response(
     return response
 
 
+def _memory_query(
+    *,
+    agent: str,
+    text: str,
+    session: str | None,
+    tenant: str,
+    user: str | None,
+    session_policy: MemorySessionPolicy,
+) -> MemoryQuery:
+    return MemoryQuery(
+        agent_id=agent,
+        text=text,
+        session_id=session,
+        tenant_id=tenant,
+        user_id=user,
+        session_policy=session_policy.value,
+    )
+
+
+def _print_retention_cycle(cycle: RetentionCycle) -> None:
+    _print_trace(
+        {
+            "current_sequence": cycle.plan.current_sequence,
+            "planned_actions": len(cycle.plan.actions),
+            "archived_memory_ids": list(cycle.report.archived_memory_ids),
+            "deleted_memory_ids": list(cycle.report.deleted_memory_ids),
+            "snapshot": cycle.snapshot.to_dict(),
+        }
+    )
+
+
+def _mean(values: list[float]) -> float:
+    return round(sum(values) / len(values), 4) if values else 0.0
+
+
 def _runtime(data_dir: Path, *, config: RuntimeConfig | None = None) -> AgentMemoryRuntime:
     data_dir.mkdir(parents=True, exist_ok=True)
     runtime_config = config or RuntimeConfig()
@@ -556,6 +736,7 @@ def _runtime(data_dir: Path, *, config: RuntimeConfig | None = None) -> AgentMem
         snapshot_store=JsonlSnapshotStore(data_dir / "snapshots.jsonl"),
         audit_store=JsonlAuditStore(data_dir / "audit.jsonl"),
         derivation_queue=JsonlDerivationQueueStore(data_dir / "derivation_queue.jsonl"),
+        tombstone_store=JsonlTombstoneStore(data_dir / "tombstones.jsonl"),
     )
 
 

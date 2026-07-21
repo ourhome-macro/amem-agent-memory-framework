@@ -4,6 +4,7 @@ from agent_memory_runtime.domain.enums import (
     MemoryLayer,
     MemoryOperation,
     MemoryScope,
+    MemorySessionPolicy,
     MemoryStatus,
     MemoryType,
 )
@@ -21,9 +22,9 @@ __all__ = [
     "MemoryQuery",
     "MemoryRecord",
     "MemoryScope",
+    "MemorySessionPolicy",
     "MemoryStatus",
     "MemoryType",
     "RetrievalTrace",
     "ScoreBreakdown",
 ]
-

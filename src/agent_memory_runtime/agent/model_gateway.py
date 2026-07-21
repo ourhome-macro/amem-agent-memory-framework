@@ -169,7 +169,12 @@ class OpenAICompatibleModelGateway:
         metadata: dict[str, Any] | None = None,
     ) -> AsyncIterator[ModelGatewayStreamEvent]:
         try:
-            chunks = await asyncio.to_thread(self._start_stream_sync, messages, tools)
+            chunks = await asyncio.to_thread(
+                self._start_stream_sync,
+                messages,
+                tools,
+                metadata,
+            )
             iterator = iter(chunks)
             content_parts: list[str] = []
             tool_buffers: dict[int, dict[str, str]] = {}
@@ -236,7 +241,7 @@ class OpenAICompatibleModelGateway:
         tools: tuple[ToolDefinition, ...],
         metadata: dict[str, Any] | None,
     ) -> ModelResponse:
-        request = self._request(messages, tools, stream=False)
+        request = self._request(messages, tools, stream=False, metadata=metadata)
         try:
             response = self._get_client().chat.completions.create(**request)
         except (LLMConfigurationError, ModelProtocolError):
@@ -275,10 +280,11 @@ class OpenAICompatibleModelGateway:
         self,
         messages: tuple[ModelMessage, ...],
         tools: tuple[ToolDefinition, ...],
+        metadata: dict[str, Any] | None,
     ) -> object:
         try:
             return self._get_client().chat.completions.create(
-                **self._request(messages, tools, stream=True)
+                **self._request(messages, tools, stream=True, metadata=metadata)
             )
         except LLMConfigurationError:
             raise
@@ -294,6 +300,7 @@ class OpenAICompatibleModelGateway:
         tools: tuple[ToolDefinition, ...],
         *,
         stream: bool,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, object]:
         request: dict[str, object] = {
             "model": self.config.model,
@@ -319,6 +326,19 @@ class OpenAICompatibleModelGateway:
             request["max_tokens"] = self.config.max_tokens
         if self.config.extra_body:
             request["extra_body"] = self.config.extra_body
+        output_contract = (metadata or {}).get("output_contract")
+        if isinstance(output_contract, dict) and output_contract.get("provider_native"):
+            schema = output_contract.get("schema")
+            name = output_contract.get("name")
+            if isinstance(schema, dict) and isinstance(name, str) and name:
+                request["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": name,
+                        "strict": bool(output_contract.get("strict", True)),
+                        "schema": schema,
+                    },
+                }
         return request
 
     def _get_client(self) -> Any:

@@ -34,6 +34,14 @@ class AgentPolicy:
     tool_timeout_seconds: float = 30.0
     tool_max_attempts: int = 2
     retry_base_seconds: float = 0.25
+    model_context_tokens: int = 128_000
+    reserved_output_tokens: int = 4_096
+    context_compaction_ratio: float = 0.8
+    context_keep_recent_messages: int = 6
+    context_summary_max_tokens: int = 2_048
+    input_cost_per_million_usd: float | None = None
+    output_cost_per_million_usd: float | None = None
+    max_run_cost_usd: float | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -55,6 +63,10 @@ class AgentPolicy:
             self.max_output_tokens,
             self.max_total_tokens,
             self.tool_max_attempts,
+            self.model_context_tokens,
+            self.reserved_output_tokens,
+            self.context_keep_recent_messages,
+            self.context_summary_max_tokens,
         )
         if any(value <= 0 for value in integer_limits):
             raise ValueError("agent policy limits must be positive")
@@ -62,6 +74,15 @@ class AgentPolicy:
             raise ValueError("agent timeouts must be positive")
         if self.tool_timeout_seconds <= 0 or self.retry_base_seconds < 0:
             raise ValueError("tool timeout must be positive and retry delay non-negative")
+        if self.reserved_output_tokens >= self.model_context_tokens:
+            raise ValueError("reserved output tokens must be smaller than model context")
+        if not 0 < self.context_compaction_ratio <= 1:
+            raise ValueError("context_compaction_ratio must be in (0, 1]")
+        prices = (self.input_cost_per_million_usd, self.output_cost_per_million_usd)
+        if any(value is not None and value < 0 for value in prices):
+            raise ValueError("model token prices cannot be negative")
+        if self.max_run_cost_usd is not None and self.max_run_cost_usd <= 0:
+            raise ValueError("max_run_cost_usd must be positive")
 
     def allows_tool(self, tool_name: str, *, side_effects: bool) -> bool:
         if tool_name in self.blocked_tools:

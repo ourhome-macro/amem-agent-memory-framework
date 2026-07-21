@@ -6,6 +6,11 @@ from agent_memory_runtime.governance.retention.policy import (
     RetentionPolicy,
     RetentionReport,
 )
+from agent_memory_runtime.governance.retention.worker import (
+    RetentionCycle,
+    RetentionWorker,
+    RetentionWorkerReport,
+)
 
 __all__ = [
     "RetentionAction",
@@ -14,4 +19,7 @@ __all__ = [
     "RetentionPlanner",
     "RetentionPolicy",
     "RetentionReport",
+    "RetentionCycle",
+    "RetentionWorker",
+    "RetentionWorkerReport",
 ]

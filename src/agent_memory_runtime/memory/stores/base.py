@@ -6,12 +6,15 @@ from typing import Protocol
 from agent_memory_runtime.audit.stores.base import AuditStore
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
+from agent_memory_runtime.domain.query import MemoryQuery
+from agent_memory_runtime.domain.tombstone import MemoryTombstone
 
 __all__ = [
     "AuditStore",
     "EventStore",
     "MemoryStore",
     "SnapshotStore",
+    "TombstoneStore",
     "TransactionManager",
 ]
 
@@ -40,6 +43,15 @@ class MemoryStore(Protocol):
     def list_records(self) -> list[MemoryRecord]:
         ...
 
+    def query_records(
+        self,
+        query: MemoryQuery,
+        *,
+        limit: int,
+        offset: int = 0,
+    ) -> list[MemoryRecord]:
+        ...
+
     def replace_all(self, records: list[MemoryRecord]) -> None:
         ...
 
@@ -52,6 +64,23 @@ class SnapshotStore(Protocol):
         ...
 
     def latest(self) -> dict[str, object] | None:
+        ...
+
+    def clear(self) -> None:
+        ...
+
+    def prune(self, *, keep_last: int) -> int:
+        ...
+
+
+class TombstoneStore(Protocol):
+    def put(self, tombstone: MemoryTombstone) -> None:
+        ...
+
+    def get(self, memory_id: str) -> MemoryTombstone | None:
+        ...
+
+    def list_tombstones(self) -> list[MemoryTombstone]:
         ...
 
     def clear(self) -> None:

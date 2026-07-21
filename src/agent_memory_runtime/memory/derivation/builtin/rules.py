@@ -82,17 +82,30 @@ class BeliefRule:
         owner = _agent_id(event, fallback=event.actor_id)
         subject = str(event.payload.get("subject_id") or event.actor_id)
         key = _slug(str(event.payload.get("key") or subject))
+        layer = str(event.payload.get("layer", MemoryLayer.CORE.value))
+        operation = str(
+            event.payload.get("operation")
+            or (
+                MemoryOperation.REVISE.value
+                if event.kind == EventKind.PREFERENCE.value
+                else MemoryOperation.CREATE.value
+            )
+        )
         return [
             MemoryCandidate(
-                memory_id=_scoped_memory_id(
-                    event,
-                    legacy=f"belief:{event.session_id}:{owner}:{key}",
-                    kind="belief",
-                    parts=(event.session_id, owner, key),
+                memory_id=(
+                    _profile_memory_id(event, kind="belief", owner=owner, key=key)
+                    if layer == MemoryLayer.CORE.value
+                    else _scoped_memory_id(
+                        event,
+                        legacy=f"belief:{event.session_id}:{owner}:{key}",
+                        kind="belief",
+                        parts=(event.session_id, owner, key),
+                    )
                 ),
                 memory_type=MemoryType.BELIEF.value,
                 scope=str(event.payload.get("scope", MemoryScope.PRIVATE.value)),
-                layer=str(event.payload.get("layer", MemoryLayer.CORE.value)),
+                layer=layer,
                 session_id=event.session_id,
                 subject_id=subject,
                 content=statement,
@@ -101,7 +114,7 @@ class BeliefRule:
                 tenant_id=event.tenant_id,
                 user_id=event.user_id,
                 agent_id=owner,
-                operation=str(event.payload.get("operation", MemoryOperation.CREATE.value)),
+                operation=operation,
                 owner_id=owner,
                 visible_to=tuple(str(item) for item in event.payload.get("visible_to", (owner,))),
                 labels=tuple(event.labels),
@@ -110,6 +123,8 @@ class BeliefRule:
                 confidence=float(event.payload.get("confidence", 0.85)),
                 metadata={
                     "key": key,
+                    "profile_key": _profile_key(event, owner=owner, key=key),
+                    "value": event.payload.get("value"),
                     "truth_value": event.payload.get("truth_value"),
                     "authority": event.payload.get("authority", "event_observed"),
                 },
@@ -180,11 +195,11 @@ class StrategyRule:
         result = str(event.payload.get("result", "unknown"))
         return [
             MemoryCandidate(
-                memory_id=_scoped_memory_id(
+                memory_id=_profile_memory_id(
                     event,
-                    legacy=f"strategy:{event.session_id}:{agent_id}:{_slug(task)}",
                     kind="strategy",
-                    parts=(event.session_id, agent_id, _slug(task)),
+                    owner=agent_id,
+                    key=_slug(task),
                 ),
                 memory_type=MemoryType.STRATEGY.value,
                 scope=str(event.payload.get("scope", MemoryScope.PRIVATE.value)),
@@ -200,6 +215,9 @@ class StrategyRule:
                 tenant_id=event.tenant_id,
                 user_id=event.user_id,
                 agent_id=agent_id,
+                operation=str(
+                    event.payload.get("operation") or MemoryOperation.REVISE.value
+                ),
                 owner_id=agent_id,
                 visible_to=tuple(
                     str(item) for item in event.payload.get("visible_to", (agent_id,))
@@ -212,7 +230,15 @@ class StrategyRule:
                 ),
                 salience=float(event.payload.get("salience", 0.8)),
                 confidence=float(event.payload.get("confidence", 0.9)),
-                metadata={"task": task, "result": result},
+                metadata={
+                    "task": task,
+                    "result": result,
+                    "profile_key": _profile_key(
+                        event,
+                        owner=agent_id,
+                        key=_slug(task),
+                    ),
+                },
             )
         ]
 
@@ -238,6 +264,34 @@ def _scoped_memory_id(
         return legacy
     encoded = ":".join(quote(str(part), safe="") for part in parts)
     return f"v2:{kind}:{quote(tenant_id, safe='')}:{encoded}"
+
+
+def _profile_memory_id(
+    event: Event,
+    *,
+    kind: str,
+    owner: str,
+    key: str,
+) -> str:
+    identity = _profile_identity(event)
+    encoded = ":".join(
+        quote(str(part), safe="")
+        for part in (event.tenant_id or "default", identity, owner, key)
+    )
+    return f"v3:{kind}:{encoded}"
+
+
+def _profile_key(event: Event, *, owner: str, key: str) -> str:
+    return "|".join((event.tenant_id or "default", _profile_identity(event), owner, key))
+
+
+def _profile_identity(event: Event) -> str:
+    return str(
+        event.user_id
+        or event.payload.get("user_id")
+        or event.payload.get("subject_id")
+        or event.actor_id
+    )
 
 
 def _slug(value: str) -> str:

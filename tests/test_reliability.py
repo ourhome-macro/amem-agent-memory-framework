@@ -78,8 +78,8 @@ def test_tenant_identity_is_propagated_and_memory_ids_do_not_collide() -> None:
 
     first = tenant_a.records[0]
     second = tenant_b.records[0]
-    assert first.memory_id == "v2:belief:tenant-a:s1:assistant:appearance"
-    assert second.memory_id == "v2:belief:tenant-b:s1:assistant:appearance"
+    assert first.memory_id == "v3:belief:tenant-a:user-a:assistant:appearance"
+    assert second.memory_id == "v3:belief:tenant-b:user-b:assistant:appearance"
     assert first.tenant_id == "tenant-a"
     assert first.user_id == "user-a"
     assert first.agent_id == "assistant"

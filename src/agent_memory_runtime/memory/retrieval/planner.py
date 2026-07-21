@@ -29,15 +29,20 @@ def normalize_query(query: MemoryQuery) -> MemoryQuery:
         tags=query.tags,
         source_memory_ids=query.source_memory_ids,
         limit=query.limit,
+        session_policy=query.session_policy,
     )
 
 
 def _default_layers(text: str) -> tuple[str, ...]:
-    normalized = text.casefold()
-    if any(marker in normalized for marker in _ARCHIVAL_QUERY_MARKERS):
+    if requests_archival_recall(text):
         return (
             MemoryLayer.CORE.value,
             MemoryLayer.WORKING.value,
             MemoryLayer.ARCHIVAL.value,
         )
     return (MemoryLayer.CORE.value, MemoryLayer.WORKING.value)
+
+
+def requests_archival_recall(text: str) -> bool:
+    normalized = text.casefold()
+    return any(marker in normalized for marker in _ARCHIVAL_QUERY_MARKERS)

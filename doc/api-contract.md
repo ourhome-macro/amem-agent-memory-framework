@@ -13,6 +13,14 @@ approval、reconciliation、evaluation 和 run 终态。每个执行代次有独
 处理：创建或幂等读取 run，领取带 fencing token 的 lease，从 checkpoint 恢复消息和待执行工具，
 按 `AgentPolicy` 推进模型/工具循环，并在每个不可重复边界之前持久化状态。
 
+每次模型调用前执行强制 preflight：计算消息、工具 schema、预留输出、累计 Token 与可选美元成本。
+达到 `context_compaction_ratio` 时，旧的完整消息组会转换为带来源 hash 的不可信确定性摘要，并先保存
+Checkpoint；超过模型窗口、Run Token 或成本硬限制时，不会调用模型供应商。
+
+`AgentRequest.output_contract` 可携带 `OutputContract`。Schema 在创建契约时按 Draft 2020-12 校验；
+最终正文必须通过本地 JSON Schema 校验。失败时最多执行配置次数的受控修复，原始无效正文不会通过
+`model.output.delta` 暴露；成功的 `run.completed` 同时包含 `output` 与 `structured_output`。
+
 ### `BusinessAgentRuntime.resume(run_id, tenant_id, user_id)`
 
 仅允许完全匹配 run tenant/user 的调用方恢复 pending run。waiting approval 和 reconciliation run
@@ -108,11 +116,25 @@ KMS/信封加密 codec 或全盘加密。完整状态机和故障矩阵见
 
 除更新 `runtime.last_trace` 和写入 `access` 审计外，不产生状态变更。
 
+`MemoryQuery.session_policy` 支持：
+
+- `exact`：指定 session 时，所有记忆层只读取该 session；这是兼容默认值。
+- `profile`：Working 仍限定当前 session，Core 和被 planner 启用的 Archival 可跨 session。
+- `all`：所有启用层均可跨 session，用于显式历史检索和运维工具。
+
+会话策略不改变 tenant/user/agent 访问控制。`session_id=None` 表示调用方没有提供会话过滤条件；生产
+交互请求应始终传入 session ID。SQLite Store 会先用结构化身份、层、状态、类型、scope、标签和词项
+索引读取有限候选，再进入统一的 `hard_filter`、`AccessChecker` 和精排。
+
 ### `AgentMemoryRuntime.project(query)`
 
 输入：`MemoryQuery` 或符合查询结构的字典。
 
 输出：`AgentContext`，包含已选记忆 ID、阻止数量、投影上下文、已投影记忆载荷和检索追踪。
+
+`AgentContext.personalization` 与 `personalization_context` 只来自 Core belief 中白名单 key 的结构化
+`metadata.value`。自由文本偏好不会成为可信指令；语言、详细程度、语气、时区和无障碍值经过固定
+格式/枚举校验后，才进入系统控制的 `<personalization-profile>` 块。
 
 ### `AgentMemoryRuntime.project_fast(query)`
 
@@ -137,6 +159,22 @@ KMS/信封加密 codec 或全盘加密。完整状态机和故障矩阵见
 - 保存快照
 
 输出：`RuntimeSnapshot`。
+
+Replay 会查询 `TombstoneStore`。事件 sequence 不高于删除水位的同 ID 候选不会复活；删除水位之后的
+新显式事件可以重新创建该语义记忆。读取路径也执行相同水位检查，防止 JSONL 在 Tombstone 已落盘、
+物理投影尚未删除时崩溃而重新暴露数据。
+
+### `RetentionWorker`
+
+`run_once()` 在一个可用的共享事务中完成计划、归档/删除、Tombstone、审计和 Snapshot 刷新。
+`run_forever(stop_event=..., max_cycles=..., on_cycle=...)` 使用可中断等待，返回常量内存的累计报告，
+不会把无限周期历史保存在进程内。Snapshot Store 在每次保存后只保留配置的最近 N 份。
+
+### `TokenEstimator`
+
+`AdaptiveTokenEstimator` 提供保守 Unicode/CJK 估算，并可按模型注册原生计数器；
+`CallableTokenEstimator` 可直接适配供应商 tokenizer。ContextBuilder 和 BusinessAgentRuntime 共享该
+协议，分别约束记忆投影预算和完整模型调用预算。
 
 ### `AgentMemoryRuntime.ingest_async(event)`
 
@@ -214,8 +252,9 @@ KMS/信封加密 codec 或全盘加密。完整状态机和故障矩阵见
 
 ## CLI 契约
 
-`amem` CLI 提供 `init`、`ingest`、`derive`、`retrieve`、`project`、`respond`、`queue`、`retention`、
-`audit`、`replay`、`eval` 以及三个演示命令。`respond` 支持 `--stream`、`--fast` 和
+`amem` CLI 提供 `init`、`ingest`、`derive`、`retrieve`、`project`、`respond`、`chat`、`queue`、
+`retention`、`audit`、`replay`、`eval` 以及三个演示命令。`retrieve`、`project`、`respond` 支持
+`--tenant`、`--user`、`--session` 和 `--session-policy`；`respond` 另支持 `--stream`、`--fast` 和
 `--retrieval-timeout-ms`。`init` 会创建 `audit.jsonl` 和 `derivation_queue.jsonl`，`audit` 输出已持久化的无原文审计记录。
 
 治理命令：
@@ -227,8 +266,12 @@ amem queue run-once
 amem worker
 amem retention plan --archive-after-seq 30 --archive-below-salience 0.2
 amem retention apply --delete-sensitive-after-seq 10
+amem retention worker --forever --interval-seconds 300
 amem audit-dashboard --out .amem/audit.html
 ```
+
+`amem eval` 输出每个 case 与整体的 Recall@K、Precision@K、MRR、nDCG；任一 expected 未在 K 截断内
+命中或任一 forbidden ID 出现在返回结果中时，命令以退出码 1 结束，可直接作为 CI 质量门禁。
 
 ## Tool Runtime API
 

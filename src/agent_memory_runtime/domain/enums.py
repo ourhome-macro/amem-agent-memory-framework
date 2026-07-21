@@ -33,6 +33,12 @@ class MemoryLayer(StrEnum):
     ARCHIVAL = "archival"
 
 
+class MemorySessionPolicy(StrEnum):
+    EXACT = "exact"
+    PROFILE = "profile"
+    ALL = "all"
+
+
 class MemoryOperation(StrEnum):
     CREATE = "create"
     REINFORCE = "reinforce"

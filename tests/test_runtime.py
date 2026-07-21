@@ -131,7 +131,9 @@ def test_lifecycle_idempotently_reinforces_existing_memory() -> None:
         )
     )
 
-    record = runtime.memory_store.get("belief:s1:support_agent:refund_channel")
+    record = runtime.memory_store.get(
+        "v3:belief:default:user:support_agent:refund_channel"
+    )
 
     assert record is not None
     assert record.reinforcement_count == 2
@@ -210,7 +212,7 @@ def test_private_memory_cannot_be_promoted_to_shared() -> None:
 
 
 def test_context_budget_keeps_high_salience_memory() -> None:
-    runtime = AgentMemoryRuntime(config=RuntimeConfig(context_token_budget=14))
+    runtime = AgentMemoryRuntime(config=RuntimeConfig(context_token_budget=42))
     runtime.ingest(
         _message_event(event_id="low", salience=0.2, text="refund status low value note")
     )
