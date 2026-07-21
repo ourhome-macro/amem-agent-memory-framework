@@ -27,7 +27,11 @@ class RetrievalPipeline:
         query: MemoryQuery,
     ) -> tuple[list[MemoryRecord], RetrievalTrace]:
         planned = normalize_query(query)
-        principal = Principal(agent_id=planned.agent_id)
+        principal = Principal(
+            agent_id=planned.agent_id,
+            tenant_id=planned.tenant_id,
+            user_id=planned.user_id,
+        )
         filtered = [record for record in records if hard_filter(record, planned)]
         blocked_count = 0
         scored: list[RetrievalResult] = []

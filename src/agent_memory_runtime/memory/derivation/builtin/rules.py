@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from agent_memory_runtime.domain.enums import (
     EventKind,
@@ -28,10 +29,15 @@ class EpisodicRule:
         text = str(event.payload.get("text") or event.payload.get("summary") or "").strip()
         if not text:
             return []
-        target_agent = str(event.payload.get("agent_id") or event.actor_id)
+        target_agent = _agent_id(event, fallback=event.actor_id)
         return [
             MemoryCandidate(
-                memory_id=f"episodic:{event.session_id}:{event.event_id}",
+                memory_id=_scoped_memory_id(
+                    event,
+                    legacy=f"episodic:{event.session_id}:{event.event_id}",
+                    kind="episodic",
+                    parts=(event.session_id, event.event_id),
+                ),
                 memory_type=MemoryType.EPISODIC.value,
                 scope=str(event.payload.get("scope", MemoryScope.PRIVATE.value)),
                 layer=MemoryLayer.WORKING.value,
@@ -40,6 +46,9 @@ class EpisodicRule:
                 content=text,
                 source_event_ids=(event.event_id,),
                 rule_id=self.rule_id,
+                tenant_id=event.tenant_id,
+                user_id=event.user_id,
+                agent_id=target_agent,
                 owner_id=target_agent,
                 visible_to=(target_agent,),
                 labels=tuple(event.labels),
@@ -70,12 +79,17 @@ class BeliefRule:
         ).strip()
         if not statement:
             return []
-        owner = str(event.payload.get("agent_id") or event.actor_id)
+        owner = _agent_id(event, fallback=event.actor_id)
         subject = str(event.payload.get("subject_id") or event.actor_id)
         key = _slug(str(event.payload.get("key") or subject))
         return [
             MemoryCandidate(
-                memory_id=f"belief:{event.session_id}:{owner}:{key}",
+                memory_id=_scoped_memory_id(
+                    event,
+                    legacy=f"belief:{event.session_id}:{owner}:{key}",
+                    kind="belief",
+                    parts=(event.session_id, owner, key),
+                ),
                 memory_type=MemoryType.BELIEF.value,
                 scope=str(event.payload.get("scope", MemoryScope.PRIVATE.value)),
                 layer=str(event.payload.get("layer", MemoryLayer.CORE.value)),
@@ -84,6 +98,9 @@ class BeliefRule:
                 content=statement,
                 source_event_ids=(event.event_id,),
                 rule_id=self.rule_id,
+                tenant_id=event.tenant_id,
+                user_id=event.user_id,
+                agent_id=owner,
                 operation=str(event.payload.get("operation", MemoryOperation.CREATE.value)),
                 owner_id=owner,
                 visible_to=tuple(str(item) for item in event.payload.get("visible_to", (owner,))),
@@ -111,11 +128,16 @@ class RelationshipRule:
         target = str(event.payload.get("target_id") or "")
         if not target:
             return []
-        owner = str(event.payload.get("agent_id") or source)
+        owner = _agent_id(event, fallback=source)
         sentiment = str(event.payload.get("sentiment") or "noted")
         return [
             MemoryCandidate(
-                memory_id=f"relationship:{event.session_id}:{source}:{target}",
+                memory_id=_scoped_memory_id(
+                    event,
+                    legacy=f"relationship:{event.session_id}:{source}:{target}",
+                    kind="relationship",
+                    parts=(event.session_id, owner, source, target),
+                ),
                 memory_type=MemoryType.RELATIONSHIP.value,
                 scope=str(event.payload.get("scope", MemoryScope.PRIVATE.value)),
                 layer=MemoryLayer.WORKING.value,
@@ -124,6 +146,9 @@ class RelationshipRule:
                 content=f"{source} relationship signal toward {target}: {sentiment}",
                 source_event_ids=(event.event_id,),
                 rule_id=self.rule_id,
+                tenant_id=event.tenant_id,
+                user_id=event.user_id,
+                agent_id=owner,
                 owner_id=owner,
                 visible_to=tuple(str(item) for item in event.payload.get("visible_to", (owner,))),
                 labels=tuple(event.labels),
@@ -147,7 +172,7 @@ class StrategyRule:
     def derive(self, event: Event) -> list[MemoryCandidate]:
         if event.kind != EventKind.TASK_OUTCOME.value:
             return []
-        agent_id = str(event.payload.get("agent_id") or event.actor_id)
+        agent_id = _agent_id(event, fallback=event.actor_id)
         task = str(event.payload.get("task") or event.payload.get("subject_id") or "task")
         outcome = str(event.payload.get("outcome") or "").strip()
         if not outcome:
@@ -155,7 +180,12 @@ class StrategyRule:
         result = str(event.payload.get("result", "unknown"))
         return [
             MemoryCandidate(
-                memory_id=f"strategy:{event.session_id}:{agent_id}:{_slug(task)}",
+                memory_id=_scoped_memory_id(
+                    event,
+                    legacy=f"strategy:{event.session_id}:{agent_id}:{_slug(task)}",
+                    kind="strategy",
+                    parts=(event.session_id, agent_id, _slug(task)),
+                ),
                 memory_type=MemoryType.STRATEGY.value,
                 scope=str(event.payload.get("scope", MemoryScope.PRIVATE.value)),
                 layer=MemoryLayer.CORE.value,
@@ -167,6 +197,9 @@ class StrategyRule:
                     str(item) for item in event.payload.get("source_memory_ids", ())
                 ),
                 rule_id=self.rule_id,
+                tenant_id=event.tenant_id,
+                user_id=event.user_id,
+                agent_id=agent_id,
                 owner_id=agent_id,
                 visible_to=tuple(
                     str(item) for item in event.payload.get("visible_to", (agent_id,))
@@ -186,6 +219,25 @@ class StrategyRule:
 
 def builtin_rules() -> list[object]:
     return [EpisodicRule(), BeliefRule(), RelationshipRule(), StrategyRule()]
+
+
+def _agent_id(event: Event, *, fallback: str) -> str:
+    return str(event.agent_id or event.payload.get("agent_id") or fallback)
+
+
+def _scoped_memory_id(
+    event: Event,
+    *,
+    legacy: str,
+    kind: str,
+    parts: tuple[str, ...],
+) -> str:
+    """Keep default-tenant IDs stable and namespace every non-default tenant."""
+    tenant_id = event.tenant_id or "default"
+    if tenant_id == "default":
+        return legacy
+    encoded = ":".join(quote(str(part), safe="") for part in parts)
+    return f"v2:{kind}:{quote(tenant_id, safe='')}:{encoded}"
 
 
 def _slug(value: str) -> str:

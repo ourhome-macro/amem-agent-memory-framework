@@ -20,6 +20,8 @@ def normalize_query(query: MemoryQuery) -> MemoryQuery:
     return MemoryQuery(
         agent_id=query.agent_id,
         text=query.text,
+        tenant_id=query.tenant_id,
+        user_id=query.user_id,
         session_id=query.session_id,
         scopes=query.scopes,
         memory_types=query.memory_types,

@@ -14,6 +14,9 @@ class MemoryQuery:
     tags: tuple[str, ...] = ()
     source_memory_ids: tuple[str, ...] = ()
     limit: int | None = None
+    # Appended to preserve the pre-v0.2 positional constructor contract.
+    tenant_id: str = "default"
+    user_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,4 +67,3 @@ class RetrievalTrace:
     blocked_count: int
     selected_memory_ids: tuple[str, ...]
     results: tuple[RetrievalResult, ...] = field(default_factory=tuple)
-

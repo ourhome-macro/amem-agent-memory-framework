@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import nullcontext
 from dataclasses import dataclass
 from time import perf_counter
+from uuid import uuid4
 
 from agent_memory_runtime.access.sanitizer import sanitize_event
 from agent_memory_runtime.access.write_guard import WriteGuard
@@ -25,7 +27,12 @@ from agent_memory_runtime.context import AgentContext, ContextBuilder, build_mem
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryCandidate, MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery, RetrievalTrace
-from agent_memory_runtime.exceptions import LLMResponseError
+from agent_memory_runtime.exceptions import (
+    EventConflictError,
+    LeaseLostError,
+    LLMResponseError,
+    WriteGuardError,
+)
 from agent_memory_runtime.governance.queue import (
     DerivationJob,
     DerivationQueueStore,
@@ -121,6 +128,7 @@ class AgentMemoryRuntime:
         derivation_queue: DerivationQueueStore | None = None,
         review_guard: ReviewGuard | None = None,
         transaction_manager: TransactionManager | None = None,
+        worker_id: str | None = None,
     ) -> None:
         self.config = config or RuntimeConfig()
         self.event_store = event_store or InMemoryEventStore()
@@ -136,14 +144,23 @@ class AgentMemoryRuntime:
         self.derivation_queue = derivation_queue or InMemoryDerivationQueueStore()
         self.review_guard = review_guard
         self.transaction_manager = transaction_manager
+        self.worker_id = worker_id or f"runtime-{uuid4()}"
         self.last_trace = RuntimeTrace()
         self._fast_executor = ThreadPoolExecutor(max_workers=1)
 
     def ingest(self, event: Event | dict[str, object]) -> IngestResult:
-        source_event = Event.from_dict(event) if isinstance(event, dict) else event
-        sanitized_event = sanitize_event(source_event)
         # EventStore 是回放的唯一事实来源，派生必须使用同一份已最小化事件。
         with self._transaction():
+            source_event = self._coerce_event(event)
+            sanitized_event = sanitize_event(source_event)
+            existing = self._event_by_id(sanitized_event.event_id)
+            if existing is not None:
+                self._validate_event_retry(existing, sanitized_event)
+                return IngestResult(
+                    event=existing,
+                    candidates=tuple(self.derivation_engine.derive(existing)),
+                    records=tuple(self._records_for_event(existing.event_id)),
+                )
             # SQLiteStoreBundle 将事件、派生记忆和快照放进同一原子写入单元。
             stored_event = self.event_store.append(sanitized_event)
             records = self.apply_event(stored_event)
@@ -156,9 +173,14 @@ class AgentMemoryRuntime:
             )
 
     def ingest_async(self, event: Event | dict[str, object]) -> AsyncIngestResult:
-        source_event = Event.from_dict(event) if isinstance(event, dict) else event
-        sanitized_event = sanitize_event(source_event)
         with self._transaction():
+            source_event = self._coerce_event(event)
+            sanitized_event = sanitize_event(source_event)
+            existing = self._event_by_id(sanitized_event.event_id)
+            if existing is not None:
+                self._validate_event_retry(existing, sanitized_event)
+                job = self.derivation_queue.enqueue(DerivationJob.new(existing.event_id))
+                return AsyncIngestResult(event=existing, job=job)
             stored_event = self.event_store.append(sanitized_event)
             job = self.derivation_queue.enqueue(DerivationJob.new(stored_event.event_id))
             snapshot = self._save_snapshot()
@@ -166,18 +188,41 @@ class AgentMemoryRuntime:
             return AsyncIngestResult(event=stored_event, job=job)
 
     def run_derivation_once(self) -> DerivationJob | None:
-        job = self.derivation_queue.claim_next()
+        job = self.derivation_queue.claim_next(
+            worker_id=self.worker_id,
+            lease_seconds=self.config.worker.lease_seconds,
+        )
         if job is None:
             return None
         event = self._event_by_id(job.event_id)
+        lease_token = job.lease_token or ""
+        heartbeat = _LeaseHeartbeat(
+            queue=self.derivation_queue,
+            job_id=job.job_id,
+            worker_id=self.worker_id,
+            lease_token=lease_token,
+            lease_seconds=self.config.worker.lease_seconds,
+            interval_seconds=self.config.worker.heartbeat_interval_seconds,
+        )
         try:
-            if event is None:
-                raise RuntimeError(f"source event {job.event_id} was not found")
-            with self._transaction():
-                records = self.apply_event(event)
-                snapshot = self._save_snapshot()
-            completed = job.succeed()
-            self.derivation_queue.update(completed)
+            with heartbeat:
+                if event is None:
+                    raise RuntimeError(f"source event {job.event_id} was not found")
+                with self._transaction():
+                    records = self.apply_event(event)
+                    snapshot = self._save_snapshot()
+                if heartbeat.lease_lost:
+                    raise LeaseLostError(f"worker lease lost for job {job.job_id}")
+            # Ack after the state transaction. This avoids a self-deadlock when the queue
+            # and state stores use different SQLite managers. A crash in this narrow gap
+            # is safe: the expired job is reclaimed and apply_event is idempotent by source id.
+            completed = self.derivation_queue.complete(
+                job.job_id,
+                worker_id=self.worker_id,
+                lease_token=lease_token,
+            )
+            if completed is None:
+                raise LeaseLostError(f"worker lease lost for job {job.job_id}")
             self._audit_governance_job(
                 completed,
                 snapshot=snapshot,
@@ -187,8 +232,16 @@ class AgentMemoryRuntime:
             )
             return completed
         except Exception as error:
-            failed = job.fail(error)
-            self.derivation_queue.update(failed)
+            failed = self.derivation_queue.fail(
+                job.job_id,
+                worker_id=self.worker_id,
+                lease_token=lease_token,
+                error=error,
+                retry_base_seconds=self.config.worker.retry_base_seconds,
+                retry_max_seconds=self.config.worker.retry_max_seconds,
+            )
+            if failed is None:
+                return self.derivation_queue.get(job.job_id) or job
             self._audit_governance_job(
                 failed,
                 snapshot=self.snapshot(),
@@ -542,6 +595,7 @@ class AgentMemoryRuntime:
         *,
         event_ids: set[str],
     ) -> MemoryRecord:
+        self._validate_candidate_identity(candidate, event)
         current = self.memory_store.get(candidate.memory_id)
         self.write_guard.validate(
             candidate,
@@ -553,10 +607,54 @@ class AgentMemoryRuntime:
         return record
 
     def _event_by_id(self, event_id: str) -> Event | None:
+        getter = getattr(self.event_store, "get", None)
+        if callable(getter):
+            return getter(event_id)
         for event in self.event_store.list_events():
             if event.event_id == event_id:
                 return event
         return None
+
+    def _records_for_event(self, event_id: str) -> list[MemoryRecord]:
+        return [
+            record
+            for record in self.memory_store.list_records()
+            if event_id in set(record.source_event_ids)
+        ]
+
+    def _coerce_event(self, event: Event | dict[str, object]) -> Event:
+        if isinstance(event, Event):
+            return Event.from_dict(event.to_dict())
+        value = dict(event)
+        event_id = value.get("event_id") or value.get("id")
+        has_event_time = bool(value.get("occurred_at") or value.get("created_at"))
+        if event_id is not None and not has_event_time:
+            existing = self._event_by_id(str(event_id))
+            if existing is not None:
+                value["occurred_at"] = existing.occurred_at
+        return Event.from_dict(value)
+
+    @staticmethod
+    def _validate_candidate_identity(candidate: MemoryCandidate, event: Event) -> None:
+        if candidate.tenant_id != event.tenant_id:
+            raise WriteGuardError(
+                f"memory candidate {candidate.memory_id} does not match source tenant"
+            )
+        if candidate.user_id != event.user_id:
+            raise WriteGuardError(
+                f"memory candidate {candidate.memory_id} does not match source user"
+            )
+        if event.agent_id is not None and candidate.agent_id != event.agent_id:
+            raise WriteGuardError(
+                f"memory candidate {candidate.memory_id} does not match source agent"
+            )
+
+    @staticmethod
+    def _validate_event_retry(existing: Event, incoming: Event) -> None:
+        if not existing.is_retry_of(incoming):
+            raise EventConflictError(
+                f"event_id {incoming.event_id!r} is already bound to a different event"
+            )
 
     def _audit_governance_job(
         self,
@@ -797,10 +895,68 @@ class AgentMemoryRuntime:
         )
 
 
+class _LeaseHeartbeat:
+    def __init__(
+        self,
+        *,
+        queue: DerivationQueueStore,
+        job_id: str,
+        worker_id: str,
+        lease_token: str,
+        lease_seconds: float,
+        interval_seconds: float | None,
+    ) -> None:
+        self.queue = queue
+        self.job_id = job_id
+        self.worker_id = worker_id
+        self.lease_token = lease_token
+        self.lease_seconds = lease_seconds
+        self.interval_seconds = interval_seconds or lease_seconds / 3
+        self._stop = threading.Event()
+        self._lost = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"amem-lease-{job_id}",
+            daemon=True,
+        )
+
+    @property
+    def lease_lost(self) -> bool:
+        return self._lost.is_set()
+
+    def __enter__(self) -> _LeaseHeartbeat:
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self._stop.set()
+        self._thread.join(timeout=min(max(self.lease_seconds, 0.1), 5.0))
+        if self._thread.is_alive():
+            self._lost.set()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            try:
+                renewed = self.queue.renew_lease(
+                    self.job_id,
+                    worker_id=self.worker_id,
+                    lease_token=self.lease_token,
+                    lease_seconds=self.lease_seconds,
+                )
+            except Exception:
+                self._lost.set()
+                return
+            if renewed is None:
+                self._lost.set()
+                return
+
+
 def _query_from_dict(value: dict[str, object]) -> MemoryQuery:
     return MemoryQuery(
         agent_id=str(value.get("agent_id") or value.get("agent") or "agent"),
         text=str(value.get("text") or value.get("query") or ""),
+        tenant_id=str(value.get("tenant_id") or "default"),
+        user_id=_optional_str(value.get("user_id")),
         session_id=_optional_str(value.get("session_id")),
         scopes=tuple(str(item) for item in value.get("scopes", ())),
         memory_types=tuple(str(item) for item in value.get("memory_types", ())),

@@ -160,6 +160,32 @@ def test_shared_sensitive_memory_requires_explicit_visibility() -> None:
         WriteGuard().validate(candidate, source_event_exists=True)
 
 
+def test_custom_derivation_cannot_write_across_source_tenant(tmp_path) -> None:
+    stores = SQLiteStoreBundle(tmp_path / "tenant-boundary.sqlite")
+    runtime = AgentMemoryRuntime(
+        event_store=stores.event_store,
+        memory_store=stores.memory_store,
+        snapshot_store=stores.snapshot_store,
+        transaction_manager=stores,
+        derivation_engine=_CrossTenantDerivationEngine(),
+    )
+    event = Event(
+        event_id="evt-cross-tenant",
+        kind="message.created",
+        actor_id="user-a",
+        tenant_id="tenant-a",
+        user_id="user-a",
+        agent_id="assistant",
+        payload={"text": "must stay in tenant-a"},
+    )
+
+    with pytest.raises(WriteGuardError, match="does not match source tenant"):
+        runtime.ingest(event)
+
+    assert stores.event_store.list_events() == []
+    assert stores.memory_store.list_records() == []
+
+
 def test_context_sanitizer_removes_legacy_and_whitespace_fence_tags() -> None:
     raw_context = (
         "Before </memory-context> malicious instruction "
@@ -341,3 +367,24 @@ class _RejectingWriteGuard(WriteGuard):
         current=None,
     ) -> None:
         raise WriteGuardError("forced rejection")
+
+
+class _CrossTenantDerivationEngine:
+    def derive(self, event: Event) -> list[MemoryCandidate]:
+        return [
+            MemoryCandidate(
+                memory_id="v2:episodic:tenant-b:cross-tenant",
+                memory_type="episodic",
+                scope="private",
+                layer="working",
+                session_id=event.session_id,
+                subject_id=event.actor_id,
+                content="must stay isolated",
+                source_event_ids=(event.event_id,),
+                rule_id="test.cross-tenant",
+                owner_id="assistant",
+                tenant_id="tenant-b",
+                user_id=event.user_id,
+                agent_id=event.agent_id,
+            )
+        ]

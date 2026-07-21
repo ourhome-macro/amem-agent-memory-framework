@@ -41,6 +41,34 @@ py -3.12 -m venv .venv
 pip install -e .[dev]
 ```
 
+## 快速上手
+
+最小演示只需要本地 JSONL Store，不依赖真实 LLM：
+
+```powershell
+amem init
+amem ingest examples/data/customer_support_events.jsonl
+amem retrieve --agent support_agent --query "refund status"
+amem project --agent support_agent --query "refund status"
+amem replay
+```
+
+如果要演示低延迟写入路径，可以让事件先进入派生队列，再由 worker 后台生成记忆：
+
+```powershell
+amem init
+amem ingest examples/data/customer_support_events.jsonl --async-derive
+amem queue
+amem worker
+amem retrieve --agent support_agent --query "refund status"
+```
+
+如果要调用真实 OpenAI 兼容模型，先在 `.env` 中配置对应供应商密钥，再执行：
+
+```powershell
+amem respond --agent support_agent --query "退款进度怎么样" --stream --fast
+```
+
 ## 命令行工具
 
 ```powershell
@@ -72,6 +100,28 @@ CLI 追踪输出包含已选记忆 ID、评分明细、被阻止的记忆数量�
 `rule_version`、`config_hash`、`last_event_sequence` 和 `state_hash`。流式和快路径响应还会输出
 `context_source`、`retrieval_timed_out` 和 `first_token_ms`。
 每次执行 `amem` 子命令都会先输出 AMEM 启动横幅和运行时定位说明。
+
+## 审计面板与监控
+
+CLI 会把审计记录写入 `.amem/audit.jsonl`。执行一些写入、检索、工具调用或模型调用后，可以生成静态 HTML 审计面板：
+
+```powershell
+amem audit-dashboard --out .amem/audit.html
+```
+
+在 Windows 上直接打开：
+
+```powershell
+Invoke-Item .amem/audit.html
+```
+
+或者使用默认浏览器打开绝对路径：
+
+```powershell
+Start-Process (Resolve-Path .amem/audit.html)
+```
+
+面板会展示审计类型、执行结果、决策分布和脱敏后的审计 JSON。它适合本地调试和面试演示；当前不是常驻 Web 服务。如果要刷新监控内容，重新执行 `amem audit-dashboard --out .amem/audit.html` 即可。
 
 ## 数据安全与审计
 

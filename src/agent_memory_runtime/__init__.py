@@ -2,6 +2,7 @@ from agent_memory_runtime.config import (
     FastResponseConfig,
     LLMConfig,
     RuntimeConfig,
+    WorkerConfig,
     provider_presets,
 )
 from agent_memory_runtime.runtime import (
@@ -20,6 +21,7 @@ __all__ = [
     "FastResponseConfig",
     "LLMConfig",
     "RuntimeConfig",
+    "WorkerConfig",
     "ToolExecutor",
     "ToolRegistry",
     "ToolRequest",

@@ -8,6 +8,8 @@ from agent_memory_runtime.domain.query import MemoryQuery
 def hard_filter(record: MemoryRecord, query: MemoryQuery) -> bool:
     if record.status != MemoryStatus.ACTIVE.value:
         return False
+    if record.tenant_id != query.tenant_id:
+        return False
     if query.session_id is not None and record.session_id != query.session_id:
         return False
     if query.scopes and record.scope not in set(query.scopes):
@@ -19,4 +21,3 @@ def hard_filter(record: MemoryRecord, query: MemoryQuery) -> bool:
     if query.tags and not set(query.tags) & set(record.tags):
         return False
     return True
-

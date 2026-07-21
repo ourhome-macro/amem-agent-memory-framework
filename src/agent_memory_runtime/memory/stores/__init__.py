@@ -12,6 +12,7 @@ from agent_memory_runtime.memory.stores.jsonl import (
 )
 from agent_memory_runtime.memory.stores.sqlite import (
     SQLiteAuditStore,
+    SQLiteBackupReport,
     SQLiteEventStore,
     SQLiteMemoryStore,
     SQLiteSnapshotStore,
@@ -30,6 +31,7 @@ __all__ = [
     "JsonlSnapshotStore",
     "SQLiteEventStore",
     "SQLiteAuditStore",
+    "SQLiteBackupReport",
     "SQLiteMemoryStore",
     "SQLiteSnapshotStore",
     "SQLiteStoreBundle",

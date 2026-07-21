@@ -47,6 +47,8 @@ _ROUTING_FIELD_NAMES = {
     "source_memory_ids",
     "subject_id",
     "target_id",
+    "tenant_id",
+    "user_id",
     "visible_to",
 }
 _FREE_TEXT_FIELDS = {"belief", "content", "outcome", "preference", "summary", "text"}

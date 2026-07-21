@@ -20,6 +20,9 @@ class EventStore(Protocol):
     def append(self, event: Event) -> Event:
         ...
 
+    def get(self, event_id: str) -> Event | None:
+        ...
+
     def list_events(self) -> list[Event]:
         ...
 

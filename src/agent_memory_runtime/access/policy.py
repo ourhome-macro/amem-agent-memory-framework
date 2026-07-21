@@ -15,11 +15,20 @@ class AccessDecision:
 
 class AccessPolicy:
     def decide(self, principal: Principal, record: MemoryRecord) -> AccessDecision:
+        if record.tenant_id != principal.tenant_id:
+            return AccessDecision(False, "tenant_boundary_blocked")
+        if (
+            record.user_id is not None
+            and record.user_id != principal.user_id
+            and not principal.is_auditor
+        ):
+            return AccessDecision(False, "user_boundary_blocked")
+        owner_agent_id = record.agent_id or record.owner_id
         labels = set(record.labels)
         if MemoryLabel.SENSITIVE.value in labels and not principal.is_auditor:
             if MemoryLabel.SENSITIVE.value not in set(principal.allowed_labels):
                 return AccessDecision(False, "sensitive_label_blocked")
-        if MemoryLabel.PRIVATE.value in labels and record.owner_id != principal.agent_id:
+        if MemoryLabel.PRIVATE.value in labels and owner_agent_id != principal.agent_id:
             if principal.agent_id not in set(record.visible_to) and not principal.is_auditor:
                 return AccessDecision(False, "private_label_blocked")
         if record.scope == MemoryScope.GLOBAL.value:
@@ -34,7 +43,7 @@ class AccessPolicy:
             return AccessDecision(False, "shared_scope_visibility_blocked")
         if record.scope == MemoryScope.PRIVATE.value:
             if (
-                record.owner_id == principal.agent_id
+                owner_agent_id == principal.agent_id
                 or principal.agent_id in set(record.visible_to)
             ):
                 return AccessDecision(True)

@@ -23,6 +23,30 @@ class FastResponseConfig:
 
 
 @dataclass(frozen=True)
+class WorkerConfig:
+    lease_seconds: float = 30.0
+    heartbeat_interval_seconds: float | None = None
+    retry_base_seconds: float = 1.0
+    retry_max_seconds: float = 300.0
+
+    def __post_init__(self) -> None:
+        if self.lease_seconds <= 0:
+            raise ValueError("worker lease_seconds must be positive")
+        if (
+            self.heartbeat_interval_seconds is not None
+            and self.heartbeat_interval_seconds <= 0
+        ):
+            raise ValueError("worker heartbeat_interval_seconds must be positive")
+        if (
+            self.heartbeat_interval_seconds is not None
+            and self.heartbeat_interval_seconds >= self.lease_seconds
+        ):
+            raise ValueError("worker heartbeat interval must be shorter than its lease")
+        if self.retry_base_seconds < 0 or self.retry_max_seconds < 0:
+            raise ValueError("worker retry delays cannot be negative")
+
+
+@dataclass(frozen=True)
 class ProviderPreset:
     provider: str
     base_url: str
@@ -147,6 +171,7 @@ class RuntimeConfig:
     low_salience_archive_threshold: float = 0.12
     retrieval_weights: RetrievalWeights = field(default_factory=RetrievalWeights)
     fast_response: FastResponseConfig = field(default_factory=FastResponseConfig)
+    worker: WorkerConfig = field(default_factory=WorkerConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
 
     @property

@@ -1,107 +1,17 @@
 from __future__ import annotations
 
 import json
-import sqlite3
-import threading
-from collections.abc import Iterator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 from agent_memory_runtime.audit.stores.sqlite import SQLiteAuditStore
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
-
-
-class SQLiteTransactionManager:
-    """Shares one SQLite write transaction across the runtime stores in a single operation."""
-
-    def __init__(self, path: str | Path) -> None:
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._local = threading.local()
-        self._init_schema()
-
-    @contextmanager
-    def transaction(self) -> Iterator[None]:
-        if self._active_connection() is not None:
-            # 运行时编排和单个 Store 可以嵌套，但不能拆分同一个写入单元。
-            yield
-            return
-
-        connection = self._connect()
-        self._local.connection = connection
-        try:
-            connection.execute("BEGIN IMMEDIATE")
-            yield
-            connection.commit()
-        except BaseException:
-            connection.rollback()
-            raise
-        finally:
-            self._local.connection = None
-            connection.close()
-
-    @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
-        active = self._active_connection()
-        if active is not None:
-            yield active
-            return
-        # Store 被直接使用时，也为该单次操作创建短事务。
-        with self.transaction():
-            connection = self._active_connection()
-            if connection is None:
-                raise RuntimeError("SQLite transaction did not expose an active connection.")
-            yield connection
-
-    def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path, isolation_level=None)
-        connection.execute("PRAGMA foreign_keys=ON")
-        connection.execute("PRAGMA journal_mode=WAL")
-        return connection
-
-    def _active_connection(self) -> sqlite3.Connection | None:
-        return getattr(self._local, "connection", None)
-
-    def _init_schema(self) -> None:
-        with self.transaction():
-            connection = self._active_connection()
-            if connection is None:
-                raise RuntimeError("SQLite schema initialization requires an active connection.")
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS events (
-                    sequence INTEGER PRIMARY KEY,
-                    event_id TEXT UNIQUE NOT NULL,
-                    payload TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS memories (
-                    memory_id TEXT PRIMARY KEY,
-                    payload TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS snapshots (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    payload TEXT NOT NULL
-                )
-                """
-            )
-            connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS llm_call_traces (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    trace_id TEXT UNIQUE NOT NULL,
-                    payload TEXT NOT NULL
-                )
-                """
-            )
+from agent_memory_runtime.exceptions import EventConflictError
+from agent_memory_runtime.memory.stores.sqlite_manager import (
+    SQLiteBackupReport,
+    SQLiteTransactionManager,
+)
 
 
 class SQLiteStore:
@@ -117,6 +27,17 @@ class SQLiteStore:
 class SQLiteEventStore(SQLiteStore):
     def append(self, event: Event) -> Event:
         with self._manager.connection() as connection:
+            row = connection.execute(
+                "SELECT payload FROM events WHERE event_id = ?",
+                (event.event_id,),
+            ).fetchone()
+            if row is not None:
+                existing = Event.from_dict(json.loads(row[0]))
+                if not existing.is_retry_of(event):
+                    raise EventConflictError(
+                        f"event_id {event.event_id!r} is already bound to a different event"
+                    )
+                return existing
             current = connection.execute("SELECT COALESCE(MAX(sequence), 0) FROM events").fetchone()
             sequence = event.sequence or int(current[0]) + 1
             stored = Event.from_dict({**event.to_dict(), "sequence": sequence})
@@ -126,8 +47,18 @@ class SQLiteEventStore(SQLiteStore):
             )
         return stored
 
+    def get(self, event_id: str) -> Event | None:
+        with self._manager.read_connection() as connection:
+            row = connection.execute(
+                "SELECT payload FROM events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return Event.from_dict(json.loads(row[0]))
+
     def list_events(self) -> list[Event]:
-        with self._manager.connection() as connection:
+        with self._manager.read_connection() as connection:
             rows = connection.execute("SELECT payload FROM events ORDER BY sequence").fetchall()
         return [Event.from_dict(json.loads(row[0])) for row in rows]
 
@@ -145,7 +76,7 @@ class SQLiteMemoryStore(SQLiteStore):
             )
 
     def get(self, memory_id: str) -> MemoryRecord | None:
-        with self._manager.connection() as connection:
+        with self._manager.read_connection() as connection:
             row = connection.execute(
                 "SELECT payload FROM memories WHERE memory_id = ?",
                 (memory_id,),
@@ -155,7 +86,7 @@ class SQLiteMemoryStore(SQLiteStore):
         return MemoryRecord.from_dict(json.loads(row[0]))
 
     def list_records(self) -> list[MemoryRecord]:
-        with self._manager.connection() as connection:
+        with self._manager.read_connection() as connection:
             rows = connection.execute("SELECT payload FROM memories ORDER BY memory_id").fetchall()
         return [MemoryRecord.from_dict(json.loads(row[0])) for row in rows]
 
@@ -178,7 +109,7 @@ class SQLiteSnapshotStore(SQLiteStore):
             connection.execute("INSERT INTO snapshots(payload) VALUES (?)", (_serialize(snapshot),))
 
     def latest(self) -> dict[str, object] | None:
-        with self._manager.connection() as connection:
+        with self._manager.read_connection() as connection:
             row = connection.execute(
                 "SELECT payload FROM snapshots ORDER BY id DESC LIMIT 1"
             ).fetchone()
@@ -206,6 +137,31 @@ class SQLiteStoreBundle:
 
     def transaction(self) -> AbstractContextManager[None]:
         return self._manager.transaction()
+
+    @property
+    def schema_version(self) -> int:
+        return self._manager.schema_version
+
+    def integrity_check(self) -> str:
+        return self._manager.integrity_check()
+
+    def backup(self, destination: str | Path) -> SQLiteBackupReport:
+        return self._manager.backup(destination)
+
+    def shadow_replay(
+        self,
+        *,
+        config: object | None = None,
+        derivation_engine: object | None = None,
+    ) -> object:
+        from agent_memory_runtime.audit.replay import shadow_replay_events
+
+        return shadow_replay_events(
+            self.event_store.list_events(),
+            self.snapshot_store.latest(),
+            config=config,
+            derivation_engine=derivation_engine,
+        )
 
 
 def _serialize(value: object) -> str:

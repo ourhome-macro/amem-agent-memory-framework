@@ -28,7 +28,7 @@ class SQLiteAuditStore:
 
     def list_envelopes(self) -> list[AuditEnvelope]:
         envelopes: list[AuditEnvelope] = []
-        with self._manager.connection() as connection:
+        with self._manager.read_connection() as connection:
             rows = connection.execute(
                 "SELECT payload FROM audit_envelopes ORDER BY id"
             ).fetchall()

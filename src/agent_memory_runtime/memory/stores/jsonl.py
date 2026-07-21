@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import threading
 from pathlib import Path
 from typing import Any
 
 from agent_memory_runtime.audit.stores.jsonl import JsonlAuditStore
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
+from agent_memory_runtime.exceptions import EventConflictError
 
 __all__ = [
     "JsonlAuditStore",
@@ -21,21 +24,38 @@ class JsonlEventStore:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.touch(exist_ok=True)
+        self._lock = threading.RLock()
 
     def append(self, event: Event) -> Event:
-        sequence = event.sequence or len(self.list_events()) + 1
-        stored = Event.from_dict({**event.to_dict(), "sequence": sequence})
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(stored.to_dict(), ensure_ascii=True, sort_keys=True) + "\n")
-        return stored
+        with self._lock:
+            events = self.list_events()
+            existing = next((item for item in events if item.event_id == event.event_id), None)
+            if existing is not None:
+                if not existing.is_retry_of(event):
+                    raise EventConflictError(
+                        f"event_id {event.event_id!r} is already bound to a different event"
+                    )
+                return existing
+            sequence = event.sequence or len(events) + 1
+            stored = Event.from_dict({**event.to_dict(), "sequence": sequence})
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(stored.to_dict(), ensure_ascii=True, sort_keys=True) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            return stored
+
+    def get(self, event_id: str) -> Event | None:
+        with self._lock:
+            return next((item for item in self.list_events() if item.event_id == event_id), None)
 
     def list_events(self) -> list[Event]:
-        events: list[Event] = []
-        with self.path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                if line.strip():
-                    events.append(Event.from_dict(json.loads(line)))
-        return events
+        with self._lock:
+            events: list[Event] = []
+            with self.path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.strip():
+                        events.append(Event.from_dict(json.loads(line)))
+            return events
 
     def clear(self) -> None:
         self.path.write_text("", encoding="utf-8")

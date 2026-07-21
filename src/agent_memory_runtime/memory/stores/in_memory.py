@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from threading import RLock
 
 from agent_memory_runtime.audit.stores.in_memory import InMemoryAuditStore
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
+from agent_memory_runtime.exceptions import EventConflictError
 
 __all__ = [
     "InMemoryAuditStore",
@@ -17,18 +19,36 @@ __all__ = [
 class InMemoryEventStore:
     def __init__(self) -> None:
         self._events: list[Event] = []
+        self._event_by_id: dict[str, Event] = {}
+        self._lock = RLock()
 
     def append(self, event: Event) -> Event:
-        sequence = event.sequence or len(self._events) + 1
-        stored = Event.from_dict({**event.to_dict(), "sequence": sequence})
-        self._events.append(stored)
-        return stored
+        with self._lock:
+            existing = self._event_by_id.get(event.event_id)
+            if existing is not None:
+                if not existing.is_retry_of(event):
+                    raise EventConflictError(
+                        f"event_id {event.event_id!r} is already bound to a different event"
+                    )
+                return existing
+            sequence = event.sequence or len(self._events) + 1
+            stored = Event.from_dict({**event.to_dict(), "sequence": sequence})
+            self._events.append(stored)
+            self._event_by_id[stored.event_id] = stored
+            return stored
+
+    def get(self, event_id: str) -> Event | None:
+        with self._lock:
+            return self._event_by_id.get(event_id)
 
     def list_events(self) -> list[Event]:
-        return list(self._events)
+        with self._lock:
+            return list(self._events)
 
     def clear(self) -> None:
-        self._events.clear()
+        with self._lock:
+            self._events.clear()
+            self._event_by_id.clear()
 
 
 class InMemoryMemoryStore:

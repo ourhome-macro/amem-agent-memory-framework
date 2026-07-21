@@ -42,6 +42,20 @@ class WriteGuard:
         current: MemoryRecord,
         candidate: MemoryCandidate,
     ) -> None:
+        if current.tenant_id != candidate.tenant_id:
+            raise WriteGuardError(
+                f"memory {candidate.memory_id} cannot cross tenant boundary"
+            )
+        if current.user_id != candidate.user_id:
+            raise WriteGuardError(
+                f"memory {candidate.memory_id} cannot cross user boundary"
+            )
+        current_agent_id = current.agent_id or current.owner_id
+        candidate_agent_id = candidate.agent_id or candidate.owner_id
+        if current_agent_id != candidate_agent_id:
+            raise WriteGuardError(
+                f"memory {candidate.memory_id} cannot cross agent boundary"
+            )
         if (
             current.scope == MemoryScope.PRIVATE.value
             and candidate.scope != MemoryScope.PRIVATE.value

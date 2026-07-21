@@ -14,6 +14,14 @@ class StoreError(AgentMemoryRuntimeError):
     """Raised when a store cannot persist or load data."""
 
 
+class EventConflictError(StoreError):
+    """Raised when an event id is reused with a different canonical payload."""
+
+
+class LeaseLostError(StoreError):
+    """Raised when a worker attempts to mutate a job after losing its lease."""
+
+
 class WriteGuardError(AgentMemoryRuntimeError):
     """Raised when a memory candidate violates information-flow constraints."""
 

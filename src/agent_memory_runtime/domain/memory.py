@@ -33,6 +33,10 @@ class MemoryCandidate:
     salience: float = 0.5
     confidence: float = 1.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Appended to preserve the pre-v0.2 positional constructor contract.
+    tenant_id: str = "default"
+    user_id: str | None = None
+    agent_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +49,9 @@ class MemoryCandidate:
             "content": self.content,
             "source_event_ids": list(self.source_event_ids),
             "rule_id": self.rule_id,
+            "tenant_id": self.tenant_id,
+            "user_id": self.user_id,
+            "agent_id": self.agent_id,
             "operation": self.operation,
             "owner_id": self.owner_id,
             "visible_to": list(self.visible_to),
@@ -82,6 +89,10 @@ class MemoryRecord:
     updated_at: str = ""
     last_event_sequence: int = 0
     last_operation: str = MemoryOperation.CREATE.value
+    # Appended to preserve the pre-v0.2 positional constructor contract.
+    tenant_id: str = "default"
+    user_id: str | None = None
+    agent_id: str | None = None
 
     @classmethod
     def from_candidate(cls, candidate: MemoryCandidate, *, now: str, sequence: int) -> MemoryRecord:
@@ -95,6 +106,9 @@ class MemoryRecord:
             content=candidate.content,
             source_event_ids=tuple(candidate.source_event_ids),
             rule_id=candidate.rule_id,
+            tenant_id=candidate.tenant_id,
+            user_id=candidate.user_id,
+            agent_id=candidate.agent_id,
             owner_id=candidate.owner_id,
             visible_to=tuple(candidate.visible_to),
             source_memory_ids=tuple(candidate.source_memory_ids),
@@ -123,6 +137,13 @@ class MemoryRecord:
             content=str(value.get("content", "")),
             source_event_ids=tuple(str(item) for item in value.get("source_event_ids", ())),
             rule_id=str(value.get("rule_id", "")),
+            tenant_id=str(value.get("tenant_id", "default")),
+            user_id=_optional_str(value.get("user_id")),
+            agent_id=(
+                _optional_str(value.get("agent_id"))
+                if "agent_id" in value
+                else _optional_str(value.get("owner_id"))
+            ),
             owner_id=_optional_str(value.get("owner_id")),
             visible_to=tuple(str(item) for item in value.get("visible_to", ())),
             source_memory_ids=tuple(str(item) for item in value.get("source_memory_ids", ())),
@@ -150,6 +171,9 @@ class MemoryRecord:
             "content": self.content,
             "source_event_ids": list(self.source_event_ids),
             "rule_id": self.rule_id,
+            "tenant_id": self.tenant_id,
+            "user_id": self.user_id,
+            "agent_id": self.agent_id,
             "owner_id": self.owner_id,
             "visible_to": list(self.visible_to),
             "source_memory_ids": list(self.source_memory_ids),
@@ -175,4 +199,3 @@ def _optional_str(value: object) -> str | None:
 
 def _clamp(value: float) -> float:
     return round(min(max(value, 0.0), 1.0), 4)
-
