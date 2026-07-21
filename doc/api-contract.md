@@ -1,5 +1,51 @@
 # API 契约
 
+## 通用业务 Agent Runtime
+
+### `BusinessAgentRuntime.run(request)`
+
+输入：携带 tenant/user/agent/session/request 身份的 `AgentRequest`。
+
+输出：`AsyncIterator[AgentRunEvent]`。事件覆盖 context、模型原生 delta、tool request/start/result、
+approval、reconciliation、evaluation 和 run 终态。每个执行代次有独立 `execution_id`；适配层按
+`(run_id, execution_id, sequence)` 排序。
+
+处理：创建或幂等读取 run，领取带 fencing token 的 lease，从 checkpoint 恢复消息和待执行工具，
+按 `AgentPolicy` 推进模型/工具循环，并在每个不可重复边界之前持久化状态。
+
+### `BusinessAgentRuntime.resume(run_id, tenant_id, user_id)`
+
+仅允许完全匹配 run tenant/user 的调用方恢复 pending run。waiting approval 和 reconciliation run
+必须先完成相应人工决定；completed/failed/cancelled run 不会重新执行。
+
+### `BusinessAgentRuntime.cancel(run_id, tenant_id, user_id)`
+
+原子地将非终态 run 标为 cancelled，并通知同进程的 cooperative cancellation token。已经进入系统
+调用的同步副作用不能被 Python 强制终止，非幂等未知结果仍需人工对账。
+
+### `BusinessAgentRuntime.decide_approval(...)`
+
+批准或拒绝 pending approval。相同 reviewer 的相同决定可幂等重试；相反决定抛出
+`AgentApprovalError`。拒绝会作为 tool result 返回模型，不直接把 run 标为失败。
+
+### `BusinessAgentRuntime.reconcile_tool_call(...)`
+
+仅处理 `reconciliation_required` tool call。operator 明确确认外部调用成功或失败后，run 回到
+pending，可以通过 `resume()` 继续。
+
+### `BusinessAgentRuntime.compensate_tool_call(...)`
+
+仅补偿 succeeded tool call；工具必须实现 compensator。补偿是显式运维动作，不由模型自动触发。
+
+### `AgentStateStore`
+
+持久化协议包含 run、checkpoint、turn、tool call、approval 的创建、读取和乐观更新，以及 run
+claim/renew/cancel。内建实现为 `InMemoryAgentStateStore` 和 `SQLiteAgentStateStore`。
+
+SQLite agent payload 可通过 `StateCodec` 编码；默认 `JsonStateCodec` 是明文，生产环境应使用
+KMS/信封加密 codec 或全盘加密。完整状态机和故障矩阵见
+[`business-agent-runtime-v0.3.0.md`](business-agent-runtime-v0.3.0.md)。
+
 ## Python 运行时
 
 ### `AgentMemoryRuntime.ingest(event)`

@@ -1,5 +1,48 @@
 # Agent Memory Runtime
 
+## v0.3：通用业务 Agent 框架
+
+项目现在同时提供两个边界清晰的运行时：
+
+- `AgentMemoryRuntime`：事件溯源记忆、检索、访问控制和治理；
+- `BusinessAgentRuntime`：异步 Agent 循环、原生流式模型、工具调用、Run/Checkpoint、审批、取消、恢复、策略预算和指标。
+
+产品或传输适配层只负责把外部输入转换为 `AgentRequest` 并消费 `AgentRunEvent`；播放器、HTTP、WebSocket、语音和 UI 协议不进入通用框架。
+
+```python
+import asyncio
+
+from agent_memory_runtime import (
+    AgentRequest,
+    BusinessAgentRuntime,
+    LLMConfig,
+    OpenAICompatibleModelGateway,
+)
+
+
+async def main() -> None:
+    runtime = BusinessAgentRuntime(
+        model_gateway=OpenAICompatibleModelGateway(
+            LLMConfig.for_provider("openai")
+        )
+    )
+    async for event in runtime.run(
+        AgentRequest(
+            tenant_id="tenant-1",
+            user_id="user-1",
+            agent_id="assistant",
+            request_id="request-1",
+            message="帮我完成这个业务任务",
+        )
+    ):
+        print(event.to_dict())
+
+
+asyncio.run(main())
+```
+
+完整状态机、工具可靠性语义、SQLite schema v3、加密 codec 边界和部署检查见 [`doc/business-agent-runtime-v0.3.0.md`](doc/business-agent-runtime-v0.3.0.md)。
+
 Agent Memory Runtime 是一个面向有状态 Agent 的事件源记忆运行时框架。
 普通 RAG 用于检索外部知识；本运行时维护 Agent 的长期交互状态，追溯每条记忆的来源，
 治理其生命周期，并将经过安全筛选的记忆投影为 Agent 上下文。
@@ -197,6 +240,13 @@ print(context.projected_context)
 src/agent_memory_runtime/
   runtime.py
   config.py
+  agent/
+    runtime.py
+    model_gateway.py
+    tool_runtime.py
+    policy.py
+    modules.py
+    stores/
   domain/
   memory/
     derivation/

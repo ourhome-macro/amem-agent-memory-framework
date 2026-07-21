@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, ClassVar, Protocol
 
 from agent_memory_runtime.tools.policy import ToolPolicyError
 
@@ -14,6 +14,10 @@ class FunctionTool:
     handler: Callable[[dict[str, Any]], dict[str, Any]]
     description: str = ""
     side_effects: bool = False
+    input_schema: dict[str, Any] | None = None
+    idempotent: bool | None = None
+    risk_level: str | None = None
+    requires_approval: bool = False
 
     def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
         return dict(self.handler(arguments))
@@ -25,6 +29,14 @@ class FileReadTool:
     name: str = "file.read"
     description: str = "Read a UTF-8 text file inside the configured root."
     side_effects: bool = False
+    idempotent: bool = True
+    risk_level: str = "low"
+    input_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {"path": {"type": "string", "minLength": 1}},
+        "required": ["path"],
+        "additionalProperties": False,
+    }
 
     def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
         target = _safe_path(self.root, str(arguments.get("path", "")))
@@ -42,6 +54,17 @@ class FileWriteTool:
     name: str = "file.write"
     description: str = "Write a UTF-8 text file inside the configured root."
     side_effects: bool = True
+    idempotent: bool = True
+    risk_level: str = "high"
+    input_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "minLength": 1},
+            "content": {"type": "string"},
+        },
+        "required": ["path", "content"],
+        "additionalProperties": False,
+    }
 
     def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
         target = _safe_path(self.root, str(arguments.get("path", "")))
@@ -73,6 +96,17 @@ class WebSearchTool:
     name: str = "web.search"
     description: str = "Search the web through a configured provider."
     side_effects: bool = False
+    idempotent: bool = True
+    risk_level: str = "low"
+    input_schema: ClassVar[dict[str, Any]] = {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "minLength": 1},
+            "max_results": {"type": "integer", "minimum": 1, "maximum": 10},
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    }
 
     def run(self, arguments: dict[str, Any]) -> dict[str, Any]:
         query = str(arguments.get("query", "")).strip()

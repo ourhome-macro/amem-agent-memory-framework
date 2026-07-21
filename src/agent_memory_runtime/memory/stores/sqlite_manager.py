@@ -125,6 +125,77 @@ _MIGRATIONS = (
             """,
         ),
     ),
+    _Migration(
+        version=3,
+        name="business_agent_runs",
+        statements=(
+            """
+            CREATE TABLE IF NOT EXISTS agent_runs (
+                run_id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                request_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                UNIQUE(tenant_id, request_id)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_agent_runs_tenant_status
+            ON agent_runs(tenant_id, status)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS agent_turns (
+                turn_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                UNIQUE(run_id, sequence),
+                FOREIGN KEY(run_id) REFERENCES agent_runs(run_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS agent_checkpoints (
+                run_id TEXT PRIMARY KEY,
+                version INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                FOREIGN KEY(run_id) REFERENCES agent_runs(run_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS agent_tool_calls (
+                call_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                FOREIGN KEY(run_id) REFERENCES agent_runs(run_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_agent_tool_calls_run_status
+            ON agent_tool_calls(run_id, status)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS agent_approvals (
+                approval_id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                call_id TEXT UNIQUE NOT NULL,
+                tenant_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                FOREIGN KEY(run_id) REFERENCES agent_runs(run_id) ON DELETE CASCADE,
+                FOREIGN KEY(call_id) REFERENCES agent_tool_calls(call_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_agent_approvals_tenant_status
+            ON agent_approvals(tenant_id, status)
+            """,
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = _MIGRATIONS[-1].version

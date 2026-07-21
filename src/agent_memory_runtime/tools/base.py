@@ -18,6 +18,8 @@ class ToolRequest:
     request_id: str = field(default_factory=lambda: str(uuid4()))
     labels: tuple[str, ...] = ("private",)
     tags: tuple[str, ...] = ()
+    tenant_id: str = "default"
+    user_id: str | None = None
 
 
 @dataclass(frozen=True)

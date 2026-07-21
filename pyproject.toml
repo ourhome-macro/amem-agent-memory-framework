@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-memory-runtime"
-version = "0.2.0"
-description = "Event-sourced typed memory runtime for stateful agents."
+version = "0.3.0"
+description = "Durable business-agent orchestration and event-sourced memory runtime."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

@@ -1,5 +1,19 @@
 # Agent 设计
 
+v0.3 起，`BusinessAgentRuntime` 负责通用业务 Agent 的 Run/Turn/Checkpoint 状态机、模型工具循环、
+审批、取消、恢复和策略预算；`AgentMemoryRuntime` 仍是它组合使用的记忆子系统。产品 transport、
+播放器协议、语音和 UI 都留在适配层。
+
+推荐的完整调用链：
+
+```text
+外部输入 -> Adapter -> AgentRequest
+                     -> BusinessAgentRuntime
+                        -> ModelGateway / ToolRuntime
+                        -> AgentRunEvent -> Adapter
+                        -> AgentMemoryRuntime（只读投影 + 受治理事件）
+```
+
 运行时不向 LLM 授予记忆写入权限。Agent 输出应先转换为事件，随后由派生规则和生命周期归并器
 决定这些事件是否产生记忆。
 

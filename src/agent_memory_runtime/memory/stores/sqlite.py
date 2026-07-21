@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from contextlib import AbstractContextManager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from agent_memory_runtime.audit.stores.sqlite import SQLiteAuditStore
 from agent_memory_runtime.domain.event import Event
@@ -12,6 +13,9 @@ from agent_memory_runtime.memory.stores.sqlite_manager import (
     SQLiteBackupReport,
     SQLiteTransactionManager,
 )
+
+if TYPE_CHECKING:
+    from agent_memory_runtime.agent.stores import StateCodec
 
 
 class SQLiteStore:
@@ -125,7 +129,13 @@ class SQLiteSnapshotStore(SQLiteStore):
 class SQLiteStoreBundle:
     """Creates stores that share one transaction manager and database file."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        agent_state_codec: StateCodec | None = None,
+    ) -> None:
+        from agent_memory_runtime.agent.stores import SQLiteAgentStateStore
         from agent_memory_runtime.governance.queue import SQLiteDerivationQueueStore
 
         self._manager = SQLiteTransactionManager(path)
@@ -134,6 +144,10 @@ class SQLiteStoreBundle:
         self.snapshot_store = SQLiteSnapshotStore(self._manager)
         self.audit_store = SQLiteAuditStore(self._manager)
         self.derivation_queue = SQLiteDerivationQueueStore(self._manager)
+        self.agent_state_store = SQLiteAgentStateStore(
+            self._manager,
+            codec=agent_state_codec,
+        )
 
     def transaction(self) -> AbstractContextManager[None]:
         return self._manager.transaction()
