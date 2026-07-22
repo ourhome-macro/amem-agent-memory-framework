@@ -47,7 +47,11 @@ from agent_memory_runtime.llm import (
 )
 from agent_memory_runtime.memory.derivation import DerivationEngine
 from agent_memory_runtime.memory.lifecycle import LifecycleReducer
-from agent_memory_runtime.memory.retrieval import RetrievalPipeline
+from agent_memory_runtime.memory.retrieval import (
+    CandidateBatch,
+    CandidateRetriever,
+    RetrievalPipeline,
+)
 from agent_memory_runtime.memory.retrieval.planner import normalize_query
 from agent_memory_runtime.memory.stores import (
     InMemoryEventStore,
@@ -135,6 +139,7 @@ class AgentMemoryRuntime:
         worker_id: str | None = None,
         token_estimator: TokenEstimator | None = None,
         tombstone_store: TombstoneStore | None = None,
+        candidate_retriever: CandidateRetriever | None = None,
     ) -> None:
         self.config = config or RuntimeConfig()
         self.event_store = event_store or InMemoryEventStore()
@@ -144,6 +149,11 @@ class AgentMemoryRuntime:
         self.derivation_engine = derivation_engine or DerivationEngine()
         self.lifecycle = lifecycle or LifecycleReducer(self.config)
         self.retrieval = retrieval or RetrievalPipeline(self.config)
+        self.candidate_retriever = candidate_retriever
+        if self.candidate_retriever is None:
+            candidate_factory = getattr(self.memory_store, "build_candidate_retriever", None)
+            if callable(candidate_factory):
+                self.candidate_retriever = candidate_factory(self.config.hybrid_retrieval)
         self.token_estimator = token_estimator or AdaptiveTokenEstimator()
         self.context_builder = context_builder or ContextBuilder(
             self.config,
@@ -328,9 +338,11 @@ class AgentMemoryRuntime:
         query: MemoryQuery | dict[str, object],
     ) -> tuple[list[MemoryRecord], RuntimeTrace]:
         memory_query = _query_from_dict(query) if isinstance(query, dict) else query
+        records, candidate_batch = self._records_and_candidates_for_query(memory_query)
         selected, trace = self.retrieval.retrieve(
-            self._records_for_query(memory_query),
+            records,
             memory_query,
+            candidate_batch=candidate_batch,
         )
         self._set_last_trace(trace, action="retrieve_memory", context_source="retrieval")
         return selected, self.last_trace
@@ -388,6 +400,8 @@ class AgentMemoryRuntime:
 
     def close(self) -> None:
         self._fast_executor.shutdown(wait=False, cancel_futures=True)
+        if self.candidate_retriever is not None:
+            self.candidate_retriever.close()
 
     def respond(
         self,
@@ -778,9 +792,13 @@ class AgentMemoryRuntime:
         context_source: str,
         records: list[MemoryRecord] | None = None,
     ) -> AgentContext:
+        candidate_batch = None
+        if records is None:
+            records, candidate_batch = self._records_and_candidates_for_query(query)
         selected, trace = self.retrieval.retrieve(
-            self._records_for_query(query) if records is None else records,
+            records,
             query,
+            candidate_batch=candidate_batch,
         )
         return self.context_builder.build(
             agent_id=query.agent_id,
@@ -822,6 +840,22 @@ class AgentMemoryRuntime:
         # projection removal from making deleted content visible again.
         return [record for record in records if not self._record_is_tombstoned(record)]
 
+    def _records_and_candidates_for_query(
+        self,
+        query: MemoryQuery,
+    ) -> tuple[list[MemoryRecord], CandidateBatch | None]:
+        if self.candidate_retriever is None:
+            return self._records_for_query(query), None
+        planned = normalize_query(query)
+        candidates = self.candidate_retriever.retrieve(
+            planned,
+            limit=self.config.max_retrieval_candidates,
+        )
+        memory_ids = [hit.memory_id for hit in candidates.hits]
+        records = self.memory_store.get_many(memory_ids)
+        records = [record for record in records if not self._record_is_tombstoned(record)]
+        return records, candidates
+
     def _record_is_tombstoned(self, record: MemoryRecord) -> bool:
         tombstone = self.tombstone_store.get(record.memory_id)
         return bool(
@@ -842,7 +876,9 @@ class AgentMemoryRuntime:
         audit_access: bool = True,
     ) -> None:
         snapshot = self.snapshot()
-        selected_ids = selected_memory_ids or trace.selected_memory_ids
+        selected_ids = (
+            trace.selected_memory_ids if selected_memory_ids is None else selected_memory_ids
+        )
         self.last_trace = RuntimeTrace(
             selected_memory_ids=selected_ids,
             blocked_memory_count=trace.blocked_count,
@@ -858,6 +894,17 @@ class AgentMemoryRuntime:
             context_source=context_source,
             retrieval_timed_out=retrieval_timed_out,
             first_token_ms=first_token_ms,
+            retrieval_legs=trace.retrieval_legs,
+            lexical_candidate_count=trace.lexical_candidate_count,
+            semantic_candidate_count=trace.semantic_candidate_count,
+            semantic_generation=trace.semantic_generation,
+            embedding_ms=trace.embedding_ms,
+            vector_search_ms=trace.vector_search_ms,
+            fusion_ms=trace.fusion_ms,
+            semantic_timed_out=trace.semantic_timed_out,
+            semantic_error_type=trace.semantic_error_type,
+            embedding_coverage=trace.embedding_coverage,
+            candidate_details=trace.candidate_details,
         )
         if audit_access:
             self._audit_access_trace(

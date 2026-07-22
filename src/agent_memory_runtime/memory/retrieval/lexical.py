@@ -17,17 +17,37 @@ def lexical_tokens(text: str) -> set[str]:
     uses bi-grams and a bounded full-sequence token for exact phrase matches.
     """
 
+    return set(lexical_token_sequence(text))
+
+
+def lexical_token_sequence(text: str) -> tuple[str, ...]:
+    """Return an ordered token stream suitable for FTS5 indexing.
+
+    Unlike ``lexical_tokens``, duplicates are retained so FTS5 can account for
+    term frequency when calculating BM25.
+    """
+
     normalized = unicodedata.normalize("NFKC", text).casefold()
-    tokens = {item for item in _LATIN_TOKEN_RE.findall(normalized)}
+    tokens = list(_LATIN_TOKEN_RE.findall(normalized))
     for match in _CJK_SEQUENCE_RE.finditer(normalized):
         sequence = match.group(0)
         if len(sequence) == 1:
-            tokens.add(sequence)
+            tokens.append(sequence)
             continue
-        tokens.update(sequence[index : index + 2] for index in range(len(sequence) - 1))
+        tokens.extend(sequence[index : index + 2] for index in range(len(sequence) - 1))
         if len(sequence) <= 12:
-            tokens.add(sequence)
-    return tokens
+            tokens.append(sequence)
+    return tuple(tokens)
+
+
+def fts_document_text(record: object) -> str:
+    return " ".join(lexical_token_sequence(searchable_record_text(record)))
+
+
+def fts_match_query(text: str) -> str:
+    """Build a safe OR query from the restricted lexical token alphabet."""
+
+    return " OR ".join(f'"{token}"' for token in sorted(lexical_tokens(text)))
 
 
 def searchable_record_text(record: object) -> str:

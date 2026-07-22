@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 from time import perf_counter
@@ -22,6 +22,8 @@ from agent_memory_runtime.agent import (
 )
 from agent_memory_runtime.config import LLMConfig, RuntimeConfig, provider_presets
 from agent_memory_runtime.domain.event import Event
+from agent_memory_runtime.exceptions import EmbeddingConfigurationError, StoreError
+from agent_memory_runtime.memory.embeddings import load_embedding_environment
 from agent_memory_runtime.memory.stores import SQLiteStoreBundle
 from agent_memory_runtime.runtime import AgentMemoryRuntime
 
@@ -85,9 +87,30 @@ class ChatTurnResult:
 
 def build_chat_context(data_dir: Path, config: LLMConfig) -> ChatRuntimeContext:
     data_dir.mkdir(parents=True, exist_ok=True)
-    bundle = SQLiteStoreBundle(data_dir / "runtime.sqlite")
+    try:
+        embedding_environment = load_embedding_environment(
+            require_online_threshold=True,
+        )
+    except EmbeddingConfigurationError as error:
+        raise ValueError(str(error)) from error
+    try:
+        bundle = SQLiteStoreBundle(
+            data_dir / "runtime.sqlite",
+            embedding_provider=embedding_environment.provider,
+        )
+    except StoreError as error:
+        raise ValueError(str(error)) from error
+    runtime_config = RuntimeConfig(llm=config)
+    if embedding_environment.min_similarity is not None:
+        runtime_config = replace(
+            runtime_config,
+            hybrid_retrieval=replace(
+                runtime_config.hybrid_retrieval,
+                min_semantic_similarity=embedding_environment.min_similarity,
+            ),
+        )
     memory_runtime = AgentMemoryRuntime(
-        config=RuntimeConfig(llm=config),
+        config=runtime_config,
         event_store=bundle.event_store,
         memory_store=bundle.memory_store,
         snapshot_store=bundle.snapshot_store,
@@ -185,9 +208,7 @@ async def _run_turn(
         tenant_id=settings.tenant_id,
         user_id=settings.user_id,
         request_id=request_id,
-        instructions=(
-            () if settings.instruction is None else (settings.instruction,)
-        ),
+        instructions=(() if settings.instruction is None else (settings.instruction,)),
         metadata={"adapter": "amem-cli"},
     )
     started_at = perf_counter()
@@ -237,10 +258,14 @@ async def _run_turn(
                 reason="interactive CLI decision",
             )
         else:
-            resolution = typer.prompt(
-                "tool outcome [succeeded/failed/abort]",
-                default="abort",
-            ).strip().casefold()
+            resolution = (
+                typer.prompt(
+                    "tool outcome [succeeded/failed/abort]",
+                    default="abort",
+                )
+                .strip()
+                .casefold()
+            )
             if resolution == "abort":
                 break
             if resolution not in {"succeeded", "failed"}:
@@ -348,9 +373,7 @@ def _handle_command(
         _print_providers(context.config.provider, console)
     elif name == "/model":
         if not argument:
-            console.print(
-                f"model={context.config.model} provider={context.config.provider}"
-            )
+            console.print(f"model={context.config.model} provider={context.config.provider}")
         else:
             config = LLMConfig.for_provider(
                 context.config.provider,
@@ -378,9 +401,7 @@ def _handle_command(
                 console.print(str(error))
             else:
                 context.reconfigure(config)
-                console.print(
-                    f"provider={config.provider} model={config.model}"
-                )
+                console.print(f"provider={config.provider} model={config.model}")
     elif name == "/session":
         if argument:
             settings.session_id = argument

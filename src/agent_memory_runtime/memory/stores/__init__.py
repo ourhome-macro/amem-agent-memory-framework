@@ -1,3 +1,9 @@
+from agent_memory_runtime.memory.embeddings import (
+    SQLiteEmbeddingGenerationStore,
+    SQLiteEmbeddingJobStore,
+    SQLiteEmbeddingScheduler,
+    SQLiteVectorIndex,
+)
 from agent_memory_runtime.memory.stores.in_memory import (
     InMemoryAuditStore,
     InMemoryEventStore,
@@ -42,4 +48,8 @@ __all__ = [
     "SQLiteStoreBundle",
     "SQLiteTombstoneStore",
     "SQLiteTransactionManager",
+    "SQLiteEmbeddingGenerationStore",
+    "SQLiteEmbeddingJobStore",
+    "SQLiteEmbeddingScheduler",
+    "SQLiteVectorIndex",
 ]

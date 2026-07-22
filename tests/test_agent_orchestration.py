@@ -580,7 +580,7 @@ def test_orchestration_store_fences_leases_and_checks_identity(
         store.cancel_run(run.orchestration_id, tenant_id="tenant-b")
 
 
-def test_sqlite_orchestration_survives_restart_and_bundle_uses_schema_v5(
+def test_sqlite_orchestration_survives_restart_and_bundle_uses_schema_v6(
     tmp_path: Any,
 ) -> None:
     async def scenario() -> None:
@@ -615,7 +615,7 @@ def test_sqlite_orchestration_survives_restart_and_bundle_uses_schema_v5(
         assert stored.status is OrchestrationStatus.COMPLETED
         assert stored.outputs == {"one": "durable"}
         assert records[0].status is DelegationStatus.COMPLETED
-        assert SQLiteStoreBundle(path).schema_version == 5
+        assert SQLiteStoreBundle(path).schema_version == 6
         with sqlite3.connect(path) as connection:
             assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 

@@ -1,0 +1,83 @@
+cases:
+  - id: zero_lexical_overlap_chinese_paraphrase
+    category: semantic_paraphrase
+    agent: companion
+    tenant_id: eval-tenant
+    user_id: alice
+    session_id: semantic-session
+    query: 产品何时可以发布
+    k: 3
+    expected_memory_ids:
+      - v2:episodic:eval-tenant:semantic-session:eval-paraphrase
+  - id: chinese_english_cross_language
+    category: cross_language
+    agent: companion
+    tenant_id: eval-tenant
+    user_id: alice
+    session_id: semantic-session
+    query: Where is my car service appointment?
+    k: 3
+    expected_memory_ids:
+      - v2:episodic:eval-tenant:semantic-session:eval-cross-language
+  - id: exact_order_id_must_survive_fusion
+    category: exact_identifier
+    agent: companion
+    tenant_id: eval-tenant
+    user_id: alice
+    session_id: semantic-session
+    query: ZX-49271
+    k: 1
+    expected_memory_ids:
+      - v2:episodic:eval-tenant:semantic-session:eval-order-id
+  - id: negation_hard_negative
+    category: hard_negative
+    agent: companion
+    tenant_id: eval-tenant
+    user_id: alice
+    session_id: semantic-session
+    query: 自动续费已经关闭
+    k: 1
+    expected_memory_ids:
+      - v2:episodic:eval-tenant:semantic-session:eval-renewal-off
+  - id: other_tenant_never_enters_candidates
+    category: authorization
+    agent: companion
+    tenant_id: eval-tenant
+    user_id: alice
+    session_id: semantic-session
+    query: ORBIT-8842
+    k: 3
+    expected_memory_ids: []
+    forbidden_memory_ids:
+      - v2:episodic:other-tenant:semantic-session:eval-other-tenant
+  - id: other_agent_private_memory_never_enters_candidates
+    category: authorization
+    agent: companion
+    tenant_id: eval-tenant
+    user_id: alice
+    session_id: semantic-session
+    query: AGENT-7711
+    k: 3
+    expected_memory_ids: []
+    forbidden_memory_ids:
+      - v2:episodic:eval-tenant:semantic-session:eval-other-agent
+  - id: exact_session_boundary
+    category: session_boundary
+    agent: companion
+    tenant_id: eval-tenant
+    user_id: alice
+    session_id: semantic-session
+    query: SESSION-6633
+    k: 3
+    expected_memory_ids: []
+    forbidden_memory_ids:
+      - v2:episodic:eval-tenant:other-session:eval-other-session
+  - id: calibrated_no_result
+    category: relevance_gate
+    agent: companion
+    tenant_id: eval-tenant
+    user_id: alice
+    session_id: semantic-session
+    query: 不存在的量子航运许可证
+    k: 3
+    expected_memory_ids: []

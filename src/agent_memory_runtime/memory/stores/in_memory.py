@@ -68,6 +68,9 @@ class InMemoryMemoryStore:
     def list_records(self) -> list[MemoryRecord]:
         return sorted(self._records.values(), key=lambda item: item.memory_id)
 
+    def get_many(self, memory_ids: list[str] | tuple[str, ...]) -> list[MemoryRecord]:
+        return [self._records[memory_id] for memory_id in memory_ids if memory_id in self._records]
+
     def query_records(
         self,
         query: MemoryQuery,

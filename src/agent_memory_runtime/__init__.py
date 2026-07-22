@@ -34,7 +34,9 @@ from agent_memory_runtime.agent import (
 )
 from agent_memory_runtime.config import (
     FastResponseConfig,
+    HybridRetrievalConfig,
     LLMConfig,
+    RetrievalWeights,
     RuntimeConfig,
     WorkerConfig,
     provider_presets,
@@ -72,6 +74,7 @@ __all__ = [
     "DelegationRecord",
     "DelegationStatus",
     "FastResponseConfig",
+    "HybridRetrievalConfig",
     "LLMConfig",
     "InMemoryAgentStateStore",
     "InMemoryOrchestrationStore",
@@ -89,6 +92,7 @@ __all__ = [
     "OrchestrationStatus",
     "StreamingModelGateway",
     "RuntimeConfig",
+    "RetrievalWeights",
     "WorkerConfig",
     "ToolExecutor",
     "ToolRegistry",

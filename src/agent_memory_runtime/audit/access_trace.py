@@ -20,6 +20,12 @@ class AccessTrace:
     blocked_reasons: dict[str, str]
     context_source: str
     retrieval_timed_out: bool
+    retrieval_legs: tuple[str, ...] = ()
+    lexical_candidate_count: int = 0
+    semantic_candidate_count: int = 0
+    semantic_generation: str | None = None
+    semantic_timed_out: bool = False
+    semantic_error_type: str | None = None
 
     @classmethod
     def from_retrieval(
@@ -46,6 +52,12 @@ class AccessTrace:
             blocked_reasons=blocked,
             context_source=context_source,
             retrieval_timed_out=retrieval_timed_out,
+            retrieval_legs=trace.retrieval_legs,
+            lexical_candidate_count=trace.lexical_candidate_count,
+            semantic_candidate_count=trace.semantic_candidate_count,
+            semantic_generation=trace.semantic_generation,
+            semantic_timed_out=trace.semantic_timed_out,
+            semantic_error_type=trace.semantic_error_type,
         )
 
     def to_envelope(
@@ -83,5 +95,11 @@ class AccessTrace:
                 "context_source": self.context_source,
                 "retrieval_timed_out": self.retrieval_timed_out,
                 "query_hash": self.query_hash,
+                "retrieval_legs": list(self.retrieval_legs),
+                "lexical_candidate_count": self.lexical_candidate_count,
+                "semantic_candidate_count": self.semantic_candidate_count,
+                "semantic_generation": self.semantic_generation,
+                "semantic_timed_out": self.semantic_timed_out,
+                "semantic_error_type": self.semantic_error_type,
             },
         )

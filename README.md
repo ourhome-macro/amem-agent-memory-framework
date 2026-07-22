@@ -1,5 +1,50 @@
 # Agent Memory Runtime
 
+## v0.6：FTS5 + sqlite-vec 混合检索
+
+v0.6 已将默认 SQLite 检索链路升级为真正的 FTS5/BM25 + sqlite-vec cosine：词法与语义分别召回 top-N，按 `memory_id` 合并后使用 weighted RRF，再叠加原有业务精排。tenant、user、session、layer、status、type、scope、tag 和 ACL 均在 SQL top-K 前过滤；semantic 超时、熔断、bulkhead 或 provider 故障时保留已完成的 lexical 结果。
+
+```text
+MemoryQuery
+ -> FTS5/BM25 top 64 -------------------+
+ -> query embedding -> filtered cosine top 64
+                                        |
+                     weighted RRF -> business rerank -> context budget
+```
+
+CLI 默认数据文件统一为 `.amem/runtime.sqlite`，schema 升级到 v6，并固定 `sqlite-vec==0.1.9`。embedding 使用事务 outbox + 批量 worker，不在记忆写事务内调用模型；向量发布必须通过 content hash、source sequence、lease 和 fencing 校验。首个 generation 和模型升级都必须显式通过 coverage/backlog 门禁，不能用部分索引自动上线。
+
+```powershell
+py -3.12 -m pip install -e ".[dev]"
+amem init
+
+$env:AMEM_EMBEDDING_MODEL = "your-multilingual-embedding-model"
+$env:AMEM_EMBEDDING_MODEL_REVISION = "pinned-revision"
+$env:AMEM_EMBEDDING_DIMENSIONS = "1024"
+$env:AMEM_EMBEDDING_BASE_URL = "https://embedding.example.com/v1"
+$env:AMEM_EMBEDDING_API_KEY_ENV = "EMBEDDING_API_KEY"
+$env:EMBEDDING_API_KEY = "<secret>"
+$env:AMEM_EMBEDDING_MIN_SIMILARITY = "<model-calibrated-threshold>"
+
+amem embedding backfill
+amem embedding worker
+amem embedding status
+amem embedding activate
+```
+
+`AMEM_EMBEDDING_MIN_SIMILARITY` 没有通用默认值，必须用最终模型和目标数据校准；在线 semantic 未配置阈值时会拒绝启动。评测支持四种模式：
+
+```powershell
+amem eval examples/evals/semantic_retrieval_cases.yml --mode lexical-only
+amem eval examples/evals/semantic_retrieval_cases.yml --mode semantic-only
+amem eval examples/evals/semantic_retrieval_cases.yml --mode hybrid-rrf
+amem eval examples/evals/semantic_retrieval_cases.yml --mode hybrid-business
+```
+
+本机 Windows 11 / Python 3.12.5 合成基准中，5K 可见记录、1024 维的 hybrid P95 为 38.25ms 且 30/30 完成 semantic；10K/1024 的 hybrid P95 为 108.16ms，出现 2/30 次 100ms timeout；100K/32 的 exact vector P95 为 422.83ms，hybrid 主要通过 bulkhead 快速退化为 lexical-only。因此不能按全库总条数写死迁移阈值，必须按真实 ACL 过滤后的可见分区、维度与并发压测；vector leg P95 超预算或需要多实例共享/高 QPS 时进入 Qdrant 评审，不把 FAISS 文件索引作为在线事实源。
+
+完整 schema、迁移、一致性、模型升级/回滚、评测、基准和发布门禁见 [`doc/fts5-sqlite-vec-implementation-v0.6.0.md`](doc/fts5-sqlite-vec-implementation-v0.6.0.md)；选型依据见 [`doc/semantic-retrieval-design-v0.6.0.md`](doc/semantic-retrieval-design-v0.6.0.md)。
+
 ## v0.5：跨会话记忆与上下文生产强化
 
 v0.5 完成 P0/P1 生产缺口：Core/Archival 记忆可按显式会话策略跨会话召回，长期偏好与策略使用不含 session 的稳定 ID；Working 记忆仍保持会话隔离，tenant/user/agent 权限边界不会被跨会话策略绕过。中文检索使用 CJK 二元词，SQLite schema v5 提供结构化候选列、词项/标签索引和分页读取。

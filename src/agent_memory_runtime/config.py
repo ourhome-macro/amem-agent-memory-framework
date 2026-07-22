@@ -14,6 +14,54 @@ class RetrievalWeights:
     confidence: float = 0.3
     type_boost: float = 0.4
     source_link: float = 0.6
+    semantic: float = 1.0
+    fusion: float = 2.0
+
+
+@dataclass(frozen=True)
+class HybridRetrievalConfig:
+    enable_lexical: bool = True
+    enable_semantic: bool = True
+    lexical_candidate_limit: int = 64
+    semantic_candidate_limit: int = 64
+    rrf_k: int = 60
+    lexical_weight: float = 1.0
+    semantic_weight: float = 1.0
+    semantic_timeout_ms: int = 100
+    query_cache_size: int = 256
+    embedding_coverage_cache_seconds: float = 30.0
+    min_semantic_similarity: float | None = None
+    semantic_failure_threshold: int = 3
+    semantic_cooldown_seconds: float = 30.0
+    semantic_max_concurrency: int = 2
+    allow_uncalibrated_semantic: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.enable_lexical and not self.enable_semantic:
+            raise ValueError("at least one retrieval leg must be enabled")
+        if self.lexical_candidate_limit <= 0 or self.semantic_candidate_limit <= 0:
+            raise ValueError("hybrid candidate limits must be positive")
+        if self.rrf_k <= 0:
+            raise ValueError("rrf_k must be positive")
+        if self.lexical_weight < 0 or self.semantic_weight < 0:
+            raise ValueError("hybrid retrieval weights cannot be negative")
+        if self.semantic_timeout_ms < 0:
+            raise ValueError("semantic_timeout_ms cannot be negative")
+        if self.query_cache_size < 0:
+            raise ValueError("query_cache_size cannot be negative")
+        if self.embedding_coverage_cache_seconds < 0:
+            raise ValueError("embedding_coverage_cache_seconds cannot be negative")
+        if self.semantic_failure_threshold <= 0:
+            raise ValueError("semantic_failure_threshold must be positive")
+        if self.semantic_cooldown_seconds < 0:
+            raise ValueError("semantic_cooldown_seconds cannot be negative")
+        if self.semantic_max_concurrency <= 0:
+            raise ValueError("semantic_max_concurrency must be positive")
+        if (
+            self.min_semantic_similarity is not None
+            and not -1.0 <= self.min_semantic_similarity <= 1.0
+        ):
+            raise ValueError("min_semantic_similarity must be between -1 and 1")
 
 
 @dataclass(frozen=True)
@@ -33,10 +81,7 @@ class WorkerConfig:
     def __post_init__(self) -> None:
         if self.lease_seconds <= 0:
             raise ValueError("worker lease_seconds must be positive")
-        if (
-            self.heartbeat_interval_seconds is not None
-            and self.heartbeat_interval_seconds <= 0
-        ):
+        if self.heartbeat_interval_seconds is not None and self.heartbeat_interval_seconds <= 0:
             raise ValueError("worker heartbeat_interval_seconds must be positive")
         if (
             self.heartbeat_interval_seconds is not None
@@ -132,9 +177,7 @@ class LLMConfig:
         provider_id = provider.strip().casefold()
         if provider_id == "custom":
             if not base_url or not api_key_env or not model:
-                raise ValueError(
-                    "Custom provider requires --base-url, --api-key-env, and --model."
-                )
+                raise ValueError("Custom provider requires --base-url, --api-key-env, and --model.")
             return cls(
                 provider=provider_id,
                 base_url=base_url,
@@ -172,6 +215,7 @@ class RuntimeConfig:
     context_token_budget: int = 900
     low_salience_archive_threshold: float = 0.12
     retrieval_weights: RetrievalWeights = field(default_factory=RetrievalWeights)
+    hybrid_retrieval: HybridRetrievalConfig = field(default_factory=HybridRetrievalConfig)
     fast_response: FastResponseConfig = field(default_factory=FastResponseConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)

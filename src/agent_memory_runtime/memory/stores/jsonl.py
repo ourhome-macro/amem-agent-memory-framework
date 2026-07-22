@@ -87,6 +87,10 @@ class JsonlMemoryStore:
                     records.append(MemoryRecord.from_dict(json.loads(line)))
         return records
 
+    def get_many(self, memory_ids: list[str] | tuple[str, ...]) -> list[MemoryRecord]:
+        by_id = {record.memory_id: record for record in self.list_records()}
+        return [by_id[memory_id] for memory_id in memory_ids if memory_id in by_id]
+
     def query_records(
         self,
         query: MemoryQuery,

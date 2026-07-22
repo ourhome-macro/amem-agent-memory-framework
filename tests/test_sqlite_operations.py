@@ -21,11 +21,11 @@ def test_sqlite_migrations_backup_and_shadow_replay(tmp_path) -> None:
     backup = stores.backup(backup_path)
     shadow = stores.shadow_replay()
 
-    assert stores.schema_version == 5
+    assert stores.schema_version == 6
     assert stores.integrity_check() == "ok"
     assert backup.path == backup_path
     assert backup.integrity_check == "ok"
-    assert backup.schema_version == 5
+    assert backup.schema_version == 6
     assert SQLiteStoreBundle(backup_path).event_store.get("evt-1") is not None
     assert shadow.ok is True
     assert shadow.event_count == 1

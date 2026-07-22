@@ -43,6 +43,9 @@ class MemoryStore(Protocol):
     def list_records(self) -> list[MemoryRecord]:
         ...
 
+    def get_many(self, memory_ids: list[str] | tuple[str, ...]) -> list[MemoryRecord]:
+        ...
+
     def query_records(
         self,
         query: MemoryQuery,

@@ -7,6 +7,7 @@ from agent_memory_runtime.domain.enums import MemoryLayer, MemoryType
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery, ScoreBreakdown
 from agent_memory_runtime.memory.lifecycle.reinforcement import reinforcement_boost
+from agent_memory_runtime.memory.retrieval.candidates import CandidateHit
 from agent_memory_runtime.memory.retrieval.lexical import (
     lexical_tokens,
     searchable_record_text,
@@ -14,24 +15,45 @@ from agent_memory_runtime.memory.retrieval.lexical import (
 from agent_memory_runtime.memory.retrieval.planner import requests_archival_recall
 
 
-def score_record(record: MemoryRecord, query: MemoryQuery, config: RuntimeConfig) -> ScoreBreakdown:
-    query_tokens = lexical_tokens(query.text)
-    haystack_tokens = lexical_tokens(searchable_record_text(record))
-    overlap = query_tokens & haystack_tokens
-    keyword = min(1.0, len(overlap) / max(1, len(query_tokens))) * config.retrieval_weights.keyword
+def score_record(
+    record: MemoryRecord,
+    query: MemoryQuery,
+    config: RuntimeConfig,
+    *,
+    candidate: CandidateHit | None = None,
+) -> ScoreBreakdown:
+    keyword = 0.0
+    lexical = 0.0
+    semantic = 0.0
+    fusion = 0.0
+    if candidate is None:
+        query_tokens = lexical_tokens(query.text)
+        haystack_tokens = lexical_tokens(searchable_record_text(record))
+        overlap = query_tokens & haystack_tokens
+        keyword = (
+            min(1.0, len(overlap) / max(1, len(query_tokens))) * config.retrieval_weights.keyword
+        )
+    else:
+        lexical = candidate.lexical_relevance * config.retrieval_weights.keyword
+        semantic = candidate.semantic_relevance * config.retrieval_weights.semantic
+        fusion = candidate.fusion_score * config.retrieval_weights.fusion
     recency = _recency(record) * config.retrieval_weights.recency
-    salience = record.salience * config.retrieval_weights.salience
+    salience = (record.salience + reinforcement_boost(record)) * config.retrieval_weights.salience
     confidence = record.confidence * config.retrieval_weights.confidence
     type_boost = _type_boost(record, query) * config.retrieval_weights.type_boost
     source_link = _source_link(record, query) * config.retrieval_weights.source_link
     return ScoreBreakdown(
         keyword=round(keyword, 4),
+        lexical=round(lexical, 4),
+        semantic=round(semantic, 4),
+        fusion=round(fusion, 4),
         recency=round(recency, 4),
-        salience=round(salience + reinforcement_boost(record), 4),
+        salience=round(salience, 4),
         confidence=round(confidence, 4),
         type_boost=round(type_boost, 4),
         source_link=round(source_link, 4),
     )
+
 
 def _recency(record: MemoryRecord) -> float:
     try:
@@ -53,10 +75,7 @@ def _recency(record: MemoryRecord) -> float:
 def _type_boost(record: MemoryRecord, query: MemoryQuery) -> float:
     if record.memory_type in set(query.memory_types):
         return 1.0
-    if (
-        record.layer == MemoryLayer.ARCHIVAL.value
-        and requests_archival_recall(query.text)
-    ):
+    if record.layer == MemoryLayer.ARCHIVAL.value and requests_archival_recall(query.text):
         return 1.0
     if "how" in query.text.casefold() and record.memory_type == MemoryType.STRATEGY.value:
         return 0.8

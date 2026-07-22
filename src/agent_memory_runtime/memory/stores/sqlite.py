@@ -6,16 +6,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent_memory_runtime.audit.stores.sqlite import SQLiteAuditStore
-from agent_memory_runtime.domain.enums import MemoryLayer, MemorySessionPolicy, MemoryStatus
+from agent_memory_runtime.domain.enums import MemoryLabel, MemoryScope
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.domain.tombstone import MemoryTombstone
-from agent_memory_runtime.exceptions import EventConflictError
+from agent_memory_runtime.exceptions import EventConflictError, StoreError
+from agent_memory_runtime.memory.retrieval.candidates import CandidateHit
 from agent_memory_runtime.memory.retrieval.lexical import (
-    lexical_tokens,
-    searchable_record_text,
+    fts_document_text,
+    fts_match_query,
 )
+from agent_memory_runtime.memory.stores.sqlite_filters import structured_memory_where
 from agent_memory_runtime.memory.stores.sqlite_manager import (
     SQLiteBackupReport,
     SQLiteTransactionManager,
@@ -24,6 +26,11 @@ from agent_memory_runtime.memory.stores.sqlite_manager import (
 if TYPE_CHECKING:
     from agent_memory_runtime.agent.orchestration.stores import OrchestrationStateStore
     from agent_memory_runtime.agent.stores import StateCodec
+    from agent_memory_runtime.memory.embeddings import (
+        EmbeddingProvider,
+        SQLiteEmbeddingScheduler,
+        SQLiteVectorIndex,
+    )
 
 
 class SQLiteStore:
@@ -80,22 +87,81 @@ class SQLiteEventStore(SQLiteStore):
 
 
 class SQLiteMemoryStore(SQLiteStore):
-    def __init__(self, path_or_manager: str | Path | SQLiteTransactionManager) -> None:
+    def __init__(
+        self,
+        path_or_manager: str | Path | SQLiteTransactionManager,
+        *,
+        embedding_scheduler: SQLiteEmbeddingScheduler | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
+        vector_index: SQLiteVectorIndex | None = None,
+    ) -> None:
         super().__init__(path_or_manager)
+        self.embedding_scheduler = embedding_scheduler
+        self.embedding_provider = embedding_provider
+        self.vector_index = vector_index
         self._backfill_search_index()
+
+    def build_candidate_retriever(self, config: object) -> object:
+        from agent_memory_runtime.config import HybridRetrievalConfig
+        from agent_memory_runtime.memory.retrieval import (
+            HybridCandidateRetriever,
+            SemanticRetriever,
+            StoreLexicalRetriever,
+        )
+
+        if not isinstance(config, HybridRetrievalConfig):
+            raise TypeError("config must be HybridRetrievalConfig")
+        semantic = None
+        if (
+            config.enable_semantic
+            and self.embedding_provider is not None
+            and self.vector_index is not None
+        ):
+            semantic = SemanticRetriever(
+                provider=self.embedding_provider,
+                vector_index=self.vector_index,
+                config=config,
+            )
+        if not config.enable_lexical and semantic is None:
+            from agent_memory_runtime.exceptions import EmbeddingConfigurationError
+
+            raise EmbeddingConfigurationError(
+                "semantic-only retrieval requires an active embedding provider"
+            )
+        return HybridCandidateRetriever(
+            lexical=(StoreLexicalRetriever(self) if config.enable_lexical else None),
+            semantic=semantic,
+            config=config,
+        )
 
     def upsert(self, record: MemoryRecord) -> None:
         with self._manager.connection() as connection:
             connection.execute(
                 """
-                INSERT OR REPLACE INTO memories(
+                INSERT INTO memories(
                     memory_id, payload, tenant_id, user_id, agent_id, session_id,
-                    layer, status, memory_type, scope, updated_at, salience, search_indexed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    layer, status, memory_type, scope, updated_at, salience,
+                    search_indexed, retrieval_v6_indexed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+                ON CONFLICT(memory_id) DO UPDATE SET
+                    payload = excluded.payload,
+                    tenant_id = excluded.tenant_id,
+                    user_id = excluded.user_id,
+                    agent_id = excluded.agent_id,
+                    session_id = excluded.session_id,
+                    layer = excluded.layer,
+                    status = excluded.status,
+                    memory_type = excluded.memory_type,
+                    scope = excluded.scope,
+                    updated_at = excluded.updated_at,
+                    salience = excluded.salience,
+                    search_indexed = 1,
+                    retrieval_v6_indexed = 1
                 """,
                 _memory_row(record),
             )
             self._replace_search_index(connection, record)
+            self._schedule_embedding(record)
 
     def get(self, memory_id: str) -> MemoryRecord | None:
         with self._manager.read_connection() as connection:
@@ -112,6 +178,22 @@ class SQLiteMemoryStore(SQLiteStore):
             rows = connection.execute("SELECT payload FROM memories ORDER BY memory_id").fetchall()
         return [MemoryRecord.from_dict(json.loads(row[0])) for row in rows]
 
+    def get_many(self, memory_ids: list[str] | tuple[str, ...]) -> list[MemoryRecord]:
+        ordered_ids = tuple(dict.fromkeys(memory_ids))
+        if not ordered_ids:
+            return []
+        placeholders = ", ".join("?" for _ in ordered_ids)
+        with self._manager.read_connection() as connection:
+            rows = connection.execute(
+                f"SELECT memory_id, payload FROM memories WHERE memory_id IN ({placeholders})",
+                ordered_ids,
+            ).fetchall()
+        by_id = {
+            str(memory_id): MemoryRecord.from_dict(json.loads(payload))
+            for memory_id, payload in rows
+        }
+        return [by_id[memory_id] for memory_id in ordered_ids if memory_id in by_id]
+
     def query_records(
         self,
         query: MemoryQuery,
@@ -121,133 +203,213 @@ class SQLiteMemoryStore(SQLiteStore):
     ) -> list[MemoryRecord]:
         if limit <= 0:
             return []
-        terms = sorted(lexical_tokens(query.text))
-        parameters: list[object] = []
-        if terms:
-            placeholders = ", ".join("?" for _ in terms)
-            match_join = f"""
-                LEFT JOIN (
-                    SELECT memory_id, COUNT(*) AS lexical_hits
-                    FROM memory_terms
-                    WHERE term IN ({placeholders})
-                    GROUP BY memory_id
-                ) AS hits ON hits.memory_id = memories.memory_id
+        match_query = fts_match_query(query.text)
+        where, parameters = structured_memory_where(query)
+        if match_query:
+            sql = f"""
+                SELECT memories.payload
+                FROM memory_fts
+                JOIN memories ON memories.memory_id = memory_fts.memory_id
+                WHERE memory_fts MATCH ? AND {" AND ".join(where)}
+                ORDER BY bm25(memory_fts) ASC,
+                         memories.salience DESC,
+                         memories.updated_at DESC,
+                         memories.memory_id ASC
+                LIMIT ? OFFSET ?
             """
-            parameters.extend(terms)
+            parameters.insert(0, match_query)
         else:
-            match_join = ""
-
-        where = ["memories.tenant_id = ?"]
-        parameters.append(query.tenant_id)
-        if query.user_id is None:
-            where.append("memories.user_id IS NULL")
-        else:
-            where.append("(memories.user_id IS NULL OR memories.user_id = ?)")
-            parameters.append(query.user_id)
-
-        archival_enabled = MemoryLayer.ARCHIVAL.value in set(query.layers)
-        if archival_enabled:
-            where.append(
-                "(memories.status = ? OR "
-                "(memories.status = ? AND memories.layer = ?))"
-            )
-            parameters.extend(
-                [
-                    MemoryStatus.ACTIVE.value,
-                    MemoryStatus.ARCHIVED.value,
-                    MemoryLayer.ARCHIVAL.value,
-                ]
-            )
-        else:
-            where.append("memories.status = ?")
-            parameters.append(MemoryStatus.ACTIVE.value)
-
-        if query.session_id is not None:
-            policy = MemorySessionPolicy(query.session_policy)
-            if policy is MemorySessionPolicy.EXACT:
-                where.append("memories.session_id = ?")
-                parameters.append(query.session_id)
-            elif policy is MemorySessionPolicy.PROFILE:
-                where.append("(memories.session_id = ? OR memories.layer <> ?)")
-                parameters.extend([query.session_id, MemoryLayer.WORKING.value])
-        _append_in_filter(where, parameters, "memories.scope", query.scopes)
-        _append_in_filter(where, parameters, "memories.memory_type", query.memory_types)
-        _append_in_filter(where, parameters, "memories.layer", query.layers)
-        if query.tags:
-            placeholders = ", ".join("?" for _ in query.tags)
-            where.append(
-                "EXISTS ("
-                "SELECT 1 FROM memory_tags AS requested_tags "
-                "WHERE requested_tags.memory_id = memories.memory_id "
-                f"AND requested_tags.tag IN ({placeholders})"
-                ")"
-            )
-            parameters.extend(query.tags)
-
-        lexical_order = "COALESCE(hits.lexical_hits, 0) DESC," if terms else ""
-        sql = f"""
-            SELECT memories.payload
-            FROM memories
-            {match_join}
-            WHERE {' AND '.join(where)}
-            ORDER BY {lexical_order}
-                     memories.salience DESC,
-                     memories.updated_at DESC,
-                     memories.memory_id ASC
-            LIMIT ? OFFSET ?
-        """
+            sql = f"""
+                SELECT memories.payload
+                FROM memories
+                WHERE {" AND ".join(where)}
+                ORDER BY memories.salience DESC,
+                         memories.updated_at DESC,
+                         memories.memory_id ASC
+                LIMIT ? OFFSET ?
+            """
         parameters.extend([limit, max(0, offset)])
         with self._manager.read_connection() as connection:
             rows = connection.execute(sql, tuple(parameters)).fetchall()
         return [MemoryRecord.from_dict(json.loads(row[0])) for row in rows]
 
+    def search_lexical(
+        self,
+        query: MemoryQuery,
+        *,
+        limit: int,
+    ) -> list[CandidateHit]:
+        if limit <= 0:
+            return []
+        match_query = fts_match_query(query.text)
+        where, parameters = structured_memory_where(query)
+        if match_query:
+            sql = f"""
+                SELECT memories.memory_id, bm25(memory_fts) AS lexical_score
+                FROM memory_fts
+                JOIN memories ON memories.memory_id = memory_fts.memory_id
+                WHERE memory_fts MATCH ? AND {" AND ".join(where)}
+                ORDER BY lexical_score ASC,
+                         memories.salience DESC,
+                         memories.updated_at DESC,
+                         memories.memory_id ASC
+                LIMIT ?
+            """
+            parameters.insert(0, match_query)
+        else:
+            sql = f"""
+                SELECT memories.memory_id, NULL AS lexical_score
+                FROM memories
+                WHERE {" AND ".join(where)}
+                ORDER BY memories.salience DESC,
+                         memories.updated_at DESC,
+                         memories.memory_id ASC
+                LIMIT ?
+            """
+        parameters.append(limit)
+        with self._manager.read_connection() as connection:
+            rows = connection.execute(sql, tuple(parameters)).fetchall()
+        return [
+            CandidateHit(
+                memory_id=str(memory_id),
+                sources=("lexical",),
+                lexical_rank=rank,
+                lexical_raw_score=(None if lexical_score is None else float(lexical_score)),
+            )
+            for rank, (memory_id, lexical_score) in enumerate(rows, start=1)
+        ]
+
     def replace_all(self, records: list[MemoryRecord]) -> None:
         with self._manager.connection() as connection:
+            connection.execute("DELETE FROM memory_fts")
             connection.execute("DELETE FROM memories")
             connection.executemany(
                 """
                 INSERT INTO memories(
                     memory_id, payload, tenant_id, user_id, agent_id, session_id,
-                    layer, status, memory_type, scope, updated_at, salience, search_indexed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                    layer, status, memory_type, scope, updated_at, salience,
+                    search_indexed, retrieval_v6_indexed
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
                 """,
                 [_memory_row(record) for record in records],
             )
-            for record in records:
-                self._replace_search_index(connection, record)
+            self._insert_search_indexes(connection, records)
+            if self.embedding_scheduler is not None:
+                self.embedding_scheduler.schedule_many(
+                    [
+                        (record, bool(_acl_principals(record)))
+                        for record in records
+                    ]
+                )
+
+    @staticmethod
+    def _insert_search_indexes(
+        connection: object,
+        records: list[MemoryRecord],
+    ) -> None:
+        indexed_records = [
+            (record, principals)
+            for record in records
+            if (principals := _acl_principals(record))
+        ]
+        fts_rows = [
+            (record.memory_id, document)
+            for record, _ in indexed_records
+            if (document := fts_document_text(record))
+        ]
+        if fts_rows:
+            connection.executemany(
+                "INSERT INTO memory_fts(memory_id, terms) VALUES (?, ?)",
+                fts_rows,
+            )
+        tag_rows = [
+            (record.memory_id, tag)
+            for record, _ in indexed_records
+            for tag in sorted(set(record.tags))
+        ]
+        if tag_rows:
+            connection.executemany(
+                "INSERT INTO memory_tags(memory_id, tag) VALUES (?, ?)",
+                tag_rows,
+            )
+        acl_rows = [
+            (record.memory_id, principal)
+            for record, principals in indexed_records
+            for principal in principals
+        ]
+        if acl_rows:
+            connection.executemany(
+                "INSERT INTO memory_acl(memory_id, principal_id) VALUES (?, ?)",
+                acl_rows,
+            )
 
     def clear(self) -> None:
         with self._manager.connection() as connection:
+            connection.execute("DELETE FROM memory_fts")
             connection.execute("DELETE FROM memories")
 
     def _backfill_search_index(self) -> None:
         with self._manager.connection() as connection:
             rows = connection.execute(
-                "SELECT memory_id, payload FROM memories WHERE search_indexed = 0"
+                "SELECT memory_id, payload FROM memories WHERE retrieval_v6_indexed = 0"
             ).fetchall()
-            for memory_id, payload in rows:
-                record = MemoryRecord.from_dict(json.loads(payload))
-                self._replace_search_index(connection, record)
-                connection.execute(
-                    "UPDATE memories SET search_indexed = 1 WHERE memory_id = ?",
-                    (memory_id,),
-                )
+            records = [MemoryRecord.from_dict(json.loads(payload)) for _, payload in rows]
+            self._insert_search_indexes(connection, records)
+            connection.executemany(
+                """
+                UPDATE memories
+                SET search_indexed = 1, retrieval_v6_indexed = 1
+                WHERE memory_id = ?
+                """,
+                [(memory_id,) for memory_id, _ in rows],
+            )
 
     @staticmethod
     def _replace_search_index(connection: object, record: MemoryRecord) -> None:
-        connection.execute("DELETE FROM memory_terms WHERE memory_id = ?", (record.memory_id,))
-        terms = sorted(lexical_tokens(searchable_record_text(record)))
-        if terms:
-            connection.executemany(
-                "INSERT INTO memory_terms(memory_id, term) VALUES (?, ?)",
-                [(record.memory_id, term) for term in terms],
-            )
+        connection.execute("DELETE FROM memory_fts WHERE memory_id = ?", (record.memory_id,))
         connection.execute("DELETE FROM memory_tags WHERE memory_id = ?", (record.memory_id,))
+        connection.execute("DELETE FROM memory_acl WHERE memory_id = ?", (record.memory_id,))
+        principals = _acl_principals(record)
+        if not principals:
+            return
+        document = fts_document_text(record)
+        if document:
+            connection.execute(
+                "INSERT INTO memory_fts(memory_id, terms) VALUES (?, ?)",
+                (record.memory_id, document),
+            )
         if record.tags:
             connection.executemany(
                 "INSERT INTO memory_tags(memory_id, tag) VALUES (?, ?)",
                 [(record.memory_id, tag) for tag in sorted(set(record.tags))],
             )
+        connection.executemany(
+            "INSERT INTO memory_acl(memory_id, principal_id) VALUES (?, ?)",
+            [(record.memory_id, principal) for principal in principals],
+        )
+
+    def enqueue_embedding_backfill(self) -> int:
+        if self.embedding_scheduler is None:
+            return 0
+        records = self.list_records()
+        return len(
+            self.embedding_scheduler.schedule_many(
+                [
+                    (record, bool(_acl_principals(record)))
+                    for record in records
+                ]
+            )
+        )
+
+    def _schedule_embedding(self, record: MemoryRecord) -> None:
+        if self.vector_index is not None:
+            self.vector_index.mark_retired_stale(record.memory_id)
+        if self.embedding_scheduler is None:
+            return
+        self.embedding_scheduler.schedule(
+            record,
+            retrievable=bool(_acl_principals(record)),
+        )
 
 
 class SQLiteSnapshotStore(SQLiteStore):
@@ -341,16 +503,39 @@ class SQLiteStoreBundle:
         path: str | Path,
         *,
         agent_state_codec: StateCodec | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
     ) -> None:
         from agent_memory_runtime.agent.orchestration.stores import (
             SQLiteOrchestrationStore,
         )
         from agent_memory_runtime.agent.stores import SQLiteAgentStateStore
         from agent_memory_runtime.governance.queue import SQLiteDerivationQueueStore
+        from agent_memory_runtime.memory.embeddings import (
+            SQLiteEmbeddingGenerationStore,
+            SQLiteEmbeddingJobStore,
+            SQLiteEmbeddingScheduler,
+            SQLiteVectorIndex,
+        )
 
         self._manager = SQLiteTransactionManager(path)
+        self.embedding_generations = SQLiteEmbeddingGenerationStore(self._manager)
+        self.embedding_jobs = SQLiteEmbeddingJobStore(self._manager)
+        self.vector_index = SQLiteVectorIndex(self._manager)
+        if embedding_provider is not None:
+            self.embedding_generations.ensure_active(embedding_provider.spec)
+        self.embedding_provider = embedding_provider
+        embedding_scheduler = SQLiteEmbeddingScheduler(
+            generations=self.embedding_generations,
+            jobs=self.embedding_jobs,
+            vectors=self.vector_index,
+        )
         self.event_store = SQLiteEventStore(self._manager)
-        self.memory_store = SQLiteMemoryStore(self._manager)
+        self.memory_store = SQLiteMemoryStore(
+            self._manager,
+            embedding_scheduler=embedding_scheduler,
+            embedding_provider=embedding_provider,
+            vector_index=self.vector_index,
+        )
         self.snapshot_store = SQLiteSnapshotStore(self._manager)
         self.tombstone_store = SQLiteTombstoneStore(self._manager)
         self.audit_store = SQLiteAuditStore(self._manager)
@@ -363,6 +548,8 @@ class SQLiteStoreBundle:
             self._manager,
             codec=agent_state_codec,
         )
+        if embedding_provider is not None:
+            self.memory_store.enqueue_embedding_backfill()
 
     def transaction(self) -> AbstractContextManager[None]:
         return self._manager.transaction()
@@ -376,6 +563,102 @@ class SQLiteStoreBundle:
 
     def backup(self, destination: str | Path) -> SQLiteBackupReport:
         return self._manager.backup(destination)
+
+    def enqueue_embedding_backfill(self) -> int:
+        return self.memory_store.enqueue_embedding_backfill()
+
+    def activate_embedding_generation(
+        self,
+        generation: str,
+        *,
+        minimum_coverage: float = 1.0,
+        allow_pending_jobs: bool = False,
+    ) -> object:
+        if not 0.0 <= minimum_coverage <= 1.0:
+            raise ValueError("minimum_coverage must be between 0 and 1")
+        coverage = self.vector_index.coverage(generation=generation)
+        pending = self.embedding_jobs.outstanding_count(generation=generation)
+        if coverage < minimum_coverage:
+            raise StoreError(
+                f"embedding generation {generation!r} coverage {coverage:.4f} "
+                f"is below the activation threshold {minimum_coverage:.4f}"
+            )
+        if pending and not allow_pending_jobs:
+            raise StoreError(
+                f"embedding generation {generation!r} still has {pending} pending jobs"
+            )
+        return self.embedding_generations.activate(generation)
+
+    def semantic_status(self) -> dict[str, object]:
+        active = self.embedding_generations.active()
+        generation = None if active is None else active.generation
+        generation_statuses = []
+        for item in self.embedding_generations.list_generations():
+            item_generation = str(item["generation"])
+            item_jobs = self.embedding_jobs.list_jobs(generation=item_generation)
+            item_counts: dict[str, int] = {}
+            for job in item_jobs:
+                item_counts[job.status] = item_counts.get(job.status, 0) + 1
+            generation_statuses.append(
+                {
+                    **item,
+                    "embedding_coverage": self.vector_index.coverage(
+                        generation=item_generation
+                    ),
+                    "ready_vectors": self.vector_index.ready_count(
+                        generation=item_generation
+                    ),
+                    "job_status_counts": item_counts,
+                    "embedding_backlog_lag_seconds": (
+                        self.embedding_jobs.backlog_lag_seconds(
+                            generation=item_generation
+                        )
+                    ),
+                }
+            )
+        jobs = self.embedding_jobs.list_jobs(generation=generation)
+        status_counts: dict[str, int] = {}
+        for job in jobs:
+            status_counts[job.status] = status_counts.get(job.status, 0) + 1
+        coverage = None if generation is None else self.vector_index.coverage(generation=generation)
+        return {
+            "semantic_available": self.embedding_provider is not None,
+            "sqlite_vec_loaded": True,
+            "active_generation": generation,
+            "provider_generation": (
+                None if self.embedding_provider is None else self.embedding_provider.spec.generation
+            ),
+            "embedding_coverage": coverage,
+            "ready_vectors": (
+                0 if generation is None else self.vector_index.ready_count(generation=generation)
+            ),
+            "job_status_counts": status_counts,
+            "embedding_backlog_lag_seconds": self.embedding_jobs.backlog_lag_seconds(
+                generation=generation
+            ),
+            "generations": generation_statuses,
+        }
+
+    def delete_retired_embedding_generation(self, generation: str) -> None:
+        self.embedding_generations.delete_retired(generation)
+
+    def embedding_worker(
+        self,
+        provider: EmbeddingProvider | None = None,
+        **kwargs: object,
+    ) -> object:
+        from agent_memory_runtime.memory.embeddings import EmbeddingWorker
+
+        selected_provider = provider or self.embedding_provider
+        if selected_provider is None:
+            raise ValueError("an embedding provider is required to create a worker")
+        return EmbeddingWorker(
+            provider=selected_provider,
+            jobs=self.embedding_jobs,
+            vectors=self.vector_index,
+            memories=self.memory_store,
+            **kwargs,
+        )
 
     def shadow_replay(
         self,
@@ -414,14 +697,17 @@ def _memory_row(record: MemoryRecord) -> tuple[object, ...]:
     )
 
 
-def _append_in_filter(
-    where: list[str],
-    parameters: list[object],
-    column: str,
-    values: tuple[str, ...],
-) -> None:
-    if not values:
-        return
-    placeholders = ", ".join("?" for _ in values)
-    where.append(f"{column} IN ({placeholders})")
-    parameters.extend(values)
+def _acl_principals(record: MemoryRecord) -> tuple[str, ...]:
+    labels = set(record.labels)
+    if MemoryLabel.SENSITIVE.value in labels:
+        return ()
+    owner_agent_id = record.agent_id or record.owner_id
+    principals = set(record.visible_to)
+    if owner_agent_id is not None:
+        principals.add(owner_agent_id)
+    if MemoryLabel.PRIVATE.value not in labels:
+        if record.scope == MemoryScope.GLOBAL.value:
+            principals.add("*")
+        elif record.scope == MemoryScope.SHARED.value and not record.visible_to:
+            principals.add("*")
+    return tuple(sorted(principals))

@@ -30,7 +30,13 @@ class MemoryQuery:
 
 @dataclass(frozen=True)
 class ScoreBreakdown:
+    # ``keyword`` is retained for JSON/API compatibility with pre-v0.6 callers.
+    # Hybrid SQLite retrieval writes the rank-normalized lexical contribution
+    # into ``lexical`` instead of disguising it as a keyword-overlap score.
     keyword: float = 0.0
+    lexical: float = 0.0
+    semantic: float = 0.0
+    fusion: float = 0.0
     recency: float = 0.0
     salience: float = 0.0
     confidence: float = 0.0
@@ -39,8 +45,11 @@ class ScoreBreakdown:
 
     @property
     def total(self) -> float:
+        retrieval_relevance = (
+            self.fusion if self.fusion > 0 else self.keyword + self.lexical + self.semantic
+        )
         return round(
-            self.keyword
+            retrieval_relevance
             + self.recency
             + self.salience
             + self.confidence
@@ -52,6 +61,9 @@ class ScoreBreakdown:
     def to_dict(self) -> dict[str, float]:
         return {
             "keyword": self.keyword,
+            "lexical": self.lexical,
+            "semantic": self.semantic,
+            "fusion": self.fusion,
             "recency": self.recency,
             "salience": self.salience,
             "confidence": self.confidence,
@@ -76,3 +88,14 @@ class RetrievalTrace:
     blocked_count: int
     selected_memory_ids: tuple[str, ...]
     results: tuple[RetrievalResult, ...] = field(default_factory=tuple)
+    retrieval_legs: tuple[str, ...] = ()
+    lexical_candidate_count: int = 0
+    semantic_candidate_count: int = 0
+    semantic_generation: str | None = None
+    embedding_ms: float = 0.0
+    vector_search_ms: float = 0.0
+    fusion_ms: float = 0.0
+    semantic_timed_out: bool = False
+    semantic_error_type: str | None = None
+    embedding_coverage: float | None = None
+    candidate_details: dict[str, dict[str, object]] = field(default_factory=dict)

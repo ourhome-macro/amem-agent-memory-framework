@@ -15,6 +15,9 @@ class RetrievalEvalResult:
     recall_at_k: float = 0.0
     reciprocal_rank: float = 0.0
     ndcg_at_k: float = 0.0
+    forbidden_hit_count: int = 0
+    no_result_case: bool = False
+    no_result_correct: bool = False
 
 
 def evaluate_contains(
@@ -41,7 +44,7 @@ def evaluate_retrieval(
     cutoff = max(1, k or len(selected) or len(expected) or 1)
     top = selected[:cutoff]
     hits = len(set(top) & expected_set)
-    precision = hits / cutoff
+    precision = hits / cutoff if expected_set else (1.0 if not top else 0.0)
     recall = hits / len(expected_set) if expected_set else 1.0
     first_rank = next(
         (index for index, item in enumerate(top, start=1) if item in expected_set),
@@ -52,9 +55,12 @@ def evaluate_retrieval(
         raise ValueError("retrieval relevance grades cannot be negative")
     actual_dcg = _dcg([float(grades.get(item, 0.0)) for item in top])
     ideal_dcg = _dcg(sorted((float(item) for item in grades.values()), reverse=True)[:cutoff])
+    forbidden_hits = forbidden_set.intersection(selected)
+    no_result_case = not expected_set
+    no_result_correct = no_result_case and not top
     return RetrievalEvalResult(
         case_id=case_id,
-        passed=expected_set <= set(top) and not forbidden_set.intersection(selected),
+        passed=((expected_set <= set(top) if expected_set else not top) and not forbidden_hits),
         expected_memory_ids=tuple(expected),
         selected_memory_ids=tuple(selected),
         forbidden_memory_ids=tuple(forbidden or ()),
@@ -62,11 +68,11 @@ def evaluate_retrieval(
         recall_at_k=round(recall, 4),
         reciprocal_rank=round(0.0 if first_rank is None else 1 / first_rank, 4),
         ndcg_at_k=round(0.0 if ideal_dcg == 0 else actual_dcg / ideal_dcg, 4),
+        forbidden_hit_count=len(forbidden_hits),
+        no_result_case=no_result_case,
+        no_result_correct=no_result_correct,
     )
 
 
 def _dcg(grades: list[float]) -> float:
-    return sum(
-        (2**grade - 1) / log2(index + 1)
-        for index, grade in enumerate(grades, start=1)
-    )
+    return sum((2**grade - 1) / log2(index + 1) for index, grade in enumerate(grades, start=1))

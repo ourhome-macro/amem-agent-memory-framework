@@ -15,6 +15,17 @@ class RuntimeTrace:
     context_source: str = "retrieval"
     retrieval_timed_out: bool = False
     first_token_ms: int | None = None
+    retrieval_legs: tuple[str, ...] = ()
+    lexical_candidate_count: int = 0
+    semantic_candidate_count: int = 0
+    semantic_generation: str | None = None
+    embedding_ms: float = 0.0
+    vector_search_ms: float = 0.0
+    fusion_ms: float = 0.0
+    semantic_timed_out: bool = False
+    semantic_error_type: str | None = None
+    embedding_coverage: float | None = None
+    candidate_details: dict[str, dict[str, object]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -28,4 +39,15 @@ class RuntimeTrace:
             "context_source": self.context_source,
             "retrieval_timed_out": self.retrieval_timed_out,
             "first_token_ms": self.first_token_ms,
+            "retrieval_legs": list(self.retrieval_legs),
+            "lexical_candidate_count": self.lexical_candidate_count,
+            "semantic_candidate_count": self.semantic_candidate_count,
+            "semantic_generation": self.semantic_generation,
+            "embedding_ms": self.embedding_ms,
+            "vector_search_ms": self.vector_search_ms,
+            "fusion_ms": self.fusion_ms,
+            "semantic_timed_out": self.semantic_timed_out,
+            "semantic_error_type": self.semantic_error_type,
+            "embedding_coverage": self.embedding_coverage,
+            "candidate_details": self.candidate_details,
         }

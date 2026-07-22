@@ -42,8 +42,7 @@ def test_cli_ingest_retrieve_project_and_replay(tmp_path) -> None:
     )
 
     assert runner.invoke(cli_app.app, ["init", "--path", str(data_dir)]).exit_code == 0
-    assert (data_dir / "audit.jsonl").exists()
-    assert (data_dir / "tombstones.jsonl").exists()
+    assert (data_dir / "runtime.sqlite").exists()
     assert (
         runner.invoke(cli_app.app, ["ingest", str(events), "--data-dir", str(data_dir)]).exit_code
         == 0
@@ -208,7 +207,7 @@ def test_cli_async_ingest_and_queue_run_once(tmp_path) -> None:
     )
 
     assert runner.invoke(cli_app.app, ["init", "--path", str(data_dir)]).exit_code == 0
-    assert (data_dir / "derivation_queue.jsonl").exists()
+    assert (data_dir / "runtime.sqlite").exists()
     ingest = runner.invoke(
         cli_app.app,
         ["ingest", str(events), "--async-derive", "--data-dir", str(data_dir)],
@@ -216,7 +215,7 @@ def test_cli_async_ingest_and_queue_run_once(tmp_path) -> None:
 
     assert ingest.exit_code == 0
     assert "pending_derivation_jobs=1" in ingest.output
-    assert json.loads((data_dir / "memories.jsonl").read_text(encoding="utf-8") or "[]") == []
+    assert SQLiteStoreBundle(data_dir / "runtime.sqlite").memory_store.list_records() == []
 
     status = runner.invoke(cli_app.app, ["queue", "--data-dir", str(data_dir)])
     assert status.exit_code == 0
@@ -225,8 +224,11 @@ def test_cli_async_ingest_and_queue_run_once(tmp_path) -> None:
     run_once = runner.invoke(cli_app.app, ["queue", "run-once", "--data-dir", str(data_dir)])
     assert run_once.exit_code == 0
     assert '"status": "succeeded"' in run_once.output
-    assert "episodic:cli-s1:evt-async-1" in (data_dir / "memories.jsonl").read_text(
-        encoding="utf-8"
+    assert (
+        SQLiteStoreBundle(data_dir / "runtime.sqlite").memory_store.get(
+            "episodic:cli-s1:evt-async-1"
+        )
+        is not None
     )
 
 
@@ -274,6 +276,31 @@ def test_cli_worker_and_audit_dashboard(tmp_path) -> None:
     html = dashboard.read_text(encoding="utf-8")
     assert "Agent Memory Runtime 审计面板" in html
     assert "governance_job" in html
+
+
+def test_cli_embedding_status_reports_sqlite_vec_lexical_only_mode(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AMEM_EMBEDDING_MODEL", "")
+    data_dir = tmp_path / ".amem"
+    runner = CliRunner()
+
+    assert (
+        runner.invoke(
+            cli_app.app,
+            ["--no-banner", "init", "--path", str(data_dir)],
+        ).exit_code
+        == 0
+    )
+    status = runner.invoke(
+        cli_app.app,
+        ["--no-banner", "embedding", "status", "--data-dir", str(data_dir)],
+    )
+
+    assert status.exit_code == 0
+    assert '"sqlite_vec_loaded": true' in status.output
+    assert '"semantic_available": false' in status.output
 
 
 def test_cli_respond_uses_injected_llm_client(monkeypatch, tmp_path) -> None:

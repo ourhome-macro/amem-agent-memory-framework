@@ -240,7 +240,7 @@ def test_context_budget_preserves_query_ranking_instead_of_resorting_by_salience
     assert [record.memory_id for record in selected] == [relevant.memory_id]
 
 
-def test_sqlite_v5_uses_structured_candidate_and_cjk_term_indexes(tmp_path) -> None:
+def test_sqlite_v6_uses_fts5_structured_filters_and_cjk_terms(tmp_path) -> None:
     path = tmp_path / "indexed.sqlite"
     stores = SQLiteStoreBundle(path)
     runtime = _sqlite_runtime(stores)
@@ -280,18 +280,15 @@ def test_sqlite_v5_uses_structured_candidate_and_cjk_term_indexes(tmp_path) -> N
     second_page = stores.memory_store.query_records(indexed_query, limit=1, offset=1)
 
     assert [item.memory_id for item in selected] == [relevant.memory_id]
-    assert stores.schema_version == 5
+    assert stores.schema_version == 6
     with sqlite3.connect(path) as connection:
         columns = {
             row[1] for row in connection.execute("PRAGMA table_info(memories)").fetchall()
         }
-        terms = {
-            row[0]
-            for row in connection.execute(
-                "SELECT term FROM memory_terms WHERE memory_id = ?",
-                (relevant.memory_id,),
-            ).fetchall()
-        }
+        fts_document = connection.execute(
+            "SELECT terms FROM memory_fts WHERE memory_id = ?",
+            (relevant.memory_id,),
+        ).fetchone()[0]
         tags = {
             row[0]
             for row in connection.execute(
@@ -300,8 +297,8 @@ def test_sqlite_v5_uses_structured_candidate_and_cjk_term_indexes(tmp_path) -> N
             ).fetchall()
         }
     assert {"tenant_id", "user_id", "session_id", "layer", "status", "salience"} <= columns
-    assert "退款" in terms
-    assert "进度" in terms
+    assert "退款" in fts_document.split()
+    assert "进度" in fts_document.split()
     assert tags == {"finance"}
     assert first_page and second_page
     assert first_page[0].memory_id != second_page[0].memory_id
@@ -534,7 +531,10 @@ def test_retrieval_eval_reports_ranking_and_forbidden_leakage() -> None:
     assert good.reciprocal_rank == 1.0
     assert 0 < good.ndcg_at_k <= 1
     assert leaked.passed is False
+    assert leaked.forbidden_hit_count == 1
     assert evaluate_retrieval("cutoff", ["m2"], ["m1", "m2"], k=1).passed is False
+    assert evaluate_retrieval("no-result", [], [], k=3).passed is True
+    assert evaluate_retrieval("false-positive", [], ["m1"], k=3).passed is False
 
 
 def _preference(

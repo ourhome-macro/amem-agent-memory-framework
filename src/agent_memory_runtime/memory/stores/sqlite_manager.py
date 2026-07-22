@@ -11,6 +11,8 @@ from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
+import sqlite_vec
+
 from agent_memory_runtime.exceptions import StoreError
 
 
@@ -307,6 +309,108 @@ _MIGRATIONS = (
             """,
         ),
     ),
+    _Migration(
+        version=6,
+        name="fts5_and_semantic_memory_projection",
+        statements=(
+            "ALTER TABLE memories ADD COLUMN retrieval_v6_indexed INTEGER NOT NULL DEFAULT 0",
+            "DROP TABLE IF EXISTS memory_terms",
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
+                memory_id UNINDEXED,
+                terms,
+                tokenize='unicode61 remove_diacritics 2'
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS memory_acl (
+                memory_id TEXT NOT NULL,
+                principal_id TEXT NOT NULL,
+                PRIMARY KEY(memory_id, principal_id),
+                FOREIGN KEY(memory_id) REFERENCES memories(memory_id) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memory_acl_principal
+            ON memory_acl(principal_id, memory_id)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS embedding_generations (
+                generation TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                model_revision TEXT NOT NULL,
+                dimensions INTEGER NOT NULL,
+                distance_metric TEXT NOT NULL,
+                status TEXT NOT NULL,
+                spec_payload TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                activated_at TEXT
+            )
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_embedding_generations_active
+            ON embedding_generations(status) WHERE status = 'active'
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS embedding_jobs (
+                job_id TEXT PRIMARY KEY,
+                memory_id TEXT NOT NULL,
+                generation TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                source_sequence INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL DEFAULT 3,
+                available_at TEXT NOT NULL,
+                lease_owner TEXT,
+                lease_token TEXT,
+                lease_expires_at TEXT,
+                error_type TEXT,
+                error_hash TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(memory_id, generation, content_hash),
+                FOREIGN KEY(memory_id) REFERENCES memories(memory_id) ON DELETE CASCADE,
+                FOREIGN KEY(generation)
+                    REFERENCES embedding_generations(generation) ON DELETE CASCADE
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_embedding_jobs_ready
+            ON embedding_jobs(status, available_at, lease_expires_at)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_embedding_jobs_memory_generation
+            ON embedding_jobs(memory_id, generation, status)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS memory_embeddings (
+                vector_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id TEXT NOT NULL,
+                generation TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                model_revision TEXT NOT NULL,
+                dimensions INTEGER NOT NULL,
+                content_hash TEXT NOT NULL,
+                source_sequence INTEGER NOT NULL,
+                embedding BLOB NOT NULL,
+                status TEXT NOT NULL,
+                embedded_at TEXT NOT NULL,
+                UNIQUE(memory_id, generation),
+                FOREIGN KEY(memory_id) REFERENCES memories(memory_id) ON DELETE CASCADE,
+                FOREIGN KEY(generation)
+                    REFERENCES embedding_generations(generation) ON DELETE CASCADE,
+                CHECK(typeof(embedding) = 'blob'),
+                CHECK(length(embedding) = dimensions * 4)
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memory_embeddings_generation_status
+            ON memory_embeddings(generation, status, memory_id)
+            """,
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = _MIGRATIONS[-1].version
@@ -391,6 +495,7 @@ class SQLiteTransactionManager:
             timeout=self.timeout_seconds,
             isolation_level=None,
         )
+        _load_sqlite_vec(connection)
         connection.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA synchronous=NORMAL")
@@ -480,6 +585,7 @@ class SQLiteTransactionManager:
         try:
             try:
                 target_connection = sqlite3.connect(temporary, isolation_level=None)
+                _load_sqlite_vec(target_connection)
                 source_connection.backup(target_connection)
                 integrity = str(target_connection.execute("PRAGMA integrity_check").fetchone()[0])
                 if integrity != "ok":
@@ -508,3 +614,17 @@ class SQLiteTransactionManager:
             page_count=page_count,
             schema_version=schema_version,
         )
+
+
+def _load_sqlite_vec(connection: sqlite3.Connection) -> None:
+    try:
+        connection.enable_load_extension(True)
+        sqlite_vec.load(connection)
+    except (AttributeError, sqlite3.Error) as error:
+        connection.close()
+        raise StoreError("sqlite-vec 0.1.9 could not be loaded") from error
+    finally:
+        try:
+            connection.enable_load_extension(False)
+        except (AttributeError, sqlite3.Error):
+            pass

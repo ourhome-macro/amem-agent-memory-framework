@@ -14,11 +14,22 @@ import yaml
 from agent_memory_runtime.agent.context_window import compact_checkpoint
 from agent_memory_runtime.agent.models import AgentCheckpoint, ModelMessage
 from agent_memory_runtime.agent.policy import AgentPolicy
-from agent_memory_runtime.config import RuntimeConfig
+from agent_memory_runtime.config import HybridRetrievalConfig, RuntimeConfig
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.evals import evaluate_retrieval
+from agent_memory_runtime.memory.embeddings import (
+    CallableEmbeddingProvider,
+    EmbeddingSpec,
+    VectorRecord,
+    embedding_content_hash,
+)
+from agent_memory_runtime.memory.retrieval import (
+    HybridCandidateRetriever,
+    SemanticRetriever,
+    StoreLexicalRetriever,
+)
 from agent_memory_runtime.memory.retrieval.pipeline import RetrievalPipeline
 from agent_memory_runtime.memory.stores import SQLiteStoreBundle
 from agent_memory_runtime.runtime import AgentMemoryRuntime
@@ -28,12 +39,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Reproduce v0.5 resume validation metrics.")
+    parser = argparse.ArgumentParser(description="Reproduce v0.6 retrieval validation metrics.")
     parser.add_argument("--records", type=int, default=10_000)
     parser.add_argument("--iterations", type=int, default=100)
+    parser.add_argument("--dimensions", type=int, default=1_024)
     args = parser.parse_args()
-    if args.records < 100 or args.iterations < 10:
-        parser.error("--records must be >= 100 and --iterations must be >= 10")
+    if args.records < 100 or args.iterations < 10 or args.dimensions < 2:
+        parser.error(
+            "--records must be >= 100, --iterations must be >= 10, "
+            "and --dimensions must be >= 2"
+        )
 
     result = {
         "environment": {
@@ -41,9 +56,14 @@ def main() -> None:
             "platform": platform.platform(),
         },
         "retrieval_eval": retrieval_eval(),
-        "sqlite_retrieval": sqlite_retrieval_benchmark(
+        "sqlite_fts5_retrieval": sqlite_retrieval_benchmark(
             record_count=args.records,
             iterations=args.iterations,
+        ),
+        "sqlite_vec_hybrid_retrieval": sqlite_vec_hybrid_benchmark(
+            record_count=args.records,
+            iterations=args.iterations,
+            dimensions=args.dimensions,
         ),
         "checkpoint_compaction": checkpoint_compaction_benchmark(),
     }
@@ -61,9 +81,7 @@ def retrieval_eval() -> dict[str, object]:
                 runtime.ingest(Event.from_dict(json.loads(line)))
 
     suite = yaml.safe_load(
-        (ROOT / "examples" / "evals" / "retrieval_cases.yml").read_text(
-            encoding="utf-8"
-        )
+        (ROOT / "examples" / "evals" / "retrieval_cases.yml").read_text(encoding="utf-8")
     )
     results = []
     for case in suite["cases"]:
@@ -114,7 +132,8 @@ def sqlite_retrieval_benchmark(
         layers=("working",),
         limit=8,
     )
-    pipeline = RetrievalPipeline(RuntimeConfig())
+    config = RuntimeConfig(hybrid_retrieval=HybridRetrievalConfig(enable_semantic=False))
+    pipeline = RetrievalPipeline(config)
 
     with tempfile.TemporaryDirectory(prefix="amem-v05-benchmark-") as temporary:
         database = Path(temporary) / "runtime.sqlite"
@@ -123,14 +142,29 @@ def sqlite_retrieval_benchmark(
         bundle.memory_store.replace_all(records)
         index_build_ms = _elapsed_ms(started)
 
+        retriever = HybridCandidateRetriever(
+            lexical=StoreLexicalRetriever(bundle.memory_store),
+            semantic=None,
+            config=config.hybrid_retrieval,
+        )
         for _ in range(5):
-            candidates = bundle.memory_store.query_records(query, limit=256)
-            selected, _ = pipeline.retrieve(candidates, query)
+            batch = retriever.retrieve(query, limit=256)
+            candidates = bundle.memory_store.get_many([hit.memory_id for hit in batch.hits])
+            selected, _ = pipeline.retrieve(
+                candidates,
+                query,
+                candidate_batch=batch,
+            )
         indexed_samples = []
         for _ in range(iterations):
             started = perf_counter()
-            candidates = bundle.memory_store.query_records(query, limit=256)
-            selected, _ = pipeline.retrieve(candidates, query)
+            batch = retriever.retrieve(query, limit=256)
+            candidates = bundle.memory_store.get_many([hit.memory_id for hit in batch.hits])
+            selected, _ = pipeline.retrieve(
+                candidates,
+                query,
+                candidate_batch=batch,
+            )
             indexed_samples.append(_elapsed_ms(started))
         if not selected or selected[0].memory_id != target_id:
             raise RuntimeError("indexed benchmark did not rank the expected memory first")
@@ -147,22 +181,137 @@ def sqlite_retrieval_benchmark(
 
         indexed_p50 = median(indexed_samples)
         full_scan_p50 = median(full_scan_samples)
+        retriever.close(wait=True)
         return {
             "records": record_count,
             "candidate_limit": 256,
-            "candidate_reduction": _rounded(1 - len(candidates) / record_count),
+            "lexical_candidate_count": len(batch.hits),
+            "candidate_reduction": _rounded(1 - len(batch.hits) / record_count),
             "index_build_ms": _rounded(index_build_ms),
             "database_bytes": database.stat().st_size,
             "indexed_iterations": iterations,
             "indexed_p50_ms": _rounded(indexed_p50),
             "indexed_p95_ms": _rounded(_percentile(indexed_samples, 0.95)),
+            "indexed_p99_ms": _rounded(_percentile(indexed_samples, 0.99)),
             "materialized_full_scan_iterations": full_scan_iterations,
             "materialized_full_scan_p50_ms": _rounded(full_scan_p50),
-            "materialized_full_scan_p95_ms": _rounded(
-                _percentile(full_scan_samples, 0.95)
-            ),
+            "materialized_full_scan_p95_ms": _rounded(_percentile(full_scan_samples, 0.95)),
             "p50_speedup_vs_materialized_full_scan": _rounded(
                 full_scan_p50 / max(indexed_p50, 0.000001)
+            ),
+            "expected_top1": target_id,
+        }
+
+
+def sqlite_vec_hybrid_benchmark(
+    *,
+    record_count: int,
+    iterations: int,
+    dimensions: int,
+) -> dict[str, object]:
+    target_id = f"memory-{record_count - 1:08d}"
+    records = [_benchmark_record(index, record_count=record_count) for index in range(record_count)]
+    spec = EmbeddingSpec(
+        provider="benchmark",
+        model_id="deterministic-v1",
+        dimensions=dimensions,
+    )
+    query_vector = [1.0, *([0.0] * (dimensions - 1))]
+    background_vector = [0.0, 1.0, *([0.0] * (dimensions - 2))]
+    provider = CallableEmbeddingProvider(
+        spec,
+        query_embedder=lambda _text: list(query_vector),
+        document_embedder=lambda texts: [list(background_vector) for _ in texts],
+    )
+    query = MemoryQuery(
+        agent_id="assistant",
+        text="退款进度银行确认",
+        session_id="benchmark-session",
+        tenant_id="benchmark-tenant",
+        user_id="benchmark-user",
+        layers=("working",),
+        limit=8,
+    )
+    config = HybridRetrievalConfig(min_semantic_similarity=0.5)
+
+    with tempfile.TemporaryDirectory(prefix="amem-v06-vector-benchmark-") as temporary:
+        database = Path(temporary) / "runtime.sqlite"
+        bundle = SQLiteStoreBundle(database)
+        bundle.memory_store.replace_all(records)
+        bundle.embedding_generations.register(spec, status="active")
+        started = perf_counter()
+        with bundle.transaction():
+            for record in records:
+                bundle.vector_index.upsert(
+                    VectorRecord(
+                        memory_id=record.memory_id,
+                        spec=spec,
+                        content_hash=embedding_content_hash(record, spec),
+                        source_sequence=record.last_event_sequence,
+                        vector=tuple(
+                            query_vector if record.memory_id == target_id else background_vector
+                        ),
+                    )
+                )
+        vector_build_ms = _elapsed_ms(started)
+        semantic = SemanticRetriever(
+            provider=provider,
+            vector_index=bundle.vector_index,
+            config=config,
+        )
+        hybrid = HybridCandidateRetriever(
+            lexical=StoreLexicalRetriever(bundle.memory_store),
+            semantic=semantic,
+            config=config,
+        )
+
+        semantic_samples = []
+        hybrid_samples = []
+        for _ in range(5):
+            semantic.retrieve(query, limit=64)
+        for _ in range(iterations):
+            started = perf_counter()
+            semantic_hits, *_ = semantic.retrieve(query, limit=64)
+            semantic_samples.append(_elapsed_ms(started))
+
+        semantic_timeout_count = 0
+        semantic_completed_count = 0
+        semantic_bulkhead_rejection_count = 0
+        for _ in range(iterations):
+            started = perf_counter()
+            hybrid_batch = hybrid.retrieve(query, limit=256)
+            hybrid_samples.append(_elapsed_ms(started))
+            semantic_timeout_count += int(hybrid_batch.semantic_timed_out)
+            semantic_completed_count += int(
+                "semantic" in hybrid_batch.retrieval_legs
+            )
+            semantic_bulkhead_rejection_count += int(
+                hybrid_batch.semantic_error_type == "SemanticBulkheadRejected"
+            )
+        if not semantic_hits or semantic_hits[0].memory_id != target_id:
+            raise RuntimeError("sqlite-vec benchmark did not rank the expected memory first")
+        if not hybrid_batch.hits or hybrid_batch.hits[0].memory_id != target_id:
+            raise RuntimeError("hybrid benchmark did not rank the expected memory first")
+        hybrid.close(wait=True)
+        return {
+            "records": record_count,
+            "dimensions": dimensions,
+            "distance": "cosine",
+            "search": "exact filtered scan",
+            "vector_build_ms": _rounded(vector_build_ms),
+            "embedding_coverage": bundle.vector_index.coverage(generation=spec.generation),
+            "database_bytes": database.stat().st_size,
+            "iterations": iterations,
+            "semantic_p50_ms": _rounded(median(semantic_samples)),
+            "semantic_p95_ms": _rounded(_percentile(semantic_samples, 0.95)),
+            "semantic_p99_ms": _rounded(_percentile(semantic_samples, 0.99)),
+            "hybrid_p50_ms": _rounded(median(hybrid_samples)),
+            "hybrid_p95_ms": _rounded(_percentile(hybrid_samples, 0.95)),
+            "hybrid_p99_ms": _rounded(_percentile(hybrid_samples, 0.99)),
+            "hybrid_semantic_completed_count": semantic_completed_count,
+            "hybrid_semantic_timeout_count": semantic_timeout_count,
+            "hybrid_semantic_bulkhead_rejection_count": (
+                semantic_bulkhead_rejection_count
             ),
             "expected_top1": target_id,
         }

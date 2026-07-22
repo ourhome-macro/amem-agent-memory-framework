@@ -36,3 +36,15 @@ class LLMRequestError(AgentMemoryRuntimeError):
 
 class LLMResponseError(AgentMemoryRuntimeError):
     """Raised when an LLM provider response has no usable assistant content."""
+
+
+class EmbeddingConfigurationError(AgentMemoryRuntimeError):
+    """Raised when an embedding provider is incomplete or incompatible."""
+
+
+class EmbeddingDimensionError(AgentMemoryRuntimeError):
+    """Raised when a provider returns a vector with an unexpected dimension."""
+
+
+class SemanticCircuitOpenError(AgentMemoryRuntimeError):
+    """Raised while the semantic provider circuit breaker is open."""

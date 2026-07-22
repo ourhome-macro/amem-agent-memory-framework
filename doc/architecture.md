@@ -38,11 +38,16 @@ Event
 
 ```text
 MemoryQuery
- -> store candidate query（identity/layer/status/tag/lexical indexes）
+ -> normalize_query
+ -> SQL 结构化边界与 ACL 预过滤
+ -> 并行候选召回
+      -> SQLite FTS5/BM25 top-N
+      -> query embedding + sqlite-vec cosine top-N
+ -> weighted RRF + get_many
  -> RetrievalPipeline
  -> hard filters
  -> AccessChecker
- -> scoring/rerank/budget
+ -> business scoring/rerank/budget
  -> ContextBuilder
  -> AuditStore.append_envelope
  -> OpenAICompatibleChatClient（可选）
@@ -50,9 +55,10 @@ MemoryQuery
  -> Agent response
 ```
 
-硬过滤会移除会话、类型、作用域、层级、标签或状态不匹配的记录。随后访问校验会阻止
-未授权的 private 和 sensitive 记录。评分综合关键词重合度、时效性、显著性、置信度、
-类型加权、强化次数和来源链接信号。
+tenant、user、session、类型、作用域、层级、标签、状态和规范化 ACL 会在候选 `LIMIT` 前进入 SQL，
+随后 hard filter 与 AccessChecker 再做防御性复核。FTS5 和 semantic 是两路独立召回，不是先由词法
+截断后再做向量重排；两路按 weighted RRF 融合，再叠加时效性、显著性、置信度、类型、强化次数和
+来源链接等业务信号。semantic 超时、bulkhead、熔断或 provider 故障不会阻塞已经完成的 FTS5 结果。
 
 `OpenAICompatibleChatClient` 是可选的末端读取消费者，内置 DeepSeek、OpenAI、Gemini、Qwen、
 Z.AI/GLM 和 Kimi 预设，并允许传入自定义兼容端点。它仅接收已投影的上下文，不持有 Store，也不具备记忆
@@ -86,8 +92,32 @@ archival 层纳入候选，避免普通问题为归档记忆付出额外首字�
 跨会话不是一个隐式布尔开关。`exact` 保持指定 session 的旧语义；`profile` 只允许 Core 和显式
 启用的 Archival 跨 session，Working 始终会话隔离；`all` 仅用于显式历史/运维读取。无论选择哪种
 模式，tenant/user 边界都会在候选截断前过滤，Agent scope/label/visible_to 仍由 AccessChecker
-复核。SQLite schema v5 将常用过滤字段投影为列，并使用 `memory_terms`、`memory_tags` 做词项和标签
-索引，避免每次请求反序列化全量记忆。
+复核。SQLite schema v6 将常用过滤字段投影为列，使用 `memory_fts`、`memory_tags` 和 `memory_acl`
+做 FTS5、标签和授权索引，并以 `memory_embeddings` 保存 sqlite-vec float32 投影，避免每次请求
+反序列化全量记忆。没有可检索 principal 的记录不进入这些派生搜索索引。
+
+## Embedding 派生链路
+
+embedding 不是记忆写事务中的远程调用。记忆提交只负责将旧向量置 stale 并写入同事务 outbox；
+后台 worker 在事务外批量推理，再用短事务完成内容 hash、源事件序列、租约和 fencing 校验后发布。
+
+```text
+MemoryStore.upsert
+ -> FTS/tag/ACL projection
+ -> embedding_jobs(pending)
+ -> commit
+
+EmbeddingWorker
+ -> claim + lease
+ -> embed_documents（事务外）
+ -> re-read MemoryRecord
+ -> content_hash/source_sequence/fencing check
+ -> memory_embeddings(ready) + job(succeeded)
+```
+
+embedding model、revision、维度、prefix 和模板共同确定 generation。新 generation 必须先 backfill，
+coverage 达标且 outbox 排空后才能显式 active。退役 generation 对应的记忆一旦更新，其旧向量立即
+变为 stale；回滚前必须重新 backfill，不能直接启用陈旧空间。
 
 个性化注入是独立的可信投影，不会把召回自由文本提升为系统指令。只有 Core belief 的白名单 key
 及结构化 value 通过枚举/格式校验后，才会生成 `<personalization-profile>`；原始记忆正文继续位于

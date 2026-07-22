@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 from threading import Event as ThreadEvent
+from time import perf_counter
 from typing import Annotated, Any
 from uuid import uuid4
 
@@ -18,7 +20,9 @@ from agent_memory_runtime.cli.banner import BANNER
 from agent_memory_runtime.cli.chat import ChatMode, ChatSettings, run_chat
 from agent_memory_runtime.config import (
     FastResponseConfig,
+    HybridRetrievalConfig,
     LLMConfig,
+    RetrievalWeights,
     RuntimeConfig,
     provider_presets,
 )
@@ -26,7 +30,7 @@ from agent_memory_runtime.domain.enums import MemorySessionPolicy
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.evals import evaluate_retrieval
-from agent_memory_runtime.governance.queue import JsonlDerivationQueueStore
+from agent_memory_runtime.exceptions import EmbeddingConfigurationError, StoreError
 from agent_memory_runtime.governance.queue.worker import DerivationWorker
 from agent_memory_runtime.governance.retention import (
     RetentionCycle,
@@ -35,13 +39,11 @@ from agent_memory_runtime.governance.retention import (
     RetentionPolicy,
     RetentionWorker,
 )
-from agent_memory_runtime.memory.stores import (
-    JsonlAuditStore,
-    JsonlEventStore,
-    JsonlMemoryStore,
-    JsonlSnapshotStore,
-    JsonlTombstoneStore,
+from agent_memory_runtime.memory.embeddings import (
+    EmbeddingProvider,
+    load_embedding_environment,
 )
+from agent_memory_runtime.memory.stores import SQLiteStoreBundle
 from agent_memory_runtime.runtime import AgentMemoryRuntime, AgentResponse
 
 app = typer.Typer(help="Agent Memory Runtime debugger.")
@@ -90,13 +92,8 @@ def print_startup_banner(
 @app.command()
 def init(path: Annotated[Path, PATH_OPTION] = DEFAULT_DATA_DIR) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    (path / "events.jsonl").touch(exist_ok=True)
-    (path / "memories.jsonl").touch(exist_ok=True)
-    (path / "snapshots.jsonl").touch(exist_ok=True)
-    (path / "audit.jsonl").touch(exist_ok=True)
-    (path / "derivation_queue.jsonl").touch(exist_ok=True)
-    (path / "tombstones.jsonl").touch(exist_ok=True)
-    console.print(f"initialized {path}")
+    stores = SQLiteStoreBundle(path / "runtime.sqlite")
+    console.print(f"initialized {path} database=runtime.sqlite schema={stores.schema_version}")
 
 
 @app.command()
@@ -215,7 +212,7 @@ def respond(
                 model=model,
                 base_url=base_url,
                 api_key_env=api_key_env,
-            )
+            ),
         ),
     )
     memory_query = _memory_query(
@@ -426,6 +423,145 @@ def worker(
     )
 
 
+embedding_app = typer.Typer(help="sqlite-vec embedding index operations.")
+app.add_typer(embedding_app, name="embedding")
+
+
+@embedding_app.command("status")
+def embedding_status(
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    stores = SQLiteStoreBundle(data_dir / "runtime.sqlite")
+    provider = _embedding_provider_from_env(required=False)
+    status = stores.semantic_status()
+    configured_generation = None if provider is None else provider.spec.generation
+    status.update(
+        {
+            "configured_provider_generation": configured_generation,
+            "semantic_available": bool(
+                configured_generation and configured_generation == status["active_generation"]
+            ),
+        }
+    )
+    _print_trace(status)
+
+
+@embedding_app.command("backfill")
+def embedding_backfill(
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    provider = _embedding_provider_from_env(required=True)
+    if provider is None:  # pragma: no cover - narrowed by required=True
+        raise typer.BadParameter("embedding provider is not configured")
+    stores = SQLiteStoreBundle(data_dir / "runtime.sqlite")
+    stores.embedding_generations.register(provider.spec, status="backfill")
+    scheduled = stores.enqueue_embedding_backfill()
+    _print_trace(
+        {
+            "generation": provider.spec.generation,
+            "scheduled_jobs": scheduled,
+            "pending_jobs": stores.embedding_jobs.pending_count(
+                generation=provider.spec.generation
+            ),
+        }
+    )
+
+
+@embedding_app.command("worker")
+def embedding_worker(
+    forever: Annotated[
+        bool,
+        typer.Option("--forever", help="Keep polling until interrupted."),
+    ] = False,
+    max_jobs: Annotated[int | None, typer.Option("--max-jobs", min=1)] = None,
+    poll_interval_seconds: Annotated[
+        float,
+        typer.Option("--poll-interval-seconds", min=0.01),
+    ] = 1.0,
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    provider = _embedding_provider_from_env(required=True)
+    if provider is None:  # pragma: no cover - narrowed by required=True
+        raise typer.BadParameter("embedding provider is not configured")
+    stores = SQLiteStoreBundle(data_dir / "runtime.sqlite")
+    stores.embedding_generations.register(provider.spec, status="backfill")
+    stores.enqueue_embedding_backfill()
+    embedding = stores.embedding_worker(
+        provider,
+        poll_interval_seconds=poll_interval_seconds,
+    )
+    if forever:
+        report = embedding.run_forever(stop_after_jobs=max_jobs)
+    else:
+        report = embedding.run_until_idle(max_jobs=max_jobs)
+    _print_trace(
+        {
+            "generation": provider.spec.generation,
+            "processed": report.processed,
+            "succeeded": report.succeeded,
+            "failed": report.failed,
+            "dead_lettered": report.dead_lettered,
+            "superseded": report.superseded,
+            "embedding_coverage": stores.vector_index.coverage(generation=provider.spec.generation),
+            "pending_jobs": stores.embedding_jobs.pending_count(
+                generation=provider.spec.generation
+            ),
+        }
+    )
+
+
+@embedding_app.command("activate")
+def embedding_activate(
+    generation: Annotated[str | None, typer.Option("--generation")] = None,
+    minimum_coverage: Annotated[
+        float,
+        typer.Option("--minimum-coverage", min=0.0, max=1.0),
+    ] = 1.0,
+    allow_pending_jobs: Annotated[
+        bool,
+        typer.Option(
+            "--allow-pending-jobs",
+            help="Emergency override; normal production activation must drain jobs.",
+        ),
+    ] = False,
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    target = generation
+    if target is None:
+        provider = _embedding_provider_from_env(required=True)
+        target = None if provider is None else provider.spec.generation
+    if target is None:  # pragma: no cover - narrowed by required=True
+        raise typer.BadParameter("--generation or embedding provider config is required")
+    stores = SQLiteStoreBundle(data_dir / "runtime.sqlite")
+    try:
+        activated = stores.activate_embedding_generation(
+            target,
+            minimum_coverage=minimum_coverage,
+            allow_pending_jobs=allow_pending_jobs,
+        )
+    except StoreError as error:
+        raise typer.BadParameter(str(error)) from error
+    _print_trace(
+        {
+            "active_generation": activated.generation,
+            "embedding_coverage": stores.vector_index.coverage(generation=target),
+        }
+    )
+
+
+@embedding_app.command("prune")
+def embedding_prune(
+    generation: Annotated[str, typer.Option("--generation")],
+    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
+) -> None:
+    stores = SQLiteStoreBundle(data_dir / "runtime.sqlite")
+    try:
+        stores.delete_retired_embedding_generation(generation)
+    except StoreError as error:
+        raise typer.BadParameter(str(error)) from error
+    _print_trace({"deleted_retired_generation": generation})
+
+
 retention_app = typer.Typer(help="Retention policy debugger.")
 app.add_typer(retention_app, name="retention")
 
@@ -587,12 +723,31 @@ def replay(data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR) -> Non
 @app.command("eval")
 def eval_cases(
     source: Path,
+    mode: Annotated[
+        str,
+        typer.Option(
+            "--mode",
+            help="lexical-only, semantic-only, hybrid-rrf, or hybrid-business.",
+        ),
+    ] = "hybrid-business",
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir)
+    runtime = _runtime(data_dir, config=_retrieval_eval_config(mode))
     payload = yaml.safe_load(source.read_text(encoding="utf-8")) or {}
-    table = Table("case_id", "passed", "R@K", "P@K", "MRR", "nDCG", "selected")
+    table = Table(
+        "case_id",
+        "passed",
+        "R@K",
+        "P@K",
+        "MRR",
+        "nDCG",
+        "ms",
+        "selected",
+    )
     results = []
+    latency_samples: list[float] = []
+    semantic_queries = 0
+    coverage_samples: list[float] = []
     for case in payload.get("cases", []):
         query = MemoryQuery(
             agent_id=str(case["agent"]),
@@ -603,15 +758,20 @@ def eval_cases(
             session_policy=str(case.get("session_policy") or "exact"),
             limit=int(case["limit"]) if case.get("limit") is not None else None,
         )
+        started = perf_counter()
         context = runtime.project(query)
+        latency_ms = (perf_counter() - started) * 1_000
+        latency_samples.append(latency_ms)
+        semantic_queries += int("semantic" in runtime.last_trace.retrieval_legs)
+        if runtime.last_trace.embedding_coverage is not None:
+            coverage_samples.append(runtime.last_trace.embedding_coverage)
         result = evaluate_retrieval(
             str(case["id"]),
             [str(item) for item in case.get("expected_memory_ids", [])],
             list(context.selected_memory_ids),
             forbidden=[str(item) for item in case.get("forbidden_memory_ids", [])],
             relevance={
-                str(key): float(value)
-                for key, value in dict(case.get("relevance") or {}).items()
+                str(key): float(value) for key, value in dict(case.get("relevance") or {}).items()
             },
             k=int(case.get("k") or query.limit or runtime.config.max_retrieval_results),
         )
@@ -622,6 +782,7 @@ def eval_cases(
             f"{result.precision_at_k:.3f}",
             f"{result.reciprocal_rank:.3f}",
             f"{result.ndcg_at_k:.3f}",
+            f"{latency_ms:.2f}",
             ", ".join(result.selected_memory_ids),
         )
         results.append(result)
@@ -630,14 +791,22 @@ def eval_cases(
     _print_trace(
         {
             "cases": len(results),
+            "mode": mode,
             "passed": passed,
             "failed": len(results) - passed,
             "mean_recall_at_k": _mean([result.recall_at_k for result in results]),
             "mean_precision_at_k": _mean([result.precision_at_k for result in results]),
-            "mean_reciprocal_rank": _mean(
-                [result.reciprocal_rank for result in results]
-            ),
+            "mean_reciprocal_rank": _mean([result.reciprocal_rank for result in results]),
             "mean_ndcg_at_k": _mean([result.ndcg_at_k for result in results]),
+            "forbidden_hit_count": sum(result.forbidden_hit_count for result in results),
+            "no_result_accuracy": _mean(
+                [float(result.no_result_correct) for result in results if result.no_result_case]
+            ),
+            "latency_p50_ms": _percentile(latency_samples, 0.50),
+            "latency_p95_ms": _percentile(latency_samples, 0.95),
+            "latency_p99_ms": _percentile(latency_samples, 0.99),
+            "semantic_query_count": semantic_queries,
+            "mean_embedding_coverage": _mean(coverage_samples),
         }
     )
     if passed != len(results):
@@ -726,18 +895,99 @@ def _mean(values: list[float]) -> float:
     return round(sum(values) / len(values), 4) if values else 0.0
 
 
+def _retrieval_eval_config(mode: str) -> RuntimeConfig:
+    normalized = mode.strip().casefold()
+    if normalized == "lexical-only":
+        return RuntimeConfig(hybrid_retrieval=HybridRetrievalConfig(enable_semantic=False))
+    if normalized == "semantic-only":
+        return RuntimeConfig(
+            hybrid_retrieval=HybridRetrievalConfig(
+                enable_lexical=False,
+                allow_uncalibrated_semantic=False,
+            )
+        )
+    if normalized == "hybrid-rrf":
+        return RuntimeConfig(
+            retrieval_weights=RetrievalWeights(
+                keyword=1.0,
+                semantic=1.0,
+                fusion=2.0,
+                recency=0.0,
+                salience=0.0,
+                confidence=0.0,
+                type_boost=0.0,
+                source_link=0.0,
+            )
+        )
+    if normalized == "hybrid-business":
+        return RuntimeConfig()
+    raise typer.BadParameter(
+        "--mode must be lexical-only, semantic-only, hybrid-rrf, or hybrid-business"
+    )
+
+
+def _percentile(values: list[float], quantile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, int((len(ordered) - 1) * quantile)))
+    return round(ordered[index], 4)
+
+
 def _runtime(data_dir: Path, *, config: RuntimeConfig | None = None) -> AgentMemoryRuntime:
     data_dir.mkdir(parents=True, exist_ok=True)
     runtime_config = config or RuntimeConfig()
+    try:
+        embedding_environment = load_embedding_environment()
+    except EmbeddingConfigurationError as error:
+        raise typer.BadParameter(str(error)) from error
+    embedding_provider = embedding_environment.provider
+    if embedding_provider is not None and runtime_config.hybrid_retrieval.enable_semantic:
+        if (
+            runtime_config.hybrid_retrieval.min_semantic_similarity is None
+            and embedding_environment.min_similarity is not None
+        ):
+            runtime_config = replace(
+                runtime_config,
+                hybrid_retrieval=replace(
+                    runtime_config.hybrid_retrieval,
+                    min_semantic_similarity=embedding_environment.min_similarity,
+                ),
+            )
+        if (
+            runtime_config.hybrid_retrieval.min_semantic_similarity is None
+            and not runtime_config.hybrid_retrieval.allow_uncalibrated_semantic
+        ):
+            raise typer.BadParameter(
+                "AMEM_EMBEDDING_MIN_SIMILARITY is required for online semantic retrieval"
+            )
+    try:
+        stores = SQLiteStoreBundle(
+            data_dir / "runtime.sqlite",
+            embedding_provider=embedding_provider,
+        )
+    except StoreError as error:
+        raise typer.BadParameter(str(error)) from error
     return AgentMemoryRuntime(
         config=runtime_config,
-        event_store=JsonlEventStore(data_dir / "events.jsonl"),
-        memory_store=JsonlMemoryStore(data_dir / "memories.jsonl"),
-        snapshot_store=JsonlSnapshotStore(data_dir / "snapshots.jsonl"),
-        audit_store=JsonlAuditStore(data_dir / "audit.jsonl"),
-        derivation_queue=JsonlDerivationQueueStore(data_dir / "derivation_queue.jsonl"),
-        tombstone_store=JsonlTombstoneStore(data_dir / "tombstones.jsonl"),
+        event_store=stores.event_store,
+        memory_store=stores.memory_store,
+        snapshot_store=stores.snapshot_store,
+        audit_store=stores.audit_store,
+        derivation_queue=stores.derivation_queue,
+        tombstone_store=stores.tombstone_store,
+        transaction_manager=stores,
     )
+
+
+def _embedding_provider_from_env(
+    *,
+    required: bool,
+) -> EmbeddingProvider | None:
+    try:
+        return load_embedding_environment(required_provider=required).provider
+    except EmbeddingConfigurationError as error:
+        raise typer.BadParameter(str(error)) from error
 
 
 def _llm_config(
