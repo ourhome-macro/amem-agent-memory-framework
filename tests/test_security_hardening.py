@@ -21,7 +21,7 @@ from agent_memory_runtime.runtime import AgentMemoryRuntime
 
 def test_sensitive_payload_is_redacted_before_event_and_memory_persistence() -> None:
     card_number = "4111 1111 1111 1111"
-    cvv = "123"
+    cvv = "cvv-secret-123"
     runtime = AgentMemoryRuntime()
 
     result = runtime.ingest(

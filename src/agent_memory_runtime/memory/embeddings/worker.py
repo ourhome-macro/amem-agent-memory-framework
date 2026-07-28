@@ -2,22 +2,24 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
+from inspect import signature
 from time import sleep
 from uuid import uuid4
 
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.exceptions import LeaseLostError
-from agent_memory_runtime.memory.embeddings.base import EmbeddingProvider, validate_vector
+from agent_memory_runtime.memory.embeddings.base import (
+    EmbeddingProvider,
+    VectorIndex,
+    validate_vector,
+)
 from agent_memory_runtime.memory.embeddings.models import (
     EmbeddingJob,
     VectorRecord,
     canonical_memory_text,
     embedding_content_hash,
 )
-from agent_memory_runtime.memory.embeddings.sqlite import (
-    SQLiteEmbeddingJobStore,
-    SQLiteVectorIndex,
-)
+from agent_memory_runtime.memory.embeddings.sqlite import SQLiteEmbeddingJobStore
 from agent_memory_runtime.memory.stores.base import MemoryStore
 
 
@@ -36,7 +38,7 @@ class EmbeddingWorker:
         *,
         provider: EmbeddingProvider,
         jobs: SQLiteEmbeddingJobStore,
-        vectors: SQLiteVectorIndex,
+        vectors: VectorIndex,
         memories: MemoryStore,
         worker_id: str | None = None,
         lease_seconds: float = 30.0,
@@ -110,14 +112,16 @@ class EmbeddingWorker:
                 )
                 if owned is None:
                     raise LeaseLostError(f"embedding job {job.job_id} lost its lease")
-                self.vectors.upsert(
+                _upsert_vector(
+                    self.vectors,
                     VectorRecord(
                         memory_id=current.memory_id,
                         spec=self.provider.spec,
                         content_hash=job.content_hash,
                         source_sequence=current.last_event_sequence,
                         vector=tuple(vector),
-                    )
+                    ),
+                    memory=current,
                 )
                 completed = self.jobs.complete(
                     job.job_id,
@@ -262,14 +266,16 @@ class EmbeddingWorker:
             )
             if owned is None:
                 raise LeaseLostError(f"embedding job {job.job_id} lost its lease")
-            self.vectors.upsert(
+            _upsert_vector(
+                self.vectors,
                 VectorRecord(
                     memory_id=current.memory_id,
                     spec=self.provider.spec,
                     content_hash=job.content_hash,
                     source_sequence=current.last_event_sequence,
                     vector=tuple(vector),
-                )
+                ),
+                memory=current,
             )
             completed = self.jobs.complete(
                 job.job_id,
@@ -414,3 +420,10 @@ def _report(jobs: list[EmbeddingJob]) -> EmbeddingWorkerReport:
         dead_lettered=sum(job.status == "dead_letter" for job in jobs),
         superseded=sum(job.status == "superseded" for job in jobs),
     )
+
+
+def _upsert_vector(vectors: VectorIndex, record: VectorRecord, *, memory: MemoryRecord) -> None:
+    if "memory" in signature(vectors.upsert).parameters:
+        vectors.upsert(record, memory=memory)  # type: ignore[call-arg]
+        return
+    vectors.upsert(record)

@@ -1,0 +1,5396 @@
+{
+  "fts5_only": {
+    "summary": {
+      "cases": 30,
+      "passed_at_5": 18,
+      "mean_recall_at_5_all": 0.7,
+      "mean_recall_at_5_non_empty": 0.5714,
+      "mean_precision_at_5": 0.32,
+      "no_result_accuracy": 0.7778,
+      "p50_ms": 15.29
+    },
+    "details": [
+      {
+        "case_id": "para_1_release_schedule",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v3:strategy:eval-tenant:alice:companion:project_meeting"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 21.33
+      },
+      {
+        "case_id": "para_2_disk_space",
+        "category": "semantic_paraphrase",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 15.29
+      },
+      {
+        "case_id": "para_3_delivery_location",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 20.03
+      },
+      {
+        "case_id": "para_4_utility_payment",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 20.2
+      },
+      {
+        "case_id": "para_5_study_plan",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 20.09
+      },
+      {
+        "case_id": "xlang_1_car_service",
+        "category": "cross_language",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 14.89
+      },
+      {
+        "case_id": "xlang_2_release",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:strategy:eval-tenant:alice:companion:project_meeting"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 19.95
+      },
+      {
+        "case_id": "xlang_3_disk",
+        "category": "cross_language",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 14.86
+      },
+      {
+        "case_id": "xlang_4_music",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:strategy:eval-tenant:alice:companion:project_meeting"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 26.6
+      },
+      {
+        "case_id": "exact_1_order_id",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 20.84
+      },
+      {
+        "case_id": "exact_2_orbit",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 15.59
+      },
+      {
+        "case_id": "exact_3_agent",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 10.73
+      },
+      {
+        "case_id": "exact_4_session",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 27.89
+      },
+      {
+        "case_id": "neg_1_renewal_off",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 46.88
+      },
+      {
+        "case_id": "neg_2_renewal_on",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 33.97
+      },
+      {
+        "case_id": "auth_1_cross_tenant",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 14.44
+      },
+      {
+        "case_id": "auth_2_cross_agent",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 16.23
+      },
+      {
+        "case_id": "auth_3_cross_session",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 40.41
+      },
+      {
+        "case_id": "none_1_quantum",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 12.22
+      },
+      {
+        "case_id": "none_2_mars",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 9.69
+      },
+      {
+        "case_id": "none_3_ancient",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 8.64
+      },
+      {
+        "case_id": "pref_1_response_style",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "forbidden_ids": [
+          "v3:belief:eval-tenant:bob:companion:response_style"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 25.8
+      },
+      {
+        "case_id": "pref_2_music_genre",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 11.77
+      },
+      {
+        "case_id": "pref_3_travel_seat",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 14.39
+      },
+      {
+        "case_id": "strat_1_refund",
+        "category": "strategy_recall",
+        "selected_ids": [],
+        "expected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 9.92
+      },
+      {
+        "case_id": "epi_1_refund_progress",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 12.39
+      },
+      {
+        "case_id": "epi_2_concert",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 11.86
+      },
+      {
+        "case_id": "syn_1_payment_method",
+        "category": "semantic_synonym",
+        "selected_ids": [],
+        "expected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 8.49
+      },
+      {
+        "case_id": "syn_2_collaboration_tool",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 11.82
+      },
+      {
+        "case_id": "syn_3_workout_time",
+        "category": "semantic_synonym",
+        "selected_ids": [],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 9.91
+      }
+    ]
+  },
+  "qdrant_vector_t0.0": {
+    "summary": {
+      "cases": 30,
+      "passed_at_5": 14,
+      "mean_recall_at_5_all": 0.8,
+      "mean_recall_at_5_non_empty": 0.7143,
+      "mean_precision_at_5": 0.1067,
+      "no_result_accuracy": 0.0,
+      "p50_ms": 178.82
+    },
+    "details": [
+      {
+        "case_id": "para_1_release_schedule",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 188.56
+      },
+      {
+        "case_id": "para_2_disk_space",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 185.69
+      },
+      {
+        "case_id": "para_3_delivery_location",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 179.3
+      },
+      {
+        "case_id": "para_4_utility_payment",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 187.13
+      },
+      {
+        "case_id": "para_5_study_plan",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:strategy:eval-tenant:alice:companion:project_meeting",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 174.73
+      },
+      {
+        "case_id": "xlang_1_car_service",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 184.95
+      },
+      {
+        "case_id": "xlang_2_release",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 185.6
+      },
+      {
+        "case_id": "xlang_3_disk",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 178.06
+      },
+      {
+        "case_id": "xlang_4_music",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 190.53
+      },
+      {
+        "case_id": "exact_1_order_id",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 178.42
+      },
+      {
+        "case_id": "exact_2_orbit",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 174.3
+      },
+      {
+        "case_id": "exact_3_agent",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 178.58
+      },
+      {
+        "case_id": "exact_4_session",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 179.42
+      },
+      {
+        "case_id": "neg_1_renewal_off",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 183.94
+      },
+      {
+        "case_id": "neg_2_renewal_on",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 183.6
+      },
+      {
+        "case_id": "auth_1_cross_tenant",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 62.05
+      },
+      {
+        "case_id": "auth_2_cross_agent",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 62.04
+      },
+      {
+        "case_id": "auth_3_cross_session",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 54.25
+      },
+      {
+        "case_id": "none_1_quantum",
+        "category": "no_result",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 190.18
+      },
+      {
+        "case_id": "none_2_mars",
+        "category": "no_result",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 192.27
+      },
+      {
+        "case_id": "none_3_ancient",
+        "category": "no_result",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 192.68
+      },
+      {
+        "case_id": "pref_1_response_style",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:current-session:eval-refund",
+          "v2:episodic:eval-tenant:current-session:eval-music",
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "forbidden_ids": [
+          "v3:belief:eval-tenant:bob:companion:response_style"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 178.82
+      },
+      {
+        "case_id": "pref_2_music_genre",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:distractor-session:d-music-1"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 173.83
+      },
+      {
+        "case_id": "pref_3_travel_seat",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v2:episodic:eval-tenant:distractor-session:d-travel-1"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 174.98
+      },
+      {
+        "case_id": "strat_1_refund",
+        "category": "strategy_recall",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel",
+          "episodic:support-001:evt-001"
+        ],
+        "expected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 148.93
+      },
+      {
+        "case_id": "epi_1_refund_progress",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v2:episodic:eval-tenant:current-session:eval-refund",
+          "v2:episodic:eval-tenant:current-session:eval-music"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 159.84
+      },
+      {
+        "case_id": "epi_2_concert",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund",
+          "v2:episodic:eval-tenant:current-session:eval-music",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 162.6
+      },
+      {
+        "case_id": "syn_1_payment_method",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel",
+          "episodic:support-001:evt-001"
+        ],
+        "expected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 140.24
+      },
+      {
+        "case_id": "syn_2_collaboration_tool",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 184.74
+      },
+      {
+        "case_id": "syn_3_workout_time",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 163.67
+      }
+    ]
+  },
+  "qdrant_hybrid_t0.0": {
+    "summary": {
+      "cases": 30,
+      "passed_at_5": 18,
+      "mean_recall_at_5_all": 0.9333,
+      "mean_recall_at_5_non_empty": 0.9048,
+      "mean_precision_at_5": 0.1333,
+      "no_result_accuracy": 0.0,
+      "p50_ms": 180.48
+    },
+    "details": [
+      {
+        "case_id": "para_1_release_schedule",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v3:strategy:eval-tenant:alice:companion:project_meeting",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 188.49
+      },
+      {
+        "case_id": "para_2_disk_space",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 186.17
+      },
+      {
+        "case_id": "para_3_delivery_location",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 180.41
+      },
+      {
+        "case_id": "para_4_utility_payment",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 185.96
+      },
+      {
+        "case_id": "para_5_study_plan",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 176.02
+      },
+      {
+        "case_id": "xlang_1_car_service",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 186.64
+      },
+      {
+        "case_id": "xlang_2_release",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:strategy:eval-tenant:alice:companion:project_meeting",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 185.24
+      },
+      {
+        "case_id": "xlang_3_disk",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 180.48
+      },
+      {
+        "case_id": "xlang_4_music",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:strategy:eval-tenant:alice:companion:project_meeting",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 194.85
+      },
+      {
+        "case_id": "exact_1_order_id",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 179.72
+      },
+      {
+        "case_id": "exact_2_orbit",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 175.37
+      },
+      {
+        "case_id": "exact_3_agent",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 182.07
+      },
+      {
+        "case_id": "exact_4_session",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 180.47
+      },
+      {
+        "case_id": "neg_1_renewal_off",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 185.32
+      },
+      {
+        "case_id": "neg_2_renewal_on",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 185.89
+      },
+      {
+        "case_id": "auth_1_cross_tenant",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 63.91
+      },
+      {
+        "case_id": "auth_2_cross_agent",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 64.22
+      },
+      {
+        "case_id": "auth_3_cross_session",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 57.76
+      },
+      {
+        "case_id": "none_1_quantum",
+        "category": "no_result",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 191.16
+      },
+      {
+        "case_id": "none_2_mars",
+        "category": "no_result",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 194.1
+      },
+      {
+        "case_id": "none_3_ancient",
+        "category": "no_result",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 195.26
+      },
+      {
+        "case_id": "pref_1_response_style",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:current-session:eval-refund",
+          "v2:episodic:eval-tenant:current-session:eval-music",
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "forbidden_ids": [
+          "v3:belief:eval-tenant:bob:companion:response_style"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 180.74
+      },
+      {
+        "case_id": "pref_2_music_genre",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v2:episodic:eval-tenant:distractor-session:d-music-1"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 175.18
+      },
+      {
+        "case_id": "pref_3_travel_seat",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v2:episodic:eval-tenant:distractor-session:d-travel-1"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 177.41
+      },
+      {
+        "case_id": "strat_1_refund",
+        "category": "strategy_recall",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel",
+          "episodic:support-001:evt-001"
+        ],
+        "expected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 150.37
+      },
+      {
+        "case_id": "epi_1_refund_progress",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v2:episodic:eval-tenant:current-session:eval-music"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 162.17
+      },
+      {
+        "case_id": "epi_2_concert",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v2:episodic:eval-tenant:current-session:eval-refund",
+          "v2:episodic:eval-tenant:current-session:eval-music",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 167.9
+      },
+      {
+        "case_id": "syn_1_payment_method",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel",
+          "episodic:support-001:evt-001"
+        ],
+        "expected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 144.73
+      },
+      {
+        "case_id": "syn_2_collaboration_tool",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 186.08
+      },
+      {
+        "case_id": "syn_3_workout_time",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 166.18
+      }
+    ]
+  },
+  "qdrant_vector_t0.3": {
+    "summary": {
+      "cases": 30,
+      "passed_at_5": 14,
+      "mean_recall_at_5_all": 0.8,
+      "mean_recall_at_5_non_empty": 0.7143,
+      "mean_precision_at_5": 0.1067,
+      "no_result_accuracy": 0.0,
+      "p50_ms": 177.75
+    },
+    "details": [
+      {
+        "case_id": "para_1_release_schedule",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 186.56
+      },
+      {
+        "case_id": "para_2_disk_space",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 184.86
+      },
+      {
+        "case_id": "para_3_delivery_location",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 177.75
+      },
+      {
+        "case_id": "para_4_utility_payment",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 183.66
+      },
+      {
+        "case_id": "para_5_study_plan",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:strategy:eval-tenant:alice:companion:project_meeting",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 174.76
+      },
+      {
+        "case_id": "xlang_1_car_service",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 185.7
+      },
+      {
+        "case_id": "xlang_2_release",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 185.1
+      },
+      {
+        "case_id": "xlang_3_disk",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 179.56
+      },
+      {
+        "case_id": "xlang_4_music",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 200.92
+      },
+      {
+        "case_id": "exact_1_order_id",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 167.86
+      },
+      {
+        "case_id": "exact_2_orbit",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 167.98
+      },
+      {
+        "case_id": "exact_3_agent",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 174.37
+      },
+      {
+        "case_id": "exact_4_session",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 178.47
+      },
+      {
+        "case_id": "neg_1_renewal_off",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 184.48
+      },
+      {
+        "case_id": "neg_2_renewal_on",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 185.6
+      },
+      {
+        "case_id": "auth_1_cross_tenant",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 55.12
+      },
+      {
+        "case_id": "auth_2_cross_agent",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 58.03
+      },
+      {
+        "case_id": "auth_3_cross_session",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 61.34
+      },
+      {
+        "case_id": "none_1_quantum",
+        "category": "no_result",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 184.95
+      },
+      {
+        "case_id": "none_2_mars",
+        "category": "no_result",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 193.66
+      },
+      {
+        "case_id": "none_3_ancient",
+        "category": "no_result",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 179.09
+      },
+      {
+        "case_id": "pref_1_response_style",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:current-session:eval-refund",
+          "v2:episodic:eval-tenant:current-session:eval-music",
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "forbidden_ids": [
+          "v3:belief:eval-tenant:bob:companion:response_style"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 176.42
+      },
+      {
+        "case_id": "pref_2_music_genre",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:distractor-session:d-music-1"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 174.84
+      },
+      {
+        "case_id": "pref_3_travel_seat",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v2:episodic:eval-tenant:distractor-session:d-travel-1"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 174.23
+      },
+      {
+        "case_id": "strat_1_refund",
+        "category": "strategy_recall",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel",
+          "episodic:support-001:evt-001"
+        ],
+        "expected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 149.62
+      },
+      {
+        "case_id": "epi_1_refund_progress",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v2:episodic:eval-tenant:current-session:eval-refund",
+          "v2:episodic:eval-tenant:current-session:eval-music"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 159.04
+      },
+      {
+        "case_id": "epi_2_concert",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund",
+          "v2:episodic:eval-tenant:current-session:eval-music",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 162.86
+      },
+      {
+        "case_id": "syn_1_payment_method",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel",
+          "episodic:support-001:evt-001"
+        ],
+        "expected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 143.9
+      },
+      {
+        "case_id": "syn_2_collaboration_tool",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 184.68
+      },
+      {
+        "case_id": "syn_3_workout_time",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 165.18
+      }
+    ]
+  },
+  "qdrant_hybrid_t0.3": {
+    "summary": {
+      "cases": 30,
+      "passed_at_5": 18,
+      "mean_recall_at_5_all": 0.9333,
+      "mean_recall_at_5_non_empty": 0.9048,
+      "mean_precision_at_5": 0.1333,
+      "no_result_accuracy": 0.0,
+      "p50_ms": 180.49
+    },
+    "details": [
+      {
+        "case_id": "para_1_release_schedule",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v3:strategy:eval-tenant:alice:companion:project_meeting",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 187.71
+      },
+      {
+        "case_id": "para_2_disk_space",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 186.33
+      },
+      {
+        "case_id": "para_3_delivery_location",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 179.9
+      },
+      {
+        "case_id": "para_4_utility_payment",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 186.36
+      },
+      {
+        "case_id": "para_5_study_plan",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 175.17
+      },
+      {
+        "case_id": "xlang_1_car_service",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 187.32
+      },
+      {
+        "case_id": "xlang_2_release",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:strategy:eval-tenant:alice:companion:project_meeting",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 186.12
+      },
+      {
+        "case_id": "xlang_3_disk",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 181.12
+      },
+      {
+        "case_id": "xlang_4_music",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:strategy:eval-tenant:alice:companion:project_meeting",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 192.91
+      },
+      {
+        "case_id": "exact_1_order_id",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 173.11
+      },
+      {
+        "case_id": "exact_2_orbit",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 171.03
+      },
+      {
+        "case_id": "exact_3_agent",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 177.61
+      },
+      {
+        "case_id": "exact_4_session",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 180.49
+      },
+      {
+        "case_id": "neg_1_renewal_off",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 186.73
+      },
+      {
+        "case_id": "neg_2_renewal_on",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 186.94
+      },
+      {
+        "case_id": "auth_1_cross_tenant",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 57.14
+      },
+      {
+        "case_id": "auth_2_cross_agent",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 59.28
+      },
+      {
+        "case_id": "auth_3_cross_session",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 62.31
+      },
+      {
+        "case_id": "none_1_quantum",
+        "category": "no_result",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 189.38
+      },
+      {
+        "case_id": "none_2_mars",
+        "category": "no_result",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 194.88
+      },
+      {
+        "case_id": "none_3_ancient",
+        "category": "no_result",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 181.17
+      },
+      {
+        "case_id": "pref_1_response_style",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:current-session:eval-refund",
+          "v2:episodic:eval-tenant:current-session:eval-music",
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "forbidden_ids": [
+          "v3:belief:eval-tenant:bob:companion:response_style"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 182.62
+      },
+      {
+        "case_id": "pref_2_music_genre",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v2:episodic:eval-tenant:distractor-session:d-music-1"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 179.63
+      },
+      {
+        "case_id": "pref_3_travel_seat",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v2:episodic:eval-tenant:distractor-session:d-travel-1"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 176.32
+      },
+      {
+        "case_id": "strat_1_refund",
+        "category": "strategy_recall",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel",
+          "episodic:support-001:evt-001"
+        ],
+        "expected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 152.07
+      },
+      {
+        "case_id": "epi_1_refund_progress",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v2:episodic:eval-tenant:current-session:eval-music"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 163.01
+      },
+      {
+        "case_id": "epi_2_concert",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v2:episodic:eval-tenant:current-session:eval-refund",
+          "v2:episodic:eval-tenant:current-session:eval-music",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 168.55
+      },
+      {
+        "case_id": "syn_1_payment_method",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel",
+          "episodic:support-001:evt-001"
+        ],
+        "expected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 140.91
+      },
+      {
+        "case_id": "syn_2_collaboration_tool",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2",
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 187.2
+      },
+      {
+        "case_id": "syn_3_workout_time",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 166.11
+      }
+    ]
+  },
+  "qdrant_vector_t0.5": {
+    "summary": {
+      "cases": 30,
+      "passed_at_5": 25,
+      "mean_recall_at_5_all": 0.9333,
+      "mean_recall_at_5_non_empty": 0.9048,
+      "mean_precision_at_5": 0.3667,
+      "no_result_accuracy": 0.7778,
+      "p50_ms": 149.23
+    },
+    "details": [
+      {
+        "case_id": "para_1_release_schedule",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 149.86
+      },
+      {
+        "case_id": "para_2_disk_space",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 148.68
+      },
+      {
+        "case_id": "para_3_delivery_location",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 144.43
+      },
+      {
+        "case_id": "para_4_utility_payment",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 147.17
+      },
+      {
+        "case_id": "para_5_study_plan",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 140.54
+      },
+      {
+        "case_id": "xlang_1_car_service",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 148.76
+      },
+      {
+        "case_id": "xlang_2_release",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 149.23
+      },
+      {
+        "case_id": "xlang_3_disk",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 167.82
+      },
+      {
+        "case_id": "xlang_4_music",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 155.99
+      },
+      {
+        "case_id": "exact_1_order_id",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 146.1
+      },
+      {
+        "case_id": "exact_2_orbit",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 133.8
+      },
+      {
+        "case_id": "exact_3_agent",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 141.36
+      },
+      {
+        "case_id": "exact_4_session",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 143.21
+      },
+      {
+        "case_id": "neg_1_renewal_off",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 157.57
+      },
+      {
+        "case_id": "neg_2_renewal_on",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 161.34
+      },
+      {
+        "case_id": "auth_1_cross_tenant",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 19.91
+      },
+      {
+        "case_id": "auth_2_cross_agent",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 19.96
+      },
+      {
+        "case_id": "auth_3_cross_session",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 25.31
+      },
+      {
+        "case_id": "none_1_quantum",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 149.32
+      },
+      {
+        "case_id": "none_2_mars",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 155.49
+      },
+      {
+        "case_id": "none_3_ancient",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 151.75
+      },
+      {
+        "case_id": "pref_1_response_style",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "forbidden_ids": [
+          "v3:belief:eval-tenant:bob:companion:response_style"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 170.77
+      },
+      {
+        "case_id": "pref_2_music_genre",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v2:episodic:eval-tenant:distractor-session:d-music-1"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 151.48
+      },
+      {
+        "case_id": "pref_3_travel_seat",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:distractor-session:d-travel-3"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 152.6
+      },
+      {
+        "case_id": "strat_1_refund",
+        "category": "strategy_recall",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel",
+          "episodic:support-001:evt-001"
+        ],
+        "expected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 152.63
+      },
+      {
+        "case_id": "epi_1_refund_progress",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 150.53
+      },
+      {
+        "case_id": "epi_2_concert",
+        "category": "episodic_recall",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 147.76
+      },
+      {
+        "case_id": "syn_1_payment_method",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "expected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 148.94
+      },
+      {
+        "case_id": "syn_2_collaboration_tool",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 149.19
+      },
+      {
+        "case_id": "syn_3_workout_time",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v2:episodic:eval-tenant:distractor-session:d-work-1"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 169.88
+      }
+    ]
+  },
+  "qdrant_hybrid_t0.5": {
+    "summary": {
+      "cases": 30,
+      "passed_at_5": 26,
+      "mean_recall_at_5_all": 0.9667,
+      "mean_recall_at_5_non_empty": 0.9524,
+      "mean_precision_at_5": 0.3733,
+      "no_result_accuracy": 0.7778,
+      "p50_ms": 154.16
+    },
+    "details": [
+      {
+        "case_id": "para_1_release_schedule",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v3:strategy:eval-tenant:alice:companion:project_meeting"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 176.64
+      },
+      {
+        "case_id": "para_2_disk_space",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 154.16
+      },
+      {
+        "case_id": "para_3_delivery_location",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 147.28
+      },
+      {
+        "case_id": "para_4_utility_payment",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 157.8
+      },
+      {
+        "case_id": "para_5_study_plan",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 149.1
+      },
+      {
+        "case_id": "xlang_1_car_service",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 154.14
+      },
+      {
+        "case_id": "xlang_2_release",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v3:strategy:eval-tenant:alice:companion:project_meeting"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 168.8
+      },
+      {
+        "case_id": "xlang_3_disk",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 167.6
+      },
+      {
+        "case_id": "xlang_4_music",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:strategy:eval-tenant:alice:companion:project_meeting"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 161.59
+      },
+      {
+        "case_id": "exact_1_order_id",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 144.41
+      },
+      {
+        "case_id": "exact_2_orbit",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 137.46
+      },
+      {
+        "case_id": "exact_3_agent",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 139.97
+      },
+      {
+        "case_id": "exact_4_session",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 173.61
+      },
+      {
+        "case_id": "neg_1_renewal_off",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 160.57
+      },
+      {
+        "case_id": "neg_2_renewal_on",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 164.79
+      },
+      {
+        "case_id": "auth_1_cross_tenant",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 21.14
+      },
+      {
+        "case_id": "auth_2_cross_agent",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 21.02
+      },
+      {
+        "case_id": "auth_3_cross_session",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 52.97
+      },
+      {
+        "case_id": "none_1_quantum",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 149.5
+      },
+      {
+        "case_id": "none_2_mars",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 155.09
+      },
+      {
+        "case_id": "none_3_ancient",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 154.7
+      },
+      {
+        "case_id": "pref_1_response_style",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "forbidden_ids": [
+          "v3:belief:eval-tenant:bob:companion:response_style"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 175.27
+      },
+      {
+        "case_id": "pref_2_music_genre",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v2:episodic:eval-tenant:distractor-session:d-music-1"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 155.59
+      },
+      {
+        "case_id": "pref_3_travel_seat",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat",
+          "v2:episodic:eval-tenant:distractor-session:d-travel-3"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 154.49
+      },
+      {
+        "case_id": "strat_1_refund",
+        "category": "strategy_recall",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel",
+          "episodic:support-001:evt-001"
+        ],
+        "expected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 154.37
+      },
+      {
+        "case_id": "epi_1_refund_progress",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 150.41
+      },
+      {
+        "case_id": "epi_2_concert",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 153.73
+      },
+      {
+        "case_id": "syn_1_payment_method",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "expected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 146.28
+      },
+      {
+        "case_id": "syn_2_collaboration_tool",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 152.46
+      },
+      {
+        "case_id": "syn_3_workout_time",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time",
+          "v2:episodic:eval-tenant:distractor-session:d-work-1"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 143.94
+      }
+    ]
+  },
+  "qdrant_vector_t0.6": {
+    "summary": {
+      "cases": 30,
+      "passed_at_5": 25,
+      "mean_recall_at_5_all": 0.8667,
+      "mean_recall_at_5_non_empty": 0.8095,
+      "mean_precision_at_5": 0.42,
+      "no_result_accuracy": 1.0,
+      "p50_ms": 82.09
+    },
+    "details": [
+      {
+        "case_id": "para_1_release_schedule",
+        "category": "semantic_paraphrase",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 142.58
+      },
+      {
+        "case_id": "para_2_disk_space",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 149.89
+      },
+      {
+        "case_id": "para_3_delivery_location",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 144.69
+      },
+      {
+        "case_id": "para_4_utility_payment",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 151.3
+      },
+      {
+        "case_id": "para_5_study_plan",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 105.07
+      },
+      {
+        "case_id": "xlang_1_car_service",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 82.66
+      },
+      {
+        "case_id": "xlang_2_release",
+        "category": "cross_language",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 77.0
+      },
+      {
+        "case_id": "xlang_3_disk",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 81.44
+      },
+      {
+        "case_id": "xlang_4_music",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 80.65
+      },
+      {
+        "case_id": "exact_1_order_id",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 81.98
+      },
+      {
+        "case_id": "exact_2_orbit",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 79.66
+      },
+      {
+        "case_id": "exact_3_agent",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 81.39
+      },
+      {
+        "case_id": "exact_4_session",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 77.71
+      },
+      {
+        "case_id": "neg_1_renewal_off",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 90.19
+      },
+      {
+        "case_id": "neg_2_renewal_on",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 88.48
+      },
+      {
+        "case_id": "auth_1_cross_tenant",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 16.27
+      },
+      {
+        "case_id": "auth_2_cross_agent",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 16.5
+      },
+      {
+        "case_id": "auth_3_cross_session",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 15.6
+      },
+      {
+        "case_id": "none_1_quantum",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 82.49
+      },
+      {
+        "case_id": "none_2_mars",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 82.78
+      },
+      {
+        "case_id": "none_3_ancient",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 82.52
+      },
+      {
+        "case_id": "pref_1_response_style",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "forbidden_ids": [
+          "v3:belief:eval-tenant:bob:companion:response_style"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 88.45
+      },
+      {
+        "case_id": "pref_2_music_genre",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 81.97
+      },
+      {
+        "case_id": "pref_3_travel_seat",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 87.13
+      },
+      {
+        "case_id": "strat_1_refund",
+        "category": "strategy_recall",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "expected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 82.39
+      },
+      {
+        "case_id": "epi_1_refund_progress",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 82.09
+      },
+      {
+        "case_id": "epi_2_concert",
+        "category": "episodic_recall",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 80.26
+      },
+      {
+        "case_id": "syn_1_payment_method",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "expected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 77.05
+      },
+      {
+        "case_id": "syn_2_collaboration_tool",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 80.9
+      },
+      {
+        "case_id": "syn_3_workout_time",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 76.37
+      }
+    ]
+  },
+  "qdrant_hybrid_t0.6": {
+    "summary": {
+      "cases": 30,
+      "passed_at_5": 24,
+      "mean_recall_at_5_all": 0.9,
+      "mean_recall_at_5_non_empty": 0.8571,
+      "mean_precision_at_5": 0.36,
+      "no_result_accuracy": 0.7778,
+      "p50_ms": 81.74
+    },
+    "details": [
+      {
+        "case_id": "para_1_release_schedule",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v3:strategy:eval-tenant:alice:companion:project_meeting"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 87.24
+      },
+      {
+        "case_id": "para_2_disk_space",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 80.04
+      },
+      {
+        "case_id": "para_3_delivery_location",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 82.51
+      },
+      {
+        "case_id": "para_4_utility_payment",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 79.73
+      },
+      {
+        "case_id": "para_5_study_plan",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 80.09
+      },
+      {
+        "case_id": "xlang_1_car_service",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 81.12
+      },
+      {
+        "case_id": "xlang_2_release",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:strategy:eval-tenant:alice:companion:project_meeting"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 80.91
+      },
+      {
+        "case_id": "xlang_3_disk",
+        "category": "cross_language",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 78.93
+      },
+      {
+        "case_id": "xlang_4_music",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:strategy:eval-tenant:alice:companion:project_meeting"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 85.37
+      },
+      {
+        "case_id": "exact_1_order_id",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 77.2
+      },
+      {
+        "case_id": "exact_2_orbit",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 76.54
+      },
+      {
+        "case_id": "exact_3_agent",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 76.15
+      },
+      {
+        "case_id": "exact_4_session",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 100.02
+      },
+      {
+        "case_id": "neg_1_renewal_off",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 89.62
+      },
+      {
+        "case_id": "neg_2_renewal_on",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 88.86
+      },
+      {
+        "case_id": "auth_1_cross_tenant",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 16.31
+      },
+      {
+        "case_id": "auth_2_cross_agent",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 14.81
+      },
+      {
+        "case_id": "auth_3_cross_session",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 34.26
+      },
+      {
+        "case_id": "none_1_quantum",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 77.73
+      },
+      {
+        "case_id": "none_2_mars",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 81.3
+      },
+      {
+        "case_id": "none_3_ancient",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 81.74
+      },
+      {
+        "case_id": "pref_1_response_style",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "forbidden_ids": [
+          "v3:belief:eval-tenant:bob:companion:response_style"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 84.52
+      },
+      {
+        "case_id": "pref_2_music_genre",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 84.63
+      },
+      {
+        "case_id": "pref_3_travel_seat",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 83.18
+      },
+      {
+        "case_id": "strat_1_refund",
+        "category": "strategy_recall",
+        "selected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status",
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "expected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 83.51
+      },
+      {
+        "case_id": "epi_1_refund_progress",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 84.86
+      },
+      {
+        "case_id": "epi_2_concert",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 83.17
+      },
+      {
+        "case_id": "syn_1_payment_method",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "expected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 78.46
+      },
+      {
+        "case_id": "syn_2_collaboration_tool",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 86.96
+      },
+      {
+        "case_id": "syn_3_workout_time",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 85.06
+      }
+    ]
+  },
+  "qdrant_vector_t0.7": {
+    "summary": {
+      "cases": 30,
+      "passed_at_5": 12,
+      "mean_recall_at_5_all": 0.4333,
+      "mean_recall_at_5_non_empty": 0.1905,
+      "mean_precision_at_5": 0.3333,
+      "no_result_accuracy": 1.0,
+      "p50_ms": 78.82
+    },
+    "details": [
+      {
+        "case_id": "para_1_release_schedule",
+        "category": "semantic_paraphrase",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 79.23
+      },
+      {
+        "case_id": "para_2_disk_space",
+        "category": "semantic_paraphrase",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 79.65
+      },
+      {
+        "case_id": "para_3_delivery_location",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 81.79
+      },
+      {
+        "case_id": "para_4_utility_payment",
+        "category": "semantic_paraphrase",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 79.87
+      },
+      {
+        "case_id": "para_5_study_plan",
+        "category": "semantic_paraphrase",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 77.14
+      },
+      {
+        "case_id": "xlang_1_car_service",
+        "category": "cross_language",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 78.5
+      },
+      {
+        "case_id": "xlang_2_release",
+        "category": "cross_language",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 74.23
+      },
+      {
+        "case_id": "xlang_3_disk",
+        "category": "cross_language",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 83.26
+      },
+      {
+        "case_id": "xlang_4_music",
+        "category": "cross_language",
+        "selected_ids": [],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 95.36
+      },
+      {
+        "case_id": "exact_1_order_id",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 79.66
+      },
+      {
+        "case_id": "exact_2_orbit",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 77.02
+      },
+      {
+        "case_id": "exact_3_agent",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 77.38
+      },
+      {
+        "case_id": "exact_4_session",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 78.29
+      },
+      {
+        "case_id": "neg_1_renewal_off",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 81.11
+      },
+      {
+        "case_id": "neg_2_renewal_on",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 86.07
+      },
+      {
+        "case_id": "auth_1_cross_tenant",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 14.67
+      },
+      {
+        "case_id": "auth_2_cross_agent",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 15.79
+      },
+      {
+        "case_id": "auth_3_cross_session",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 14.07
+      },
+      {
+        "case_id": "none_1_quantum",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 73.21
+      },
+      {
+        "case_id": "none_2_mars",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 78.55
+      },
+      {
+        "case_id": "none_3_ancient",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 77.68
+      },
+      {
+        "case_id": "pref_1_response_style",
+        "category": "preference_recall",
+        "selected_ids": [],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "forbidden_ids": [
+          "v3:belief:eval-tenant:bob:companion:response_style"
+        ],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 80.25
+      },
+      {
+        "case_id": "pref_2_music_genre",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 85.29
+      },
+      {
+        "case_id": "pref_3_travel_seat",
+        "category": "preference_recall",
+        "selected_ids": [],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 79.65
+      },
+      {
+        "case_id": "strat_1_refund",
+        "category": "strategy_recall",
+        "selected_ids": [],
+        "expected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 77.22
+      },
+      {
+        "case_id": "epi_1_refund_progress",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 78.82
+      },
+      {
+        "case_id": "epi_2_concert",
+        "category": "episodic_recall",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 78.53
+      },
+      {
+        "case_id": "syn_1_payment_method",
+        "category": "semantic_synonym",
+        "selected_ids": [],
+        "expected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 74.94
+      },
+      {
+        "case_id": "syn_2_collaboration_tool",
+        "category": "semantic_synonym",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 80.25
+      },
+      {
+        "case_id": "syn_3_workout_time",
+        "category": "semantic_synonym",
+        "selected_ids": [],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 78.97
+      }
+    ]
+  },
+  "qdrant_hybrid_t0.7": {
+    "summary": {
+      "cases": 30,
+      "passed_at_5": 18,
+      "mean_recall_at_5_all": 0.7,
+      "mean_recall_at_5_non_empty": 0.5714,
+      "mean_precision_at_5": 0.32,
+      "no_result_accuracy": 0.7778,
+      "p50_ms": 82.98
+    },
+    "details": [
+      {
+        "case_id": "para_1_release_schedule",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v3:strategy:eval-tenant:alice:companion:project_meeting"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 80.81
+      },
+      {
+        "case_id": "para_2_disk_space",
+        "category": "semantic_paraphrase",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 81.48
+      },
+      {
+        "case_id": "para_3_delivery_location",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-3"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 83.78
+      },
+      {
+        "case_id": "para_4_utility_payment",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-4"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 86.17
+      },
+      {
+        "case_id": "para_5_study_plan",
+        "category": "semantic_paraphrase",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-5"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 79.91
+      },
+      {
+        "case_id": "xlang_1_car_service",
+        "category": "cross_language",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-cross-language"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 83.78
+      },
+      {
+        "case_id": "xlang_2_release",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:strategy:eval-tenant:alice:companion:project_meeting"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 87.04
+      },
+      {
+        "case_id": "xlang_3_disk",
+        "category": "cross_language",
+        "selected_ids": [],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-1"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 80.84
+      },
+      {
+        "case_id": "xlang_4_music",
+        "category": "cross_language",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre",
+          "v3:strategy:eval-tenant:alice:companion:project_meeting"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 85.62
+      },
+      {
+        "case_id": "exact_1_order_id",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-order-id"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 83.54
+      },
+      {
+        "case_id": "exact_2_orbit",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 80.6
+      },
+      {
+        "case_id": "exact_3_agent",
+        "category": "exact_identifier",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 81.11
+      },
+      {
+        "case_id": "exact_4_session",
+        "category": "exact_identifier",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 97.15
+      },
+      {
+        "case_id": "neg_1_renewal_off",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 93.29
+      },
+      {
+        "case_id": "neg_2_renewal_on",
+        "category": "hard_negative",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2"
+        ],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1"
+        ],
+        "recall_at_5": 0.5,
+        "precision_at_5": 0.2,
+        "passed_at_5": false,
+        "elapsed_ms": 91.54
+      },
+      {
+        "case_id": "auth_1_cross_tenant",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:other-tenant:semantic-session:eval-other-tenant",
+          "v2:episodic:other-tenant:semantic-session:t-auth-1"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 18.33
+      },
+      {
+        "case_id": "auth_2_cross_agent",
+        "category": "authorization",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:semantic-session:eval-other-agent",
+          "v2:episodic:eval-tenant:semantic-session:t-auth-2"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 18.02
+      },
+      {
+        "case_id": "auth_3_cross_session",
+        "category": "authorization",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-neg-2",
+          "v2:episodic:eval-tenant:semantic-session:t-neg-1",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-on",
+          "v2:episodic:eval-tenant:semantic-session:eval-renewal-off",
+          "v2:episodic:eval-tenant:semantic-session:eval-paraphrase"
+        ],
+        "expected_ids": [],
+        "forbidden_ids": [
+          "v2:episodic:eval-tenant:other-session:eval-other-session",
+          "v2:episodic:eval-tenant:other-session:t-auth-3"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 36.93
+      },
+      {
+        "case_id": "none_1_quantum",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 81.87
+      },
+      {
+        "case_id": "none_2_mars",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 82.81
+      },
+      {
+        "case_id": "none_3_ancient",
+        "category": "no_result",
+        "selected_ids": [],
+        "expected_ids": [],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 1.0,
+        "passed_at_5": true,
+        "elapsed_ms": 81.67
+      },
+      {
+        "case_id": "pref_1_response_style",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style",
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:response_style"
+        ],
+        "forbidden_ids": [
+          "v3:belief:eval-tenant:bob:companion:response_style"
+        ],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 91.64
+      },
+      {
+        "case_id": "pref_2_music_genre",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:music_genre"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 85.88
+      },
+      {
+        "case_id": "pref_3_travel_seat",
+        "category": "preference_recall",
+        "selected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:travel_seat"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 83.1
+      },
+      {
+        "case_id": "strat_1_refund",
+        "category": "strategy_recall",
+        "selected_ids": [],
+        "expected_ids": [
+          "v3:strategy:default:support_agent:support_agent:refund_status"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 79.3
+      },
+      {
+        "case_id": "epi_1_refund_progress",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:current-session:eval-refund"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 84.95
+      },
+      {
+        "case_id": "epi_2_concert",
+        "category": "episodic_recall",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:old-session:eval-archive"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 84.94
+      },
+      {
+        "case_id": "syn_1_payment_method",
+        "category": "semantic_synonym",
+        "selected_ids": [],
+        "expected_ids": [
+          "v3:belief:default:customer_123:support_agent:refund_channel"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 82.98
+      },
+      {
+        "case_id": "syn_2_collaboration_tool",
+        "category": "semantic_synonym",
+        "selected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "expected_ids": [
+          "v2:episodic:eval-tenant:semantic-session:t-semantic-2"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 1.0,
+        "precision_at_5": 0.2,
+        "passed_at_5": true,
+        "elapsed_ms": 82.38
+      },
+      {
+        "case_id": "syn_3_workout_time",
+        "category": "semantic_synonym",
+        "selected_ids": [],
+        "expected_ids": [
+          "v3:belief:eval-tenant:alice:companion:exercise_time"
+        ],
+        "forbidden_ids": [],
+        "recall_at_5": 0.0,
+        "precision_at_5": 0.0,
+        "passed_at_5": false,
+        "elapsed_ms": 75.85
+      }
+    ]
+  }
+}

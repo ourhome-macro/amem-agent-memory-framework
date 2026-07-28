@@ -16,7 +16,7 @@ from agent_memory_runtime.exceptions import (
 )
 from agent_memory_runtime.memory.embeddings import (
     EmbeddingProvider,
-    SQLiteVectorIndex,
+    VectorIndex,
     validate_vector,
 )
 from agent_memory_runtime.memory.retrieval.candidates import CandidateBatch, CandidateHit
@@ -46,7 +46,7 @@ class SemanticRetriever:
         self,
         *,
         provider: EmbeddingProvider,
-        vector_index: SQLiteVectorIndex,
+        vector_index: VectorIndex,
         config: HybridRetrievalConfig,
     ) -> None:
         self.provider = provider

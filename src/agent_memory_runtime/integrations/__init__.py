@@ -1,0 +1,1 @@
+"""Optional platform integration adapters."""

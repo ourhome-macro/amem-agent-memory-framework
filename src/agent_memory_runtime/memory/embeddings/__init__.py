@@ -19,6 +19,10 @@ from agent_memory_runtime.memory.embeddings.models import (
 from agent_memory_runtime.memory.embeddings.openai_compatible import (
     OpenAICompatibleEmbeddingProvider,
 )
+from agent_memory_runtime.memory.embeddings.qdrant import (
+    QdrantVectorIndex,
+    qdrant_payload_from_memory,
+)
 from agent_memory_runtime.memory.embeddings.sqlite import (
     SQLiteEmbeddingGenerationStore,
     SQLiteEmbeddingJobStore,
@@ -39,6 +43,7 @@ __all__ = [
     "EmbeddingWorker",
     "EmbeddingWorkerReport",
     "OpenAICompatibleEmbeddingProvider",
+    "QdrantVectorIndex",
     "SQLiteEmbeddingGenerationStore",
     "SQLiteEmbeddingJobStore",
     "SQLiteEmbeddingScheduler",
@@ -49,5 +54,6 @@ __all__ = [
     "canonical_memory_text",
     "embedding_content_hash",
     "load_embedding_environment",
+    "qdrant_payload_from_memory",
     "validate_vector",
 ]
