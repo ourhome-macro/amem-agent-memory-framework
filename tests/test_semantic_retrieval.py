@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import sqlite3
@@ -541,6 +541,7 @@ def _runtime(
     hybrid: HybridRetrievalConfig | None = None,
 ) -> AgentMemoryRuntime:
     return AgentMemoryRuntime(
+        legacy_event_derivation=True,
         config=RuntimeConfig(
             hybrid_retrieval=hybrid or HybridRetrievalConfig(min_semantic_similarity=0.2)
         ),

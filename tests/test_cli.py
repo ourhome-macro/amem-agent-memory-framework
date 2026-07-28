@@ -44,7 +44,10 @@ def test_cli_ingest_retrieve_project_and_replay(tmp_path) -> None:
     assert runner.invoke(cli_app.app, ["init", "--path", str(data_dir)]).exit_code == 0
     assert (data_dir / "runtime.sqlite").exists()
     assert (
-        runner.invoke(cli_app.app, ["ingest", str(events), "--data-dir", str(data_dir)]).exit_code
+        runner.invoke(
+            cli_app.app,
+            ["ingest", str(events), "--legacy-derive", "--data-dir", str(data_dir)],
+        ).exit_code
         == 0
     )
 
@@ -138,7 +141,7 @@ def test_cli_cross_session_profile_retention_worker_and_eval_gate(tmp_path) -> N
     runner.invoke(cli_app.app, ["--no-banner", "init", "--path", str(data_dir)])
     ingest = runner.invoke(
         cli_app.app,
-        ["--no-banner", "ingest", str(events), "--data-dir", str(data_dir)],
+        ["--no-banner", "ingest", str(events), "--legacy-derive", "--data-dir", str(data_dir)],
     )
     assert ingest.exit_code == 0
 
@@ -210,7 +213,14 @@ def test_cli_async_ingest_and_queue_run_once(tmp_path) -> None:
     assert (data_dir / "runtime.sqlite").exists()
     ingest = runner.invoke(
         cli_app.app,
-        ["ingest", str(events), "--async-derive", "--data-dir", str(data_dir)],
+        [
+            "ingest",
+            str(events),
+            "--async-derive",
+            "--legacy-derive",
+            "--data-dir",
+            str(data_dir),
+        ],
     )
 
     assert ingest.exit_code == 0
@@ -259,7 +269,14 @@ def test_cli_worker_and_audit_dashboard(tmp_path) -> None:
     runner.invoke(cli_app.app, ["init", "--path", str(data_dir)])
     runner.invoke(
         cli_app.app,
-        ["ingest", str(events), "--async-derive", "--data-dir", str(data_dir)],
+        [
+            "ingest",
+            str(events),
+            "--async-derive",
+            "--legacy-derive",
+            "--data-dir",
+            str(data_dir),
+        ],
     )
     worker = runner.invoke(cli_app.app, ["worker", "--data-dir", str(data_dir)])
 
@@ -357,8 +374,8 @@ def test_cli_lists_supported_openai_compatible_providers() -> None:
 
     assert result.exit_code == 0
     assert result.output.count("Agent Memory Runtime") == 1
-    assert "Event-sourced memory for stateful agents." in result.output
-    assert "Safe context. Deterministic replay." in result.output
+    assert "Proposal-first memory for stateful agents." in result.output
+    assert "Safe context. Audited writes." in result.output
     for provider in ("deepseek", "openai", "gemini", "qwen", "zai", "kimi", "custom"):
         assert provider in result.output
 

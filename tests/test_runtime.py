@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import time
 
@@ -25,7 +25,7 @@ from agent_memory_runtime.runtime import AgentMemoryRuntime
 
 
 def test_ingest_writes_event_before_memory_derivation() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     result = runtime.ingest(_message_event())
 
     assert result.event.sequence == 1
@@ -36,7 +36,7 @@ def test_ingest_writes_event_before_memory_derivation() -> None:
 
 
 def test_replay_rebuilds_memory_from_event_store_only() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     runtime.ingest(_message_event())
     original = runtime.snapshot()
 
@@ -50,7 +50,7 @@ def test_replay_rebuilds_memory_from_event_store_only() -> None:
 
 
 def test_builtin_rules_create_typed_memories() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     runtime.ingest(_message_event())
     runtime.ingest(
         Event(
@@ -98,7 +98,7 @@ def test_builtin_rules_create_typed_memories() -> None:
 
 
 def test_lifecycle_idempotently_reinforces_existing_memory() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     event = Event(
         event_id="evt-pref-1",
         kind="preference.updated",
@@ -142,7 +142,7 @@ def test_lifecycle_idempotently_reinforces_existing_memory() -> None:
 
 
 def test_access_blocks_other_agent_private_memory_from_context() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     runtime.ingest(_message_event(agent_id="agent_a"))
 
     context = runtime.project(
@@ -162,7 +162,7 @@ def test_access_blocks_other_agent_private_memory_from_context() -> None:
 
 
 def test_sensitive_memory_does_not_enter_normal_context() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     runtime.ingest(_message_event(labels=("sensitive",), text="Card details were provided."))
 
     context = runtime.project(
@@ -174,7 +174,7 @@ def test_sensitive_memory_does_not_enter_normal_context() -> None:
 
 
 def test_private_memory_cannot_be_promoted_to_shared() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     runtime.ingest(
         Event(
             event_id="evt-private-1",
@@ -212,7 +212,10 @@ def test_private_memory_cannot_be_promoted_to_shared() -> None:
 
 
 def test_context_budget_keeps_high_salience_memory() -> None:
-    runtime = AgentMemoryRuntime(config=RuntimeConfig(context_token_budget=42))
+    runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
+        config=RuntimeConfig(context_token_budget=42),
+    )
     runtime.ingest(
         _message_event(event_id="low", salience=0.2, text="refund status low value note")
     )
@@ -228,7 +231,10 @@ def test_context_budget_keeps_high_salience_memory() -> None:
 
 
 def test_snapshot_tracks_hot_working_memory_ids_for_fast_path() -> None:
-    runtime = AgentMemoryRuntime(config=RuntimeConfig(fast_response=FastResponseConfig()))
+    runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
+        config=RuntimeConfig(fast_response=FastResponseConfig()),
+    )
     runtime.ingest(
         _message_event(event_id="low", salience=0.2, text="refund status low value note")
     )
@@ -243,7 +249,7 @@ def test_snapshot_tracks_hot_working_memory_ids_for_fast_path() -> None:
 
 
 def test_archival_memory_is_loaded_only_for_recall_queries() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     runtime.memory_store.upsert(
         MemoryRecord(
             memory_id="archival:s1:refund-history",
@@ -264,7 +270,11 @@ def test_archival_memory_is_loaded_only_for_recall_queries() -> None:
         MemoryQuery(agent_id="support_agent", text="refund status", session_id="s1")
     )
     recall = runtime.project(
-        MemoryQuery(agent_id="support_agent", text="上次 refund 怎么处理的", session_id="s1")
+        MemoryQuery(
+            agent_id="support_agent",
+            text="\u4e0a\u6b21 refund \u600e\u4e48\u5904\u7406\u7684",
+            session_id="s1",
+        )
     )
 
     assert ordinary.selected_memory_ids == ()
@@ -272,12 +282,15 @@ def test_archival_memory_is_loaded_only_for_recall_queries() -> None:
 
 
 def test_replay_detects_rule_or_config_change() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     runtime.ingest(_message_event())
     expected = runtime.snapshot()
     events = runtime.event_store.list_events()
 
-    changed = AgentMemoryRuntime(config=RuntimeConfig(rule_version="builtin-v2"))
+    changed = AgentMemoryRuntime(
+        legacy_event_derivation=True,
+        config=RuntimeConfig(rule_version="builtin-v2"),
+    )
     for event in events:
         changed.event_store.append(event)
     actual = changed.replay()
@@ -312,7 +325,7 @@ def test_custom_provider_requires_all_connection_fields() -> None:
 
 def test_respond_uses_only_projected_context_and_does_not_write_memory() -> None:
     client = _FakeChatClient()
-    runtime = AgentMemoryRuntime(llm_client=client)
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True, llm_client=client)
     runtime.ingest(_message_event())
     record_count = len(runtime.memory_store.list_records())
 
@@ -332,6 +345,7 @@ def test_respond_fast_falls_back_to_snapshot_when_full_retrieval_times_out() -> 
     client = _FakeChatClient()
     memory_store = _SlowListMemoryStore()
     runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
         config=RuntimeConfig(
             fast_response=FastResponseConfig(retrieval_timeout_ms=1),
         ),
@@ -355,7 +369,7 @@ def test_respond_fast_falls_back_to_snapshot_when_full_retrieval_times_out() -> 
 
 def test_respond_stream_yields_first_token_and_audits_latency_metadata() -> None:
     client = _FakeStreamingChatClient()
-    runtime = AgentMemoryRuntime(llm_client=client)
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True, llm_client=client)
     runtime.ingest(_message_event())
 
     events = list(
@@ -378,7 +392,7 @@ def test_respond_stream_yields_first_token_and_audits_latency_metadata() -> None
 
 def test_recalled_memory_cannot_escape_the_fixed_context_fence() -> None:
     client = _FakeChatClient()
-    runtime = AgentMemoryRuntime(llm_client=client)
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True, llm_client=client)
     runtime.ingest(
         _message_event(
             text=(

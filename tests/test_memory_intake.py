@@ -395,6 +395,33 @@ def test_sqlite_write_succeeds_and_embedding_outbox_is_retained(tmp_path) -> Non
     assert stores.memory_store.get(result.memory_ids[0]) is not None
 
 
+def test_default_event_ingest_is_audit_only_not_memory_derivation() -> None:
+    runtime = AgentMemoryRuntime()
+
+    result = runtime.ingest(
+        Event(
+            event_id="audit-only-event",
+            kind="message.created",
+            actor_id="user-a",
+            session_id="s1",
+            tenant_id="tenant-a",
+            user_id="user-a",
+            agent_id="assistant",
+            payload={
+                "agent_id": "assistant",
+                "subject_id": "user-a",
+                "text": "This should not become memory from Event.",
+            },
+        )
+    )
+
+    assert result.records == ()
+    assert result.candidates == ()
+    assert runtime.memory_store.list_records() == []
+    assert runtime.event_store.get("audit-only-event") is not None
+    assert runtime.audit_store.list_envelopes()[-1].audit_type == "memory_event_audit"
+
+
 def _identity() -> MemoryToolIdentity:
     return MemoryToolIdentity(
         actor_id="user-a",

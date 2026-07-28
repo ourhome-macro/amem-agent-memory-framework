@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -91,6 +91,7 @@ def test_sqlite_rejects_ack_after_lease_expiry(tmp_path) -> None:
 
 def _runtime(stores: SQLiteStoreBundle) -> AgentMemoryRuntime:
     return AgentMemoryRuntime(
+        legacy_event_derivation=True,
         event_store=stores.event_store,
         memory_store=stores.memory_store,
         snapshot_store=stores.snapshot_store,

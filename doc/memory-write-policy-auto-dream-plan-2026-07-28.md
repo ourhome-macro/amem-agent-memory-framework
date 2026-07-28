@@ -117,3 +117,28 @@ Auto Dream 只做语义整理并输出 proposal，不直接改库。
 - 把 DerivationEngine 测试标记为 legacy compatibility。
 - Auto Dream 增加 LLM/结构化语义裁决器后，只输出 proposal，不直接写库。
 - 审核队列可以接入 `needs_review` proposal，审批后再调用 `MemoryService.apply_proposal`。
+
+## 2026-07-28 大砍结果
+
+本轮已经把默认 Runtime 行为改为 proposal-first：
+
+- `AgentMemoryRuntime()` 默认不再初始化 `DerivationEngine`、`LifecycleReducer`、`WriteGuard`。
+- `runtime.ingest(Event)` 默认只记录事件审计，不再派生 `MemoryRecord`。
+- `runtime.ingest_async(Event)` 默认只记录事件审计，不再入 `DerivationJob` 队列。
+- Event 仍可进入 `EventStore`，但语义是 legacy/audit 兼容，不再是记忆事实源。
+- 默认事件审计写 `audit_type=memory_event_audit`，记录 event id、kind、identity、payload hash。
+- 旧 Event -> Derivation -> Reducer 路径必须显式使用 `legacy_event_derivation=True`。
+- CLI 默认 `ingest` 只做审计写入；旧派生必须显式传 `--legacy-derive`。
+- CLI banner 已从 Event Sourcing 改为 Proposal-first / Audited writes。
+
+仍保留的 legacy 内容：
+
+- `Event` 模型、`EventStore` 和 SQLite `events` 表保留，用于审计和兼容历史数据。
+- `DerivationEngine`、builtin rules、`LifecycleReducer`、`WriteGuard` 保留，但只在显式 legacy 开关下启用。
+- replay/shadow replay 属于 legacy compatibility，内部显式打开 legacy 派生。
+
+测试约束：
+
+- 新增默认 `Event` 审计-only 测试，防止 Event 重新成为主写入链路。
+- 旧 Event 派生测试全部显式 opt-in `legacy_event_derivation=True` 或 CLI `--legacy-derive`。
+- 全量验证：`py -3.12 -m ruff check src tests` 和 `py -3.12 -m pytest -q`。

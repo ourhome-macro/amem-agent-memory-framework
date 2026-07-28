@@ -6,6 +6,6 @@ BANNER = r"""
 /_/  |_/_/  /_/ /_____/_/  /_/
 
 Agent Memory Runtime
-Event-sourced memory for stateful agents.
-Safe context. Deterministic replay.
+Proposal-first memory for stateful agents.
+Safe context. Audited writes.
 """

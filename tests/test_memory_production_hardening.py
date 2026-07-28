@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import sqlite3
@@ -48,7 +48,7 @@ class ScriptedGateway:
 
 
 def test_stable_profile_memory_revises_across_sessions_and_injects_safe_values() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     runtime.ingest(
         _preference(
             event_id="pref-old",
@@ -76,7 +76,7 @@ def test_stable_profile_memory_revises_across_sessions_and_injects_safe_values()
     exact = runtime.project(
         MemoryQuery(
             agent_id="assistant",
-            text="偏好",
+            text="鍋忓ソ",
             tenant_id="tenant-a",
             user_id="user-a",
             session_id="new-session",
@@ -85,7 +85,7 @@ def test_stable_profile_memory_revises_across_sessions_and_injects_safe_values()
     profile = runtime.project(
         MemoryQuery(
             agent_id="assistant",
-            text="请按我的偏好详细回答",
+            text="璇锋寜鎴戠殑鍋忓ソ璇︾粏鍥炵瓟",
             tenant_id="tenant-a",
             user_id="user-a",
             session_id="new-session",
@@ -101,8 +101,15 @@ def test_stable_profile_memory_revises_across_sessions_and_injects_safe_values()
 
 
 def test_profile_policy_keeps_working_memory_session_local_and_prefilters_other_user() -> None:
-    runtime = AgentMemoryRuntime()
-    runtime.ingest(_message("old-message", "old-session", "旧会话退款进度", user_id="user-a"))
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
+    runtime.ingest(
+        _message(
+            "old-message",
+            "old-session",
+            "\u65e7\u4f1a\u8bdd\u9000\u6b3e\u8fdb\u5ea6",
+            user_id="user-a",
+        )
+    )
     runtime.ingest(
         _preference(
             event_id="other-user-pref",
@@ -116,7 +123,7 @@ def test_profile_policy_keeps_working_memory_session_local_and_prefilters_other_
     context = runtime.project(
         MemoryQuery(
             agent_id="assistant",
-            text="旧会话退款进度",
+            text="\u65e7\u4f1a\u8bdd\u9000\u6b3e\u8fdb\u5ea6",
             tenant_id="tenant-a",
             user_id="user-a",
             session_id="new-session",
@@ -129,12 +136,12 @@ def test_profile_policy_keeps_working_memory_session_local_and_prefilters_other_
 
 
 def test_real_archived_record_is_recalled_cross_session_only_on_recall_intent() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     result = runtime.ingest(
         _message(
             "archive-note",
             "old-session",
-            "上次演唱会订票选择舞台左侧",
+            "\u4e0a\u6b21\u6f14\u5531\u4f1a\u8ba2\u7968\u9009\u62e9\u821e\u53f0\u5de6\u4fa7",
             salience=0.05,
         )
     )
@@ -149,12 +156,18 @@ def test_real_archived_record_is_recalled_cross_session_only_on_recall_intent() 
             value="concise",
         )
     )
-    runtime.ingest(_message("archive-ranking-current", "new-session", "播放列表正常"))
+    runtime.ingest(
+        _message(
+            "archive-ranking-current",
+            "new-session",
+            "\u64ad\u653e\u5217\u8868\u6b63\u5e38",
+        )
+    )
 
     ordinary = runtime.project(
         MemoryQuery(
             agent_id="assistant",
-            text="演唱会订票",
+            text="\u6f14\u5531\u4f1a\u8ba2\u7968",
             tenant_id="tenant-a",
             user_id="user-a",
             session_id="new-session",
@@ -164,7 +177,7 @@ def test_real_archived_record_is_recalled_cross_session_only_on_recall_intent() 
     recalled = runtime.project(
         MemoryQuery(
             agent_id="assistant",
-            text="还记得上次演唱会订票吗",
+            text="\u8fd8\u8bb0\u5f97\u4e0a\u6b21\u6f14\u5531\u4f1a\u8ba2\u7968\u5417",
             tenant_id="tenant-a",
             user_id="user-a",
             session_id="new-session",
@@ -177,16 +190,28 @@ def test_real_archived_record_is_recalled_cross_session_only_on_recall_intent() 
 
 
 def test_chinese_lexical_recall_ranks_relevant_memory_first() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     relevant = runtime.ingest(
-        _message("refund", "s1", "退款进度已经进入银行处理阶段", salience=0.7)
+        _message(
+            "refund",
+            "s1",
+            "\u9000\u6b3e\u8fdb\u5ea6\u5df2\u7ecf\u8fdb\u5165\u94f6\u884c\u5904\u7406\u9636\u6bb5",
+            salience=0.7,
+        )
     ).records[0]
-    runtime.ingest(_message("music", "s1", "音乐播放列表切换到夜间模式", salience=0.7))
+    runtime.ingest(
+        _message(
+            "music",
+            "s1",
+            "\u97f3\u4e50\u64ad\u653e\u5217\u8868\u5207\u6362\u5230\u591c\u95f4\u6a21\u5f0f",
+            salience=0.7,
+        )
+    )
 
     context = runtime.project(
         MemoryQuery(
             agent_id="assistant",
-            text="退款进度怎么样",
+            text="\u9000\u6b3e\u8fdb\u5ea6\u600e\u4e48\u6837",
             tenant_id="tenant-a",
             user_id="user-a",
             session_id="s1",
@@ -200,8 +225,10 @@ def test_chinese_lexical_recall_ranks_relevant_memory_first() -> None:
 
 def test_unicode_token_estimator_and_context_selector_enforce_hard_budget() -> None:
     estimator = AdaptiveTokenEstimator(safety_factor=1.0)
-    runtime = AgentMemoryRuntime(token_estimator=estimator)
-    record = runtime.ingest(_message("long", "s1", "这是很长的中文记忆" * 30)).records[0]
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True, token_estimator=estimator)
+    record = runtime.ingest(
+        _message("long", "s1", "\u8fd9\u662f\u5f88\u957f\u7684\u4e2d\u6587\u8bb0\u5fc6" * 30)
+    ).records[0]
 
     assert estimator.count_text(record.content) >= 240
     assert select_under_budget(
@@ -213,17 +240,22 @@ def test_unicode_token_estimator_and_context_selector_enforce_hard_budget() -> N
 
 def test_context_budget_preserves_query_ranking_instead_of_resorting_by_salience() -> None:
     estimator = AdaptiveTokenEstimator(safety_factor=1.0)
-    runtime = AgentMemoryRuntime(token_estimator=estimator)
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True, token_estimator=estimator)
     relevant = runtime.ingest(
-        _message("ranked-relevant", "s1", "退款进度等待银行确认", salience=0.4)
+        _message(
+            "ranked-relevant",
+            "s1",
+            "\u9000\u6b3e\u8fdb\u5ea6\u7b49\u5f85\u94f6\u884c\u786e\u8ba4",
+            salience=0.4,
+        )
     ).records[0]
     runtime.ingest(
-        _message("ranked-salient", "s1", "音乐播放正常", salience=0.99)
+        _message("ranked-salient", "s1", "\u97f3\u4e50\u64ad\u653e\u6b63\u5e38", salience=0.99)
     )
     records, _ = runtime.retrieve(
         MemoryQuery(
             agent_id="assistant",
-            text="退款进度",
+            text="\u9000\u6b3e\u8fdb\u5ea6",
             tenant_id="tenant-a",
             user_id="user-a",
             session_id="s1",
@@ -248,18 +280,18 @@ def test_sqlite_v6_uses_fts5_structured_filters_and_cjk_terms(tmp_path) -> None:
         _message(
             "sqlite-refund",
             "s1",
-            "退款进度等待银行确认",
+            "\u9000\u6b3e\u8fdb\u5ea6\u7b49\u5f85\u94f6\u884c\u786e\u8ba4",
             tags=("finance",),
         )
     ).records[0]
     runtime.ingest(
-        _message("sqlite-music", "s1", "音乐播放正常", tags=("media",))
+        _message("sqlite-music", "s1", "\u97f3\u4e50\u64ad\u653e\u6b63\u5e38", tags=("media",))
     )
 
     selected, _ = runtime.retrieve(
         MemoryQuery(
             agent_id="assistant",
-            text="退款进度",
+            text="\u9000\u6b3e\u8fdb\u5ea6",
             tenant_id="tenant-a",
             user_id="user-a",
             session_id="s1",
@@ -297,15 +329,15 @@ def test_sqlite_v6_uses_fts5_structured_filters_and_cjk_terms(tmp_path) -> None:
             ).fetchall()
         }
     assert {"tenant_id", "user_id", "session_id", "layer", "status", "salience"} <= columns
-    assert "退款" in fts_document.split()
-    assert "进度" in fts_document.split()
+    assert "\u9000\u6b3e" in fts_document.split()
+    assert "\u8fdb\u5ea6" in fts_document.split()
     assert tags == {"finance"}
     assert first_page and second_page
     assert first_page[0].memory_id != second_page[0].memory_id
 
 
 def test_tombstone_survives_replay_but_allows_a_newer_explicit_event() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     first = runtime.ingest(
         _preference(
             event_id="delete-old",
@@ -342,7 +374,7 @@ def test_tombstone_survives_replay_but_allows_a_newer_explicit_event() -> None:
 
 
 def test_tombstone_read_guard_hides_a_projection_left_by_partial_jsonl_cleanup() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     record = runtime.ingest(_message("partial-delete", "s1", "must disappear")).records[0]
     runtime.tombstone_store.put(
         MemoryTombstone(
@@ -378,7 +410,7 @@ def test_retention_worker_and_snapshot_pruning_are_bounded(tmp_path) -> None:
         ),
     )
     for index in range(4):
-        runtime.ingest(_message(f"snapshot-{index}", "s1", f"消息 {index}"))
+        runtime.ingest(_message(f"snapshot-{index}", "s1", f"\u6d88\u606f {index}"))
     worker = RetentionWorker(
         runtime,
         policy=RetentionPolicy(archive_working_after_sequences=1),
@@ -599,6 +631,7 @@ def _sqlite_runtime(
     config: RuntimeConfig | None = None,
 ) -> AgentMemoryRuntime:
     return AgentMemoryRuntime(
+        legacy_event_derivation=True,
         config=config,
         event_store=stores.event_store,
         memory_store=stores.memory_store,

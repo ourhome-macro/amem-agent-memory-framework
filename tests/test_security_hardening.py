@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 
@@ -22,7 +22,7 @@ from agent_memory_runtime.runtime import AgentMemoryRuntime
 def test_sensitive_payload_is_redacted_before_event_and_memory_persistence() -> None:
     card_number = "4111 1111 1111 1111"
     cvv = "cvv-secret-123"
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
 
     result = runtime.ingest(
         Event(
@@ -66,7 +66,7 @@ def test_sensitive_payload_is_redacted_before_event_and_memory_persistence() -> 
 
 def test_detected_card_number_is_upgraded_to_sensitive_and_redacted() -> None:
     card_number = "5555-5555-5555-4444"
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
 
     result = runtime.ingest(
         Event(
@@ -91,7 +91,7 @@ def test_detected_card_number_is_upgraded_to_sensitive_and_redacted() -> None:
 
 def test_sensitive_label_redacts_unknown_nested_payload_fields() -> None:
     secret_note = "Customer recovery phrase: cobalt-harbor-71"
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
 
     result = runtime.ingest(
         Event(
@@ -119,7 +119,7 @@ def test_sensitive_label_redacts_unknown_nested_payload_fields() -> None:
 
 
 def test_sensitive_memory_cannot_be_global() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
 
     with pytest.raises(WriteGuardError, match="cannot use global scope"):
         runtime.ingest(
@@ -163,6 +163,7 @@ def test_shared_sensitive_memory_requires_explicit_visibility() -> None:
 def test_custom_derivation_cannot_write_across_source_tenant(tmp_path) -> None:
     stores = SQLiteStoreBundle(tmp_path / "tenant-boundary.sqlite")
     runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
         event_store=stores.event_store,
         memory_store=stores.memory_store,
         snapshot_store=stores.snapshot_store,
@@ -212,7 +213,11 @@ def test_memory_context_block_rewraps_sanitized_content_in_one_fixed_fence() -> 
 
 def test_llm_audit_trace_records_provenance_without_prompt_or_response_content() -> None:
     audit_store = InMemoryAuditStore()
-    runtime = AgentMemoryRuntime(llm_client=_SuccessfulChatClient(), audit_store=audit_store)
+    runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
+        llm_client=_SuccessfulChatClient(),
+        audit_store=audit_store,
+    )
     runtime.ingest(_message_event())
 
     runtime.respond(
@@ -256,7 +261,11 @@ def test_llm_audit_trace_records_provenance_without_prompt_or_response_content()
 
 def test_failed_llm_call_is_audited_without_raw_exception_message() -> None:
     audit_store = InMemoryAuditStore()
-    runtime = AgentMemoryRuntime(llm_client=_FailingChatClient(), audit_store=audit_store)
+    runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
+        llm_client=_FailingChatClient(),
+        audit_store=audit_store,
+    )
     runtime.ingest(_message_event())
 
     with pytest.raises(RuntimeError, match="provider secret"):
@@ -273,6 +282,7 @@ def test_failed_llm_call_is_audited_without_raw_exception_message() -> None:
 def test_jsonl_audit_store_persists_only_llm_trace_metadata(tmp_path) -> None:
     audit_path = tmp_path / "audit.jsonl"
     runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
         llm_client=_SuccessfulChatClient(),
         audit_store=JsonlAuditStore(audit_path),
     )
@@ -294,6 +304,7 @@ def test_jsonl_audit_store_persists_only_llm_trace_metadata(tmp_path) -> None:
 def test_sqlite_ingest_rolls_back_event_memory_and_snapshot_when_validation_fails(tmp_path) -> None:
     stores = SQLiteStoreBundle(tmp_path / "runtime.sqlite")
     runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
         event_store=stores.event_store,
         memory_store=stores.memory_store,
         snapshot_store=stores.snapshot_store,
@@ -312,6 +323,7 @@ def test_sqlite_ingest_rolls_back_event_memory_and_snapshot_when_validation_fail
 def test_sqlite_ingest_commits_event_memory_and_snapshot_together(tmp_path) -> None:
     stores = SQLiteStoreBundle(tmp_path / "runtime.sqlite")
     runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
         event_store=stores.event_store,
         memory_store=stores.memory_store,
         snapshot_store=stores.snapshot_store,

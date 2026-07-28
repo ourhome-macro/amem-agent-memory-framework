@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -20,7 +20,7 @@ from agent_memory_runtime.runtime import AgentMemoryRuntime
 
 
 def test_ingest_is_idempotent_without_reapplying_memory_or_snapshot() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     event = _event()
 
     first = runtime.ingest(event)
@@ -33,7 +33,7 @@ def test_ingest_is_idempotent_without_reapplying_memory_or_snapshot() -> None:
 
 
 def test_event_id_cannot_be_reused_for_different_payload() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     original = _event()
     runtime.ingest(original)
 
@@ -51,7 +51,7 @@ def test_event_id_cannot_be_reused_for_different_payload() -> None:
 
 
 def test_dict_retry_without_occurred_at_reuses_original_event_time() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     value = {
         "event_id": "evt-dict-retry",
         "kind": "message.created",
@@ -71,7 +71,7 @@ def test_dict_retry_without_occurred_at_reuses_original_event_time() -> None:
 
 
 def test_tenant_identity_is_propagated_and_memory_ids_do_not_collide() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
 
     tenant_a = runtime.ingest(_tenant_belief("tenant-a", "user-a", "evt-tenant-a"))
     tenant_b = runtime.ingest(_tenant_belief("tenant-b", "user-b", "evt-tenant-b"))
@@ -113,7 +113,10 @@ def test_tenant_identity_is_propagated_and_memory_ids_do_not_collide() -> None:
 
 
 def test_memory_identity_roundtrip_distinguishes_new_and_legacy_records() -> None:
-    record = replace(AgentMemoryRuntime().ingest(_event()).records[0], agent_id=None)
+    record = replace(
+        AgentMemoryRuntime(legacy_event_derivation=True).ingest(_event()).records[0],
+        agent_id=None,
+    )
     explicit_identity = MemoryRecord.from_dict(record.to_dict())
     legacy_value = record.to_dict()
     legacy_value.pop("agent_id")
@@ -273,6 +276,7 @@ def test_crash_loop_reaches_dlq_and_requires_explicit_redrive() -> None:
 
 def test_runtime_heartbeats_long_derivation_until_ack() -> None:
     runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
         config=RuntimeConfig(
             worker=WorkerConfig(
                 lease_seconds=0.03,

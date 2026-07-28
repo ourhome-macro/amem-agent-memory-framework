@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryCandidate, MemoryRecord
@@ -20,7 +20,7 @@ from agent_memory_runtime.runtime import AgentMemoryRuntime
 
 def test_async_ingest_persists_event_and_defers_memory_derivation() -> None:
     queue = InMemoryDerivationQueueStore()
-    runtime = AgentMemoryRuntime(derivation_queue=queue)
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True, derivation_queue=queue)
 
     result = runtime.ingest_async(_message_event())
 
@@ -43,7 +43,7 @@ def test_async_ingest_persists_event_and_defers_memory_derivation() -> None:
 
 def test_async_worker_retries_failed_job_without_losing_event_source() -> None:
     queue = InMemoryDerivationQueueStore()
-    runtime = AgentMemoryRuntime(derivation_queue=queue)
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True, derivation_queue=queue)
     runtime.ingest_async(
         Event(
             event_id="evt-bad",
@@ -80,6 +80,7 @@ def test_sqlite_derivation_queue_recovers_pending_jobs_after_restart(tmp_path) -
     db_path = tmp_path / "runtime.sqlite"
     bundle = SQLiteStoreBundle(db_path)
     runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
         event_store=bundle.event_store,
         memory_store=bundle.memory_store,
         snapshot_store=bundle.snapshot_store,
@@ -91,6 +92,7 @@ def test_sqlite_derivation_queue_recovers_pending_jobs_after_restart(tmp_path) -
 
     restarted = SQLiteStoreBundle(db_path)
     restarted_runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
         event_store=restarted.event_store,
         memory_store=restarted.memory_store,
         snapshot_store=restarted.snapshot_store,
@@ -109,7 +111,7 @@ def test_sqlite_derivation_queue_recovers_pending_jobs_after_restart(tmp_path) -
 
 def test_derivation_worker_runs_until_queue_is_idle() -> None:
     queue = InMemoryDerivationQueueStore()
-    runtime = AgentMemoryRuntime(derivation_queue=queue)
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True, derivation_queue=queue)
     runtime.ingest_async(_message_event(event_id="evt-1"))
     runtime.ingest_async(_message_event(event_id="evt-2"))
 
@@ -122,7 +124,7 @@ def test_derivation_worker_runs_until_queue_is_idle() -> None:
 
 
 def test_retention_policy_archives_old_working_memory_and_deletes_expired_sensitive() -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     active = _record(
         memory_id="m-active",
         layer="working",
@@ -175,6 +177,7 @@ def test_retention_policy_archives_old_working_memory_and_deletes_expired_sensit
 def test_human_review_quarantines_high_risk_candidate_until_approval() -> None:
     review_queue = InMemoryReviewQueue()
     runtime = AgentMemoryRuntime(
+        legacy_event_derivation=True,
         review_guard=ReviewGuard(review_queue=review_queue, risk_threshold=0.7)
     )
     runtime.ingest(

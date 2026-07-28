@@ -81,7 +81,7 @@ class IngestResult:
 @dataclass(frozen=True)
 class AsyncIngestResult:
     event: Event
-    job: DerivationJob
+    job: DerivationJob | None
 
 
 @dataclass(frozen=True)
@@ -132,7 +132,7 @@ class AgentMemoryRuntime:
         lifecycle: LifecycleReducer | None = None,
         retrieval: RetrievalPipeline | None = None,
         context_builder: ContextBuilder | None = None,
-        write_guard: WriteGuard | None = None,
+        write_guard: object | None = None,
         llm_client: ChatClient | None = None,
         audit_store: AuditStore | None = None,
         derivation_queue: DerivationQueueStore | None = None,
@@ -142,14 +142,30 @@ class AgentMemoryRuntime:
         token_estimator: TokenEstimator | None = None,
         tombstone_store: TombstoneStore | None = None,
         candidate_retriever: CandidateRetriever | None = None,
+        legacy_event_derivation: bool = False,
     ) -> None:
         self.config = config or RuntimeConfig()
         self.event_store = event_store or InMemoryEventStore()
         self.memory_store = memory_store or InMemoryMemoryStore()
         self.snapshot_store = snapshot_store or InMemorySnapshotStore()
         self.tombstone_store = tombstone_store or InMemoryTombstoneStore()
-        self.derivation_engine = derivation_engine or DerivationEngine()
-        self.lifecycle = lifecycle or LifecycleReducer(self.config)
+        self.legacy_event_derivation = legacy_event_derivation or any(
+            item is not None for item in (derivation_engine, lifecycle, write_guard, review_guard)
+        )
+        self.derivation_engine = (
+            derivation_engine
+            if self.legacy_event_derivation
+            else None
+        )
+        if self.legacy_event_derivation and self.derivation_engine is None:
+            self.derivation_engine = DerivationEngine()
+        self.lifecycle = (
+            lifecycle
+            if self.legacy_event_derivation
+            else None
+        )
+        if self.legacy_event_derivation and self.lifecycle is None:
+            self.lifecycle = LifecycleReducer(self.config)
         self.retrieval = retrieval or RetrievalPipeline(self.config)
         self.candidate_retriever = candidate_retriever
         if self.candidate_retriever is None:
@@ -161,7 +177,9 @@ class AgentMemoryRuntime:
             self.config,
             token_estimator=self.token_estimator,
         )
-        self.write_guard = write_guard or WriteGuard()
+        self.write_guard = write_guard if self.legacy_event_derivation else None
+        if self.legacy_event_derivation and self.write_guard is None:
+            self.write_guard = WriteGuard()
         self.llm_client = llm_client or OpenAICompatibleChatClient(self.config.llm)
         self.audit_store = audit_store or InMemoryAuditStore()
         self.derivation_queue = derivation_queue or InMemoryDerivationQueueStore()
@@ -172,7 +190,46 @@ class AgentMemoryRuntime:
         self._fast_executor = ThreadPoolExecutor(max_workers=1)
 
     def ingest(self, event: Event | dict[str, object]) -> IngestResult:
-        # EventStore 是回放的唯一事实来源，派生必须使用同一份已最小化事件。
+        if self.legacy_event_derivation:
+            return self._ingest_legacy(event)
+        with self._transaction():
+            source_event = self._coerce_event(event)
+            sanitized_event = sanitize_event(source_event)
+            existing = self._event_by_id(sanitized_event.event_id)
+            if existing is not None:
+                self._validate_event_retry(existing, sanitized_event)
+                return IngestResult(
+                    event=existing,
+                    candidates=(),
+                    records=(),
+                )
+            stored_event = self.event_store.append(sanitized_event)
+            snapshot = self._save_snapshot()
+            self._audit_event(stored_event, snapshot=snapshot)
+            self._audit_pii_event(source_event, snapshot=snapshot)
+            return IngestResult(
+                event=stored_event,
+                candidates=(),
+                records=(),
+            )
+
+    def ingest_async(self, event: Event | dict[str, object]) -> AsyncIngestResult:
+        if self.legacy_event_derivation:
+            return self._ingest_async_legacy(event)
+        with self._transaction():
+            source_event = self._coerce_event(event)
+            sanitized_event = sanitize_event(source_event)
+            existing = self._event_by_id(sanitized_event.event_id)
+            if existing is not None:
+                self._validate_event_retry(existing, sanitized_event)
+                return AsyncIngestResult(event=existing, job=None)
+            stored_event = self.event_store.append(sanitized_event)
+            snapshot = self._save_snapshot()
+            self._audit_event(stored_event, snapshot=snapshot)
+            self._audit_pii_event(source_event, snapshot=snapshot)
+            return AsyncIngestResult(event=stored_event, job=None)
+
+    def _ingest_legacy(self, event: Event | dict[str, object]) -> IngestResult:
         with self._transaction():
             source_event = self._coerce_event(event)
             sanitized_event = sanitize_event(source_event)
@@ -184,7 +241,6 @@ class AgentMemoryRuntime:
                     candidates=tuple(self.derivation_engine.derive(existing)),
                     records=tuple(self._records_for_event(existing.event_id)),
                 )
-            # SQLiteStoreBundle 将事件、派生记忆和快照放进同一原子写入单元。
             stored_event = self.event_store.append(sanitized_event)
             records = self.apply_event(stored_event)
             snapshot = self._save_snapshot()
@@ -195,7 +251,7 @@ class AgentMemoryRuntime:
                 records=tuple(records),
             )
 
-    def ingest_async(self, event: Event | dict[str, object]) -> AsyncIngestResult:
+    def _ingest_async_legacy(self, event: Event | dict[str, object]) -> AsyncIngestResult:
         with self._transaction():
             source_event = self._coerce_event(event)
             sanitized_event = sanitize_event(source_event)
@@ -221,6 +277,12 @@ class AgentMemoryRuntime:
         return result
 
     def run_derivation_once(self) -> DerivationJob | None:
+        if (
+            self.derivation_engine is None
+            or self.lifecycle is None
+            or self.write_guard is None
+        ):
+            return None
         job = self.derivation_queue.claim_next(
             worker_id=self.worker_id,
             lease_seconds=self.config.worker.lease_seconds,
@@ -284,6 +346,8 @@ class AgentMemoryRuntime:
             return failed
 
     def apply_event(self, event: Event) -> list[MemoryRecord]:
+        if self.derivation_engine is None:
+            return []
         candidates = self.derivation_engine.derive(event)
         records: list[MemoryRecord] = []
         event_ids = {item.event_id for item in self.event_store.list_events()}
@@ -658,6 +722,8 @@ class AgentMemoryRuntime:
         *,
         event_ids: set[str],
     ) -> MemoryRecord:
+        if self.write_guard is None or self.lifecycle is None:
+            raise RuntimeError("legacy derivation is not configured")
         self._validate_candidate_identity(candidate, event)
         current = self.memory_store.get(candidate.memory_id)
         self.write_guard.validate(
@@ -964,6 +1030,38 @@ class AgentMemoryRuntime:
                 config_hash=snapshot.config_hash,
                 last_event_sequence=snapshot.last_event_sequence,
                 state_hash=snapshot.state_hash,
+            )
+        )
+
+    def _audit_event(self, event: Event, *, snapshot: RuntimeSnapshot) -> None:
+        self.audit_store.append_envelope(
+            AuditEnvelope(
+                audit_type="memory_event_audit",
+                trace_id=f"memory-event:{event.event_id}",
+                occurred_at=event.occurred_at,
+                actor_id=event.actor_id,
+                action="record_event",
+                outcome="recorded",
+                decision=AuditDecision.OBSERVE.value,
+                subject=AuditSubject(
+                    subject_type="event",
+                    subject_id=event.event_id,
+                    content_hash=secure_hash(event.payload),
+                ),
+                rule_version=snapshot.rule_version,
+                config_hash=snapshot.config_hash,
+                last_event_sequence=snapshot.last_event_sequence,
+                state_hash=snapshot.state_hash,
+                payload={
+                    "event_id": event.event_id,
+                    "kind": event.kind,
+                    "tenant_id": event.tenant_id,
+                    "user_id": event.user_id,
+                    "agent_id": event.agent_id,
+                    "session_id": event.session_id,
+                    "tags": list(event.tags),
+                    "labels": list(event.labels),
+                },
             )
         )
 

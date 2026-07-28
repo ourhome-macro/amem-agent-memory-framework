@@ -47,6 +47,7 @@ def shadow_replay_events(
     shadow = AgentMemoryRuntime(
         config=config,
         derivation_engine=derivation_engine,
+        legacy_event_derivation=True,
     )
     try:
         for event in events:

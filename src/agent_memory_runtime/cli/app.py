@@ -103,9 +103,13 @@ def ingest(
         bool,
         typer.Option("--async-derive", help="Only persist events and enqueue derivation jobs."),
     ] = False,
+    legacy_derive: Annotated[
+        bool,
+        typer.Option("--legacy-derive", help="Run legacy Event -> Derivation compatibility path."),
+    ] = False,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir)
+    runtime = _runtime(data_dir, legacy_event_derivation=legacy_derive)
     count = 0
     for event in _load_events(source):
         if async_derive:
@@ -121,7 +125,7 @@ def ingest(
 
 @app.command()
 def derive(data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR) -> None:
-    runtime = _runtime(data_dir)
+    runtime = _runtime(data_dir, legacy_event_derivation=True)
     runtime.replay()
     _print_snapshot(runtime)
 
@@ -139,7 +143,7 @@ def retrieve(
     ] = MemorySessionPolicy.EXACT,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir)
+    runtime = _runtime(data_dir, legacy_event_derivation=True)
     records, trace = runtime.retrieve(
         _memory_query(
             agent=agent,
@@ -167,7 +171,7 @@ def project(
     ] = MemorySessionPolicy.EXACT,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir)
+    runtime = _runtime(data_dir, legacy_event_derivation=True)
     context = runtime.project(
         _memory_query(
             agent=agent,
@@ -324,7 +328,7 @@ def show_audit(
     subject: Annotated[str | None, typer.Option("--subject")] = None,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir)
+    runtime = _runtime(data_dir, legacy_event_derivation=True)
     try:
         records = filter_audit_records(
             runtime.audit_store.list_envelopes(),
@@ -348,7 +352,7 @@ def audit_dashboard(
     out: Annotated[Path, typer.Option("--out", help="HTML dashboard output path.")],
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir)
+    runtime = _runtime(data_dir, legacy_event_derivation=True)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         generate_audit_dashboard_html(runtime.audit_store.list_envelopes()),
@@ -368,7 +372,7 @@ def queue_status(
 ) -> None:
     if ctx.invoked_subcommand is not None:
         return
-    runtime = _runtime(data_dir)
+    runtime = _runtime(data_dir, legacy_event_derivation=True)
     _print_trace(
         {
             "pending_derivation_jobs": runtime.derivation_queue.pending_count(),
@@ -379,7 +383,7 @@ def queue_status(
 
 @queue_app.command("run-once")
 def queue_run_once(data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR) -> None:
-    runtime = _runtime(data_dir)
+    runtime = _runtime(data_dir, legacy_event_derivation=True)
     job = runtime.run_derivation_once()
     _print_trace(
         {
@@ -403,7 +407,7 @@ def worker(
     ] = 1.0,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir)
+    runtime = _runtime(data_dir, legacy_event_derivation=True)
     derivation_worker = DerivationWorker(
         runtime,
         poll_interval_seconds=poll_interval_seconds,
@@ -833,7 +837,7 @@ def demo_mock_interviewer() -> None:
 
 
 def _run_demo(filename: str, agent: str, query: str) -> None:
-    runtime = AgentMemoryRuntime()
+    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
     for event in _load_events(_examples_dir() / filename):
         runtime.ingest(event)
     context = runtime.project(MemoryQuery(agent_id=agent, text=query))
@@ -934,7 +938,12 @@ def _percentile(values: list[float], quantile: float) -> float:
     return round(ordered[index], 4)
 
 
-def _runtime(data_dir: Path, *, config: RuntimeConfig | None = None) -> AgentMemoryRuntime:
+def _runtime(
+    data_dir: Path,
+    *,
+    config: RuntimeConfig | None = None,
+    legacy_event_derivation: bool = False,
+) -> AgentMemoryRuntime:
     data_dir.mkdir(parents=True, exist_ok=True)
     runtime_config = config or RuntimeConfig()
     try:
@@ -977,6 +986,7 @@ def _runtime(data_dir: Path, *, config: RuntimeConfig | None = None) -> AgentMem
         derivation_queue=stores.derivation_queue,
         tombstone_store=stores.tombstone_store,
         transaction_manager=stores,
+        legacy_event_derivation=legacy_event_derivation,
     )
 
 
