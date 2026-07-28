@@ -40,6 +40,9 @@ class MemoryStore(Protocol):
     def get(self, memory_id: str) -> MemoryRecord | None:
         ...
 
+    def delete(self, memory_id: str) -> None:
+        ...
+
     def list_records(self) -> list[MemoryRecord]:
         ...
 

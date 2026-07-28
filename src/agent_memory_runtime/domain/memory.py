@@ -93,6 +93,7 @@ class MemoryRecord:
     tenant_id: str = "default"
     user_id: str | None = None
     agent_id: str | None = None
+    version: int = 1
 
     @classmethod
     def from_candidate(cls, candidate: MemoryCandidate, *, now: str, sequence: int) -> MemoryRecord:
@@ -123,6 +124,7 @@ class MemoryRecord:
             updated_at=now,
             last_event_sequence=sequence,
             last_operation=candidate.operation,
+            version=1,
         )
 
     @classmethod
@@ -158,6 +160,7 @@ class MemoryRecord:
             updated_at=str(value.get("updated_at", "")),
             last_event_sequence=int(value.get("last_event_sequence", 0)),
             last_operation=str(value.get("last_operation", MemoryOperation.CREATE.value)),
+            version=int(value.get("version", 1)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -188,6 +191,7 @@ class MemoryRecord:
             "updated_at": self.updated_at,
             "last_event_sequence": self.last_event_sequence,
             "last_operation": self.last_operation,
+            "version": self.version,
         }
 
 

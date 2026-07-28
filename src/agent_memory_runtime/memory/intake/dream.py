@@ -3,14 +3,15 @@ from __future__ import annotations
 import re
 
 from agent_memory_runtime.audit.hashing import stable_hash
-from agent_memory_runtime.domain.enums import EventKind, MemoryStatus
+from agent_memory_runtime.domain.enums import EventKind, MemoryLayer, MemoryOperation, MemoryStatus
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.memory.intake.models import (
     AutoDreamReport,
     DreamCheckpoint,
-    DreamProposal,
+    MemoryProposal,
 )
+from agent_memory_runtime.memory.service import memory_type_from_kind
 
 _REMEMBER_RE = re.compile(
     r"(\u8bb0\u4f4f|\u4ee5\u540e|\u9ed8\u8ba4|\u4e0d\u8981\u518d|\u522b\u518d)"
@@ -40,7 +41,7 @@ class AutoDreamAnalyzer:
             for event in sorted(events, key=lambda item: item.sequence)
             if event.sequence > previous.last_processed_sequence
         ]
-        proposals: list[DreamProposal] = []
+        proposals: list[MemoryProposal] = []
         for event in new_events:
             proposal = self._message_proposal(event)
             if proposal is not None:
@@ -68,7 +69,7 @@ class AutoDreamAnalyzer:
             ),
         )
 
-    def _message_proposal(self, event: Event) -> DreamProposal | None:
+    def _message_proposal(self, event: Event) -> MemoryProposal | None:
         if event.kind != EventKind.MESSAGE.value:
             return None
         text = str(event.payload.get("text") or "").strip()
@@ -77,7 +78,7 @@ class AutoDreamAnalyzer:
         if _FORGET_RE.search(text):
             return _proposal(
                 event,
-                action="forget_memory",
+                action=MemoryOperation.NEEDS_REVIEW.value,
                 kind=None,
                 key=None,
                 content=_shorten(text),
@@ -88,7 +89,7 @@ class AutoDreamAnalyzer:
         if _REVISE_RE.search(text):
             return _proposal(
                 event,
-                action="revise_memory",
+                action=MemoryOperation.NEEDS_REVIEW.value,
                 kind=EventKind.BELIEF.value,
                 key=_infer_key(text),
                 content=_shorten(text),
@@ -99,14 +100,13 @@ class AutoDreamAnalyzer:
         if _REMEMBER_RE.search(text):
             return _proposal(
                 event,
-                action="save_memory",
+                action=MemoryOperation.CREATE.value,
                 kind=EventKind.PREFERENCE.value,
                 key=_infer_key(text),
                 content=_shorten(text),
                 confidence=0.82,
                 salience=0.82,
                 reason="explicit_memory_marker",
-                recommended_action="auto_apply",
             )
         return None
 
@@ -114,7 +114,7 @@ class AutoDreamAnalyzer:
         self,
         event: Event,
         records: list[MemoryRecord],
-    ) -> DreamProposal | None:
+    ) -> MemoryProposal | None:
         if event.kind not in {
             EventKind.PREFERENCE.value,
             EventKind.BELIEF.value,
@@ -134,7 +134,7 @@ class AutoDreamAnalyzer:
             return None
         return _proposal(
             event,
-            action="save_memory",
+            action=MemoryOperation.CREATE.value,
             kind=event.kind,
             key=str(event.payload.get("key") or event.payload.get("subject_id") or "item"),
             content=_shorten(content),
@@ -143,24 +143,38 @@ class AutoDreamAnalyzer:
             reason="typed_event_without_derived_memory",
         )
 
-    def _state_proposals(self, records: list[MemoryRecord]) -> list[DreamProposal]:
-        proposals: list[DreamProposal] = []
+    def _state_proposals(self, records: list[MemoryRecord]) -> list[MemoryProposal]:
+        proposals: list[MemoryProposal] = []
         active = [record for record in records if record.status == MemoryStatus.ACTIVE.value]
         by_content: dict[str, list[MemoryRecord]] = {}
         for record in records:
             if record.status == MemoryStatus.CONFLICTED.value:
                 proposals.append(
-                    DreamProposal(
+                    MemoryProposal(
                         proposal_id=f"auto-dream:conflict:{record.memory_id}",
-                        action="revise_memory",
-                        kind=None,
+                        source="auto_dream",
+                        action=MemoryOperation.NEEDS_REVIEW.value,
+                        target_memory_id=record.memory_id,
+                        subject_id=record.subject_id,
                         key=str(record.metadata.get("key") or ""),
                         content=record.content,
+                        memory_type=record.memory_type,
+                        layer=record.layer,
+                        scope=record.scope,
+                        visible_to=record.visible_to,
                         confidence=record.confidence,
                         salience=record.salience,
-                        evidence_event_ids=record.source_event_ids,
-                        target_memory_id=record.memory_id,
+                        source_message_ids=record.source_event_ids,
+                        source_memory_ids=(record.memory_id,),
+                        evidence_text=record.content,
                         reason="conflicted_memory_requires_resolution",
+                        dream_version=self.dream_version,
+                        agent_id=record.agent_id,
+                        tenant_id=record.tenant_id,
+                        user_id=record.user_id,
+                        session_id=record.session_id,
+                        labels=record.labels,
+                        tags=record.tags,
                     )
                 )
         for record in active:
@@ -173,17 +187,31 @@ class AutoDreamAnalyzer:
             keep = duplicate_records[0]
             for duplicate in duplicate_records[1:]:
                 proposals.append(
-                    DreamProposal(
-                        proposal_id=f"auto-dream:duplicate:{duplicate.memory_id}",
-                        action="forget_memory",
-                        kind=None,
+                    MemoryProposal(
+                        proposal_id=f"auto-dream:duplicate:{keep.memory_id}:{duplicate.memory_id}",
+                        source="auto_dream",
+                        action=MemoryOperation.REINFORCE.value,
+                        target_memory_id=keep.memory_id,
+                        subject_id=keep.subject_id,
                         key=str(duplicate.metadata.get("key") or ""),
                         content=duplicate.content,
+                        memory_type=keep.memory_type,
+                        layer=keep.layer,
+                        scope=keep.scope,
+                        visible_to=keep.visible_to,
                         confidence=min(duplicate.confidence, keep.confidence),
                         salience=min(duplicate.salience, keep.salience),
-                        evidence_event_ids=duplicate.source_event_ids,
-                        target_memory_id=duplicate.memory_id,
+                        source_message_ids=duplicate.source_event_ids,
+                        source_memory_ids=(duplicate.memory_id,),
+                        evidence_text=duplicate.content,
                         reason=f"duplicate_of:{keep.memory_id}",
+                        dream_version=self.dream_version,
+                        agent_id=keep.agent_id,
+                        tenant_id=keep.tenant_id,
+                        user_id=keep.user_id,
+                        session_id=keep.session_id,
+                        labels=keep.labels,
+                        tags=keep.tags,
                     )
                 )
         return proposals
@@ -199,19 +227,37 @@ def _proposal(
     confidence: float,
     salience: float,
     reason: str,
-    recommended_action: str = "review",
-) -> DreamProposal:
-    return DreamProposal(
+) -> MemoryProposal:
+    kind_value = kind or EventKind.BELIEF.value
+    agent_id = str(event.agent_id or event.payload.get("agent_id") or event.actor_id)
+    subject_id = str(event.payload.get("subject_id") or event.user_id or event.actor_id)
+    key_value = key or _infer_key(content)
+    return MemoryProposal(
         proposal_id=f"auto-dream:{event.event_id}:{action}",
+        source="auto_dream",
         action=action,
-        kind=kind,
-        key=key,
+        target_memory_id=None,
+        subject_id=subject_id,
+        key=key_value,
         content=content,
+        memory_type=memory_type_from_kind(kind_value),
+        layer=str(event.payload.get("layer") or MemoryLayer.CORE.value),
+        scope=str(event.payload.get("scope") or "private"),
+        visible_to=tuple(str(item) for item in event.payload.get("visible_to", (agent_id,))),
         confidence=confidence,
         salience=salience,
-        evidence_event_ids=(event.event_id,),
+        source_message_ids=(event.event_id,),
+        source_memory_ids=tuple(str(item) for item in event.payload.get("source_memory_ids", ())),
+        evidence_text=content,
         reason=reason,
-        recommended_action=recommended_action,
+        dream_version="auto-dream-v1",
+        actor_id=event.actor_id,
+        agent_id=agent_id,
+        tenant_id=event.tenant_id,
+        user_id=event.user_id,
+        session_id=event.session_id,
+        labels=tuple(event.labels),
+        tags=tuple(event.tags),
     )
 
 
@@ -243,9 +289,9 @@ def _state_hash(records: list[MemoryRecord]) -> str:
     )
 
 
-def _dedupe_proposals(proposals: list[DreamProposal]) -> list[DreamProposal]:
+def _dedupe_proposals(proposals: list[MemoryProposal]) -> list[MemoryProposal]:
     seen: set[str] = set()
-    result: list[DreamProposal] = []
+    result: list[MemoryProposal] = []
     for proposal in proposals:
         if proposal.proposal_id in seen:
             continue

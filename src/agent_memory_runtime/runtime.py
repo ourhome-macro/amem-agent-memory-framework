@@ -46,6 +46,7 @@ from agent_memory_runtime.llm import (
     OpenAICompatibleChatClient,
 )
 from agent_memory_runtime.memory.derivation import DerivationEngine
+from agent_memory_runtime.memory.intake.models import MemoryProposal, MemoryProposalResult
 from agent_memory_runtime.memory.lifecycle import LifecycleReducer
 from agent_memory_runtime.memory.retrieval import (
     CandidateBatch,
@@ -53,6 +54,7 @@ from agent_memory_runtime.memory.retrieval import (
     RetrievalPipeline,
 )
 from agent_memory_runtime.memory.retrieval.planner import normalize_query
+from agent_memory_runtime.memory.service import MemoryService
 from agent_memory_runtime.memory.stores import (
     InMemoryEventStore,
     InMemoryMemoryStore,
@@ -207,6 +209,16 @@ class AgentMemoryRuntime:
             snapshot = self._save_snapshot()
             self._audit_pii_event(source_event, snapshot=snapshot)
             return AsyncIngestResult(event=stored_event, job=job)
+
+    def apply_memory_proposal(self, proposal: MemoryProposal) -> MemoryProposalResult:
+        result = MemoryService(
+            memory_store=self.memory_store,
+            audit_store=self.audit_store,
+            tombstone_store=self.tombstone_store,
+            transaction_manager=self.transaction_manager,
+        ).apply_proposal(proposal)
+        self.refresh_snapshot()
+        return result
 
     def run_derivation_once(self) -> DerivationJob | None:
         job = self.derivation_queue.claim_next(

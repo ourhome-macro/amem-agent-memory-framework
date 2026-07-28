@@ -173,6 +173,15 @@ class SQLiteMemoryStore(SQLiteStore):
             return None
         return MemoryRecord.from_dict(json.loads(row[0]))
 
+    def delete(self, memory_id: str) -> None:
+        if self.vector_index is not None:
+            self.vector_index.mark_retired_stale(memory_id)
+        with self._manager.connection() as connection:
+            connection.execute("DELETE FROM memory_fts WHERE memory_id = ?", (memory_id,))
+            connection.execute("DELETE FROM memory_tags WHERE memory_id = ?", (memory_id,))
+            connection.execute("DELETE FROM memory_acl WHERE memory_id = ?", (memory_id,))
+            connection.execute("DELETE FROM memories WHERE memory_id = ?", (memory_id,))
+
     def list_records(self) -> list[MemoryRecord]:
         with self._manager.read_connection() as connection:
             rows = connection.execute("SELECT payload FROM memories ORDER BY memory_id").fetchall()

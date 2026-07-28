@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -11,26 +9,19 @@ from agent_memory_runtime.domain.enums import (
     MemoryOperation,
     MemoryScope,
 )
-from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.query import MemoryQuery
-from agent_memory_runtime.domain.tombstone import MemoryTombstone
-from agent_memory_runtime.governance.retention import (
-    RetentionAction,
-    RetentionExecutor,
-    RetentionPlan,
-)
 from agent_memory_runtime.memory.intake.models import (
+    MemoryProposal,
     MemoryToolIdentity,
     MemoryToolResult,
 )
+from agent_memory_runtime.memory.service import MemoryService, memory_type_from_kind
 
 _SAVE_KINDS = {
     EventKind.PREFERENCE.value,
     EventKind.BELIEF.value,
     EventKind.TASK_OUTCOME.value,
 }
-_DELETE_EVENT_KIND = "memory.delete_requested"
-_ARCHIVE_EVENT_KIND = "memory.archive_requested"
 
 
 class MemoryIntakeError(ValueError):
@@ -40,6 +31,12 @@ class MemoryIntakeError(ValueError):
 class MemoryIntakeService:
     def __init__(self, runtime: object) -> None:
         self.runtime = runtime
+        self.memory_service = MemoryService(
+            memory_store=runtime.memory_store,
+            audit_store=runtime.audit_store,
+            tombstone_store=runtime.tombstone_store,
+            transaction_manager=getattr(runtime, "transaction_manager", None),
+        )
 
     def save_memory(
         self,
@@ -48,18 +45,23 @@ class MemoryIntakeService:
         identity: MemoryToolIdentity,
         idempotency_key: str | None = None,
     ) -> MemoryToolResult:
-        event = self._build_write_event(
+        proposal = self._build_write_proposal(
             arguments,
             identity=identity,
             idempotency_key=idempotency_key,
+            source="save_memory",
             default_action="save_memory",
         )
-        result = self.runtime.ingest(event)
+        result = self.memory_service.apply_proposal(proposal)
+        _refresh_snapshot(self.runtime)
         return MemoryToolResult(
-            status="succeeded",
+            status=result.status,
             action="save_memory",
-            event=result.event,
-            memory_ids=tuple(record.memory_id for record in result.records),
+            proposal_id=proposal.proposal_id,
+            audit_id=None if result.audit_log is None else result.audit_log.audit_id,
+            memory_ids=result.memory_ids,
+            reason=result.reason,
+            retryable=result.retryable,
         )
 
     def revise_memory(
@@ -77,18 +79,26 @@ class MemoryIntakeService:
             if target_memory_id not in source_memory_ids:
                 source_memory_ids.insert(0, target_memory_id)
             values["source_memory_ids"] = source_memory_ids
-        event = self._build_write_event(
+            record = self.runtime.memory_store.get(target_memory_id)
+            if record is not None:
+                values.setdefault("expected_version", record.version)
+        proposal = self._build_write_proposal(
             values,
             identity=identity,
             idempotency_key=idempotency_key,
+            source="revise_memory",
             default_action="revise_memory",
         )
-        result = self.runtime.ingest(event)
+        result = self.memory_service.apply_proposal(proposal)
+        _refresh_snapshot(self.runtime)
         return MemoryToolResult(
-            status="succeeded",
+            status=result.status,
             action="revise_memory",
-            event=result.event,
-            memory_ids=tuple(record.memory_id for record in result.records),
+            proposal_id=proposal.proposal_id,
+            audit_id=None if result.audit_log is None else result.audit_log.audit_id,
+            memory_ids=result.memory_ids,
+            reason=result.reason,
+            retryable=result.retryable,
         )
 
     def forget_memory(
@@ -108,91 +118,60 @@ class MemoryIntakeService:
                 action="forget_memory",
                 reason="target_memory_not_found",
             )
-        reason = str(arguments.get("reason") or "user_requested_forget")
-        event = Event(
-            event_id=_event_id("forget_memory", idempotency_key),
-            kind=_DELETE_EVENT_KIND if mode == "delete" else _ARCHIVE_EVENT_KIND,
+        proposal = MemoryProposal(
+            proposal_id=_proposal_id("forget_memory", idempotency_key),
+            source="forget_memory",
+            action=(
+                MemoryOperation.DELETE.value
+                if mode == "delete"
+                else MemoryOperation.ARCHIVE.value
+            ),
+            target_memory_id=record.memory_id,
+            subject_id=record.subject_id,
+            key=str(record.metadata.get("key") or record.memory_id),
+            content=record.content,
+            memory_type=record.memory_type,
+            layer=record.layer,
+            scope=record.scope,
+            visible_to=record.visible_to,
+            confidence=record.confidence,
+            salience=record.salience,
+            source_message_ids=(),
+            source_memory_ids=(record.memory_id,),
+            evidence_text=str(arguments.get("query") or ""),
+            reason=str(arguments.get("reason") or "user_requested_forget"),
             actor_id=identity.actor_id,
-            session_id=identity.session_id,
+            agent_id=identity.agent_id,
             tenant_id=identity.tenant_id,
             user_id=identity.user_id,
-            agent_id=identity.agent_id,
+            session_id=identity.session_id,
             labels=identity.labels,
             tags=_dedupe((*identity.tags, "memory-intake", "forget-memory")),
-            payload={
-                "agent_id": identity.agent_id,
-                "tenant_id": identity.tenant_id,
-                "user_id": identity.user_id,
-                "subject_id": record.subject_id,
-                "memory_id": record.memory_id,
-                "mode": mode,
-                "reason": reason,
-                "query": arguments.get("query"),
-            },
+            expected_version=record.version,
         )
-        stored_event = self.runtime.event_store.append(event)
-        if mode == "archive":
-            self.runtime.memory_store.upsert(
-                replace(
-                    record,
-                    layer=MemoryLayer.ARCHIVAL.value,
-                    status="archived",
-                    last_operation=MemoryOperation.ARCHIVE.value,
-                    source_event_ids=_dedupe((*record.source_event_ids, stored_event.event_id)),
-                    updated_at=stored_event.occurred_at,
-                    last_event_sequence=stored_event.sequence,
-                )
-            )
-            self.runtime.refresh_snapshot()
-            return MemoryToolResult(
-                status="succeeded",
-                action="forget_memory",
-                event=stored_event,
-                archived_memory_ids=(record.memory_id,),
-            )
-
-        snapshot = self.runtime.snapshot()
-        report = RetentionExecutor(
-            memory_store=self.runtime.memory_store,
-            audit_store=self.runtime.audit_store,
-            tombstone_store=self.runtime.tombstone_store,
-            transaction_manager=getattr(self.runtime, "transaction_manager", None),
-        ).apply(
-            RetentionPlan(
-                actions=(RetentionAction(record.memory_id, "delete", reason),),
-                current_sequence=stored_event.sequence,
-            ),
-            snapshot=snapshot,
-        )
-        self.runtime.refresh_snapshot()
-        if not report.deleted_memory_ids:
-            # The projection may already be absent. Keep a tombstone anyway so replay
-            # does not resurrect older source events for this memory id.
-            self.runtime.tombstone_store.put(
-                MemoryTombstone(
-                    memory_id=record.memory_id,
-                    tenant_id=record.tenant_id,
-                    deleted_through_sequence=stored_event.sequence,
-                    deleted_at=datetime.now(UTC).isoformat(),
-                    reason=reason,
-                    source_event_ids=record.source_event_ids,
-                )
-            )
+        result = self.memory_service.apply_proposal(proposal)
+        _refresh_snapshot(self.runtime)
         return MemoryToolResult(
-            status="succeeded",
+            status=result.status,
             action="forget_memory",
-            event=stored_event,
-            tombstoned_memory_ids=(record.memory_id,),
+            proposal_id=proposal.proposal_id,
+            audit_id=None if result.audit_log is None else result.audit_log.audit_id,
+            memory_ids=result.memory_ids,
+            tombstoned_memory_ids=result.tombstoned_memory_ids,
+            archived_memory_ids=result.archived_memory_ids,
+            reason=result.reason,
+            retryable=result.retryable,
         )
 
-    def _build_write_event(
+    def _build_write_proposal(
         self,
         arguments: dict[str, Any],
         *,
         identity: MemoryToolIdentity,
         idempotency_key: str | None,
+        source: str,
         default_action: str,
-    ) -> Event:
+    ) -> MemoryProposal:
         kind = str(arguments.get("kind") or EventKind.PREFERENCE.value)
         if kind not in _SAVE_KINDS:
             raise MemoryIntakeError(f"unsupported memory event kind: {kind}")
@@ -203,50 +182,40 @@ class MemoryIntakeService:
         if not key:
             raise MemoryIntakeError("memory key cannot be empty")
         subject_id = str(arguments.get("subject_id") or identity.user_id or identity.actor_id)
-        payload: dict[str, Any] = {
-            "agent_id": identity.agent_id,
-            "tenant_id": identity.tenant_id,
-            "user_id": identity.user_id,
-            "subject_id": subject_id,
-            "key": key,
-            "operation": str(
-                arguments.get("operation") or _default_operation(kind, default_action)
-            ),
-            "scope": str(arguments.get("scope") or MemoryScope.PRIVATE.value),
-            "layer": str(arguments.get("layer") or _default_layer(kind)),
-            "salience": _clamp_float(arguments.get("salience"), default=0.9),
-            "confidence": _clamp_float(arguments.get("confidence"), default=0.9),
-            "source_memory_ids": _tuple_str(arguments.get("source_memory_ids")),
-            "evidence_event_ids": _tuple_str(arguments.get("evidence_event_ids")),
-            "reason": arguments.get("reason"),
-            "explicit": bool(arguments.get("explicit", True)),
-            "intake_action": default_action,
-        }
-        if "visible_to" in arguments:
-            payload["visible_to"] = _tuple_str(arguments.get("visible_to"))
-        if "value" in arguments:
-            payload["value"] = arguments.get("value")
-        if "truth_value" in arguments:
-            payload["truth_value"] = arguments.get("truth_value")
-        if kind == EventKind.PREFERENCE.value:
-            payload["preference"] = content
-        elif kind == EventKind.BELIEF.value:
-            payload["belief"] = content
-        elif kind == EventKind.TASK_OUTCOME.value:
-            payload["task"] = key
-            payload["outcome"] = content
-            payload["result"] = str(arguments.get("result") or "remembered")
-        return Event(
-            event_id=_event_id(default_action, idempotency_key),
-            kind=kind,
+        action = str(arguments.get("operation") or _default_operation(kind, default_action))
+        if action == MemoryOperation.SUPERSEDE.value:
+            action = MemoryOperation.REVISE.value
+        target_memory_id = _optional_str(arguments.get("target_memory_id"))
+        return MemoryProposal(
+            proposal_id=_proposal_id(default_action, idempotency_key),
+            source=source,
+            action=action,
+            target_memory_id=target_memory_id,
+            subject_id=subject_id,
+            key=key,
+            content=_content_for_kind(kind, key=key, content=content, arguments=arguments),
+            memory_type=memory_type_from_kind(kind),
+            layer=str(arguments.get("layer") or _default_layer(kind)),
+            scope=str(arguments.get("scope") or MemoryScope.PRIVATE.value),
+            visible_to=_tuple_str(arguments.get("visible_to")) or (identity.agent_id,),
+            confidence=_clamp_float(arguments.get("confidence"), default=0.9),
+            salience=_clamp_float(arguments.get("salience"), default=0.9),
+            source_message_ids=_tuple_str(arguments.get("evidence_event_ids")),
+            source_memory_ids=_tuple_str(arguments.get("source_memory_ids")),
+            evidence_text=str(arguments.get("evidence_text") or content),
+            reason=str(arguments.get("reason") or default_action),
             actor_id=identity.actor_id,
-            session_id=identity.session_id,
+            agent_id=identity.agent_id,
             tenant_id=identity.tenant_id,
             user_id=identity.user_id,
-            agent_id=identity.agent_id,
             labels=identity.labels,
             tags=_dedupe((*identity.tags, "memory-intake", default_action)),
-            payload=payload,
+            session_id=identity.session_id,
+            expected_version=(
+                int(arguments["expected_version"])
+                if arguments.get("expected_version") is not None
+                else None
+            ),
         )
 
     def _resolve_forget_target(
@@ -285,8 +254,6 @@ class MemoryIntakeService:
 def _default_operation(kind: str, action: str) -> str:
     if action == "revise_memory":
         return MemoryOperation.REVISE.value
-    if kind in {EventKind.PREFERENCE.value, EventKind.TASK_OUTCOME.value}:
-        return MemoryOperation.REVISE.value
     return MemoryOperation.CREATE.value
 
 
@@ -296,10 +263,29 @@ def _default_layer(kind: str) -> str:
     return MemoryLayer.WORKING.value
 
 
-def _event_id(action: str, idempotency_key: str | None) -> str:
+def _proposal_id(action: str, idempotency_key: str | None) -> str:
     if idempotency_key:
         return f"memory-intake:{action}:{idempotency_key}"
     return f"memory-intake:{action}:{uuid4()}"
+
+
+def _content_for_kind(
+    kind: str,
+    *,
+    key: str,
+    content: str,
+    arguments: dict[str, Any],
+) -> str:
+    if kind == EventKind.TASK_OUTCOME.value:
+        result = str(arguments.get("result") or "remembered")
+        return f"When handling {key}, outcome was {result}: {content}"
+    return content
+
+
+def _refresh_snapshot(runtime: object) -> None:
+    refresh = getattr(runtime, "refresh_snapshot", None)
+    if callable(refresh):
+        refresh()
 
 
 def _clamp_float(value: object, *, default: float) -> float:

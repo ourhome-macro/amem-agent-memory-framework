@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agent_memory_runtime.domain.event import Event
+from agent_memory_runtime.domain.memory import MemoryRecord
 
 
 @dataclass(frozen=True)
@@ -22,21 +23,29 @@ class MemoryToolResult:
     status: str
     action: str
     event: Event | None = None
+    proposal_id: str | None = None
+    audit_id: str | None = None
     memory_ids: tuple[str, ...] = ()
     tombstoned_memory_ids: tuple[str, ...] = ()
     archived_memory_ids: tuple[str, ...] = ()
     reason: str | None = None
+    retryable: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
             "action": self.action,
-            "event_id": None if self.event is None else self.event.event_id,
-            "event_kind": None if self.event is None else self.event.kind,
+            "event_id": (
+                self.proposal_id if self.event is None else self.event.event_id
+            ),
+            "event_kind": "memory.proposal" if self.event is None else self.event.kind,
+            "proposal_id": self.proposal_id,
+            "audit_id": self.audit_id,
             "memory_ids": list(self.memory_ids),
             "tombstoned_memory_ids": list(self.tombstoned_memory_ids),
             "archived_memory_ids": list(self.archived_memory_ids),
             "reason": self.reason,
+            "retryable": self.retryable,
         }
 
 
@@ -55,40 +64,153 @@ class DreamCheckpoint:
 
 
 @dataclass(frozen=True)
-class DreamProposal:
+class MemoryProposal:
     proposal_id: str
+    source: str
     action: str
-    kind: str | None
+    target_memory_id: str | None
+    subject_id: str
     key: str | None
     content: str
+    memory_type: str
+    layer: str
+    scope: str
+    visible_to: tuple[str, ...]
     confidence: float
     salience: float
-    evidence_event_ids: tuple[str, ...] = ()
-    target_memory_id: str | None = None
+    source_message_ids: tuple[str, ...] = ()
+    source_memory_ids: tuple[str, ...] = ()
+    evidence_text: str = ""
     reason: str = ""
-    recommended_action: str = "review"
+    dream_run_id: str | None = None
+    dream_version: str | None = None
+    actor_id: str = "runtime"
+    agent_id: str | None = None
+    tenant_id: str = "default"
+    user_id: str | None = None
+    session_id: str = "default"
+    labels: tuple[str, ...] = ("private",)
+    tags: tuple[str, ...] = ()
+    expected_version: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "proposal_id": self.proposal_id,
+            "source": self.source,
             "action": self.action,
-            "kind": self.kind,
+            "target_memory_id": self.target_memory_id,
+            "subject_id": self.subject_id,
             "key": self.key,
             "content": self.content,
+            "memory_type": self.memory_type,
+            "layer": self.layer,
+            "scope": self.scope,
+            "visible_to": list(self.visible_to),
             "confidence": self.confidence,
             "salience": self.salience,
-            "evidence_event_ids": list(self.evidence_event_ids),
-            "target_memory_id": self.target_memory_id,
+            "source_message_ids": list(self.source_message_ids),
+            "source_memory_ids": list(self.source_memory_ids),
+            "evidence_text": self.evidence_text,
             "reason": self.reason,
-            "recommended_action": self.recommended_action,
+            "dream_run_id": self.dream_run_id,
+            "dream_version": self.dream_version,
+            "actor_id": self.actor_id,
+            "agent_id": self.agent_id,
+            "tenant_id": self.tenant_id,
+            "user_id": self.user_id,
+            "session_id": self.session_id,
+            "labels": list(self.labels),
+            "tags": list(self.tags),
+            "expected_version": self.expected_version,
+            # Compatibility keys for the pre-proposal Auto Dream API.
+            "kind": self.memory_type,
+            "evidence_event_ids": list(self.source_message_ids),
+            "recommended_action": (
+                "auto_apply"
+                if self.action in {"create", "reinforce", "revise", "archive"}
+                else "review"
+            ),
         }
+
+    @property
+    def kind(self) -> str:
+        return self.memory_type
+
+    @property
+    def evidence_event_ids(self) -> tuple[str, ...]:
+        return self.source_message_ids
+
+
+DreamProposal = MemoryProposal
+
+
+@dataclass(frozen=True)
+class MemoryAuditLog:
+    audit_id: str
+    memory_id: str | None
+    proposal_id: str
+    action: str
+    actor_id: str
+    agent_id: str | None
+    tenant_id: str
+    user_id: str | None
+    before_record: MemoryRecord | None
+    after_record: MemoryRecord | None
+    source_message_ids: tuple[str, ...]
+    source_memory_ids: tuple[str, ...]
+    evidence_text: str
+    confidence: float
+    reason: str
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "audit_id": self.audit_id,
+            "memory_id": self.memory_id,
+            "proposal_id": self.proposal_id,
+            "action": self.action,
+            "actor_id": self.actor_id,
+            "agent_id": self.agent_id,
+            "tenant_id": self.tenant_id,
+            "user_id": self.user_id,
+            "before_record": (
+                None if self.before_record is None else self.before_record.to_dict()
+            ),
+            "after_record": (
+                None if self.after_record is None else self.after_record.to_dict()
+            ),
+            "source_message_ids": list(self.source_message_ids),
+            "source_memory_ids": list(self.source_memory_ids),
+            "evidence_text": self.evidence_text,
+            "confidence": self.confidence,
+            "reason": self.reason,
+            "created_at": self.created_at,
+        }
+
+
+@dataclass(frozen=True)
+class MemoryProposalResult:
+    status: str
+    action: str
+    proposal: MemoryProposal
+    memory: MemoryRecord | None = None
+    before_record: MemoryRecord | None = None
+    audit_log: MemoryAuditLog | None = None
+    tombstoned_memory_ids: tuple[str, ...] = ()
+    archived_memory_ids: tuple[str, ...] = ()
+    reason: str | None = None
+    retryable: bool = False
+
+    @property
+    def memory_ids(self) -> tuple[str, ...]:
+        return () if self.memory is None else (self.memory.memory_id,)
 
 
 @dataclass(frozen=True)
 class AutoDreamReport:
     source_sequence_range: tuple[int, int] | None
     base_state_hash: str
-    proposals: tuple[DreamProposal, ...] = ()
+    proposals: tuple[MemoryProposal, ...] = ()
     checkpoint: DreamCheckpoint = field(default_factory=DreamCheckpoint)
 
     def to_dict(self) -> dict[str, Any]:

@@ -70,6 +70,7 @@ class LifecycleReducer:
                 metadata=metadata,
                 status=status,
                 reinforcement_count=current.reinforcement_count + 1,
+                version=current.version + 1,
             )
 
         if operation == MemoryOperation.ARCHIVE.value:
@@ -83,6 +84,7 @@ class LifecycleReducer:
                 source_event_ids=source_event_ids,
                 source_memory_ids=source_memory_ids,
                 metadata=metadata,
+                version=current.version + 1,
             )
 
         return replace(
@@ -103,6 +105,7 @@ class LifecycleReducer:
             last_operation=MemoryOperation.REINFORCE.value
             if operation == MemoryOperation.CREATE.value
             else operation,
+            version=current.version + 1,
         )
 
 
@@ -125,4 +128,3 @@ def _dedupe(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
         if text and text not in result:
             result.append(text)
     return tuple(result)
-

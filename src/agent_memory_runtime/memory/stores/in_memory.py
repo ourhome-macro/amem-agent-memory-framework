@@ -65,6 +65,9 @@ class InMemoryMemoryStore:
     def get(self, memory_id: str) -> MemoryRecord | None:
         return self._records.get(memory_id)
 
+    def delete(self, memory_id: str) -> None:
+        self._records.pop(memory_id, None)
+
     def list_records(self) -> list[MemoryRecord]:
         return sorted(self._records.values(), key=lambda item: item.memory_id)
 

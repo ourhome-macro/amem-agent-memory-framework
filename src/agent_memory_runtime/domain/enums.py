@@ -45,6 +45,9 @@ class MemoryOperation(StrEnum):
     REVISE = "revise"
     SUPERSEDE = "supersede"
     ARCHIVE = "archive"
+    DELETE = "delete"
+    KEEP_BOTH = "keep_both"
+    NEEDS_REVIEW = "needs_review"
 
 
 class MemoryLabel(StrEnum):
