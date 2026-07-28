@@ -487,7 +487,7 @@ def test_v5_database_migrates_and_backfills_fts_acl_projection(tmp_path) -> None
             "SELECT COUNT(*) FROM memory_acl WHERE memory_id = 'legacy-memory'"
         ).fetchone()[0]
 
-    assert stores.schema_version == 6
+    assert stores.schema_version == 7
     assert [item.memory_id for item in selected] == ["legacy-memory"]
     assert fts_count == 1
     assert acl_count == 1

@@ -8,7 +8,13 @@ import pytest
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.integrations.langchain import AgentMemoryLangChainRetriever
-from agent_memory_runtime.memory.embeddings import EmbeddingSpec, QdrantVectorIndex, VectorRecord
+from agent_memory_runtime.memory.embeddings import (
+    CallableEmbeddingProvider,
+    EmbeddingSpec,
+    QdrantVectorIndex,
+    VectorRecord,
+)
+from agent_memory_runtime.memory.stores import SQLiteStoreBundle
 
 
 def test_qdrant_vector_index_writes_memory_filter_payload() -> None:
@@ -85,6 +91,51 @@ def test_qdrant_coverage_uses_expected_count_provider() -> None:
     assert index.coverage(generation="embedding-generation") == 0.9
 
 
+def test_qdrant_vector_index_creates_collection_on_first_upsert() -> None:
+    client = _FakeQdrantClient(collection_exists=False)
+    spec = EmbeddingSpec(provider="test", model_id="bge-m3", dimensions=3)
+    index = QdrantVectorIndex(collection_name="memories", client=client)
+
+    index.upsert(
+        VectorRecord(
+            memory_id="memory-1",
+            spec=spec,
+            content_hash="hash-1",
+            source_sequence=7,
+            vector=(1.0, 0.0, 0.0),
+        ),
+        memory=_memory(),
+    )
+
+    assert client.created_collections == ["memories"]
+    assert client.upserts
+
+
+def test_sqlite_bundle_can_publish_embedding_outbox_to_qdrant_projection(tmp_path) -> None:
+    client = _FakeQdrantClient(collection_exists=True)
+    provider = CallableEmbeddingProvider(
+        EmbeddingSpec(provider="test", model_id="bundle-qdrant", dimensions=3),
+        query_embedder=lambda _text: [1.0, 0.0, 0.0],
+        document_embedder=lambda _texts: [[1.0, 0.0, 0.0]],
+    )
+    index = QdrantVectorIndex(collection_name="memories", client=client)
+    staging = SQLiteStoreBundle(tmp_path / "qdrant-runtime.sqlite")
+    staging.embedding_generations.register(provider.spec, status="backfill")
+    staging.activate_embedding_generation(provider.spec.generation)
+    stores = SQLiteStoreBundle(
+        tmp_path / "qdrant-runtime.sqlite",
+        embedding_provider=provider,
+        vector_index=index,
+    )
+
+    stores.memory_store.upsert(_memory())
+    report = stores.embedding_worker(provider).run_until_idle()
+
+    assert report.succeeded == 1
+    assert client.upserts[0]["collection_name"] == "memories"
+    assert client.upserts[0]["points"][0].payload["memory_id"] == "memory-1"
+
+
 def test_langchain_adapter_reports_missing_optional_dependency() -> None:
     if AgentMemoryLangChainRetriever.__mro__[1] is not object:
         pytest.skip("langchain-core is installed in this environment")
@@ -93,12 +144,20 @@ def test_langchain_adapter_reports_missing_optional_dependency() -> None:
 
 
 class _FakeQdrantClient:
-    def __init__(self, *, search_rows: list[object] | None = None, count: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        search_rows: list[object] | None = None,
+        count: int = 0,
+        collection_exists: bool = True,
+    ) -> None:
         self.search_rows = search_rows or []
         self.count_value = count
+        self.collection_exists_value = collection_exists
         self.upserts: list[dict[str, object]] = []
         self.searches: list[dict[str, object]] = []
         self.deletes: list[dict[str, object]] = []
+        self.created_collections: list[str] = []
 
     def upsert(self, **kwargs: object) -> None:
         self.upserts.append(kwargs)
@@ -112,6 +171,13 @@ class _FakeQdrantClient:
 
     def count(self, **_: object) -> object:
         return SimpleNamespace(count=self.count_value)
+
+    def collection_exists(self, **kwargs: object) -> bool:
+        return self.collection_exists_value
+
+    def create_collection(self, **kwargs: object) -> None:
+        self.created_collections.append(str(kwargs["collection_name"]))
+        self.collection_exists_value = True
 
 
 def _conditions(qfilter: object) -> set[tuple[str, object]]:

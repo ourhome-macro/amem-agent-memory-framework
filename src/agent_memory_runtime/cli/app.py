@@ -40,6 +40,8 @@ from agent_memory_runtime.governance.retention import (
 )
 from agent_memory_runtime.memory.embeddings import (
     EmbeddingProvider,
+    QdrantVectorIndex,
+    VectorIndex,
     load_embedding_environment,
 )
 from agent_memory_runtime.memory.stores import SQLiteStoreBundle
@@ -862,6 +864,11 @@ def _runtime(
     except EmbeddingConfigurationError as error:
         raise typer.BadParameter(str(error)) from error
     embedding_provider = embedding_environment.provider
+    vector_index = (
+        None
+        if embedding_provider is None
+        else _vector_index_from_environment(embedding_environment)
+    )
     if embedding_provider is not None and runtime_config.hybrid_retrieval.enable_semantic:
         if (
             runtime_config.hybrid_retrieval.min_semantic_similarity is None
@@ -885,6 +892,7 @@ def _runtime(
         stores = SQLiteStoreBundle(
             data_dir / "runtime.sqlite",
             embedding_provider=embedding_provider,
+            vector_index=vector_index,
         )
     except StoreError as error:
         raise typer.BadParameter(str(error)) from error
@@ -895,7 +903,18 @@ def _runtime(
         snapshot_store=stores.snapshot_store,
         audit_store=stores.audit_store,
         tombstone_store=stores.tombstone_store,
+        dream_store=stores.dream_store,
         transaction_manager=stores,
+    )
+
+
+def _vector_index_from_environment(embedding_environment: object) -> VectorIndex | None:
+    if getattr(embedding_environment, "vector_backend", "sqlite") != "qdrant":
+        return None
+    return QdrantVectorIndex(
+        collection_name=str(getattr(embedding_environment, "qdrant_collection", "agent_memory")),
+        url=getattr(embedding_environment, "qdrant_url", None),
+        api_key=getattr(embedding_environment, "qdrant_api_key", None),
     )
 
 

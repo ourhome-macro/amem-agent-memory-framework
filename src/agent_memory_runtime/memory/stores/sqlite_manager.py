@@ -411,6 +411,55 @@ _MIGRATIONS = (
             """,
         ),
     ),
+    _Migration(
+        version=7,
+        name="auto_dream_jobs_and_policy_reviews",
+        statements=(
+            "DROP TABLE IF EXISTS derivation_jobs",
+            "DROP TABLE IF EXISTS review_items",
+            """
+            CREATE TABLE IF NOT EXISTS dream_jobs (
+                job_id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                user_id TEXT,
+                agent_id TEXT,
+                session_id TEXT,
+                status TEXT NOT NULL,
+                available_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                payload TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_dream_jobs_status
+            ON dream_jobs(status, available_at)
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS dream_checkpoints (
+                checkpoint_key TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                user_id TEXT,
+                agent_id TEXT,
+                session_id TEXT,
+                updated_at TEXT NOT NULL,
+                payload TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS memory_proposal_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                review_id TEXT UNIQUE NOT NULL,
+                proposal_id TEXT UNIQUE NOT NULL,
+                status TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                user_id TEXT,
+                agent_id TEXT,
+                created_at TEXT NOT NULL,
+                payload TEXT NOT NULL
+            )
+            """,
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = _MIGRATIONS[-1].version

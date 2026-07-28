@@ -45,6 +45,7 @@ class QdrantVectorIndex:
         from qdrant_client import models
 
         validate_vector(record.vector, record.spec)
+        self._ensure_collection(record.spec)
         payload = {
             "memory_id": record.memory_id,
             "generation": record.spec.generation,
@@ -156,6 +157,22 @@ class QdrantVectorIndex:
             return 1.0 if ready > 0 else 0.0
         expected = max(0, int(self.expected_count(generation)))
         return 1.0 if expected == 0 else round(ready / expected, 6)
+
+    def _ensure_collection(self, spec: EmbeddingSpec) -> None:
+        if not hasattr(self.client, "collection_exists") or not hasattr(
+            self.client,
+            "create_collection",
+        ):
+            return
+        if self.client.collection_exists(collection_name=self.collection_name):
+            return
+        from qdrant_client import models
+
+        distance = models.Distance.COSINE if spec.normalized else models.Distance.DOT
+        self.client.create_collection(
+            collection_name=self.collection_name,
+            vectors_config=models.VectorParams(size=spec.dimensions, distance=distance),
+        )
 
 
 def _query_filter(query: MemoryQuery, *, generation: str) -> dict[str, object]:

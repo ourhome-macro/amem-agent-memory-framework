@@ -16,6 +16,10 @@ from agent_memory_runtime.memory.embeddings.openai_compatible import (
 class EmbeddingEnvironment:
     provider: OpenAICompatibleEmbeddingProvider | None
     min_similarity: float | None
+    vector_backend: str = "sqlite"
+    qdrant_url: str | None = None
+    qdrant_api_key: str | None = None
+    qdrant_collection: str = "agent_memory"
 
 
 def load_embedding_environment(
@@ -27,10 +31,21 @@ def load_embedding_environment(
 
     load_dotenv(override=False)
     model_id = (os.environ.get("AMEM_EMBEDDING_MODEL") or "").strip()
+    vector_backend = _vector_backend()
+    qdrant_url = _optional_env("AMEM_QDRANT_URL")
+    qdrant_api_key = _optional_env("AMEM_QDRANT_API_KEY")
+    qdrant_collection = _optional_env("AMEM_QDRANT_COLLECTION") or "agent_memory"
     if not model_id:
         if required_provider:
             raise EmbeddingConfigurationError("AMEM_EMBEDDING_MODEL is required")
-        return EmbeddingEnvironment(provider=None, min_similarity=None)
+        return EmbeddingEnvironment(
+            provider=None,
+            min_similarity=None,
+            vector_backend=vector_backend,
+            qdrant_url=qdrant_url,
+            qdrant_api_key=qdrant_api_key,
+            qdrant_collection=qdrant_collection,
+        )
 
     dimensions = _positive_int("AMEM_EMBEDDING_DIMENSIONS")
     timeout_seconds = _positive_float(
@@ -74,6 +89,10 @@ def load_embedding_environment(
             ),
         ),
         min_similarity=min_similarity,
+        vector_backend=vector_backend,
+        qdrant_url=qdrant_url,
+        qdrant_api_key=qdrant_api_key,
+        qdrant_collection=qdrant_collection,
     )
 
 
@@ -124,3 +143,17 @@ def _env_bool(name: str, *, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise EmbeddingConfigurationError(f"{name} must be a boolean")
+
+
+def _optional_env(name: str) -> str | None:
+    value = (os.environ.get(name) or "").strip()
+    return value or None
+
+
+def _vector_backend() -> str:
+    raw = (os.environ.get("AMEM_VECTOR_BACKEND") or "").strip().casefold()
+    if not raw:
+        return "qdrant" if _optional_env("AMEM_QDRANT_URL") else "sqlite"
+    if raw not in {"sqlite", "sqlite-vec", "qdrant"}:
+        raise EmbeddingConfigurationError("AMEM_VECTOR_BACKEND must be sqlite or qdrant")
+    return "sqlite" if raw == "sqlite-vec" else raw

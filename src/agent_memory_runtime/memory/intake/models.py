@@ -64,6 +64,48 @@ class DreamCheckpoint:
 
 
 @dataclass(frozen=True)
+class DreamJob:
+    job_id: str
+    tenant_id: str
+    user_id: str | None
+    agent_id: str | None
+    session_id: str | None
+    status: str
+    reason: str
+    created_at: str
+    updated_at: str
+    available_at: str
+    attempts: int = 0
+    max_attempts: int = 3
+    lease_owner: str | None = None
+    lease_token: str | None = None
+    lease_expires_at: str | None = None
+    error_type: str | None = None
+    error_hash: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "tenant_id": self.tenant_id,
+            "user_id": self.user_id,
+            "agent_id": self.agent_id,
+            "session_id": self.session_id,
+            "status": self.status,
+            "reason": self.reason,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "available_at": self.available_at,
+            "attempts": self.attempts,
+            "max_attempts": self.max_attempts,
+            "lease_owner": self.lease_owner,
+            "lease_token": self.lease_token,
+            "lease_expires_at": self.lease_expires_at,
+            "error_type": self.error_type,
+            "error_hash": self.error_hash,
+        }
+
+
+@dataclass(frozen=True)
 class MemoryProposal:
     proposal_id: str
     source: str
@@ -223,4 +265,30 @@ class AutoDreamReport:
             "base_state_hash": self.base_state_hash,
             "proposals": [proposal.to_dict() for proposal in self.proposals],
             "checkpoint": self.checkpoint.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
+class AutoDreamRunReport:
+    job: DreamJob | None
+    analyzed: bool = False
+    proposals: int = 0
+    applied: int = 0
+    review: int = 0
+    rejected: int = 0
+    conflicts: int = 0
+    failed: int = 0
+    checkpoint: DreamCheckpoint | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "job": None if self.job is None else self.job.to_dict(),
+            "analyzed": self.analyzed,
+            "proposals": self.proposals,
+            "applied": self.applied,
+            "review": self.review,
+            "rejected": self.rejected,
+            "conflicts": self.conflicts,
+            "failed": self.failed,
+            "checkpoint": None if self.checkpoint is None else self.checkpoint.to_dict(),
         }

@@ -213,6 +213,9 @@ class MemoryService:
         elif action == MemoryOperation.CREATE.value:
             action = MemoryOperation.REVISE.value
         content = current.content if action == MemoryOperation.REINFORCE.value else proposal.content
+        reinforcement_count = current.reinforcement_count + (
+            1 if action == MemoryOperation.REINFORCE.value else 0
+        )
         return replace(
             current,
             content=content,
@@ -225,6 +228,7 @@ class MemoryService:
             tags=_dedupe((*current.tags, *proposal.tags, "proposal", proposal.source)),
             metadata={**current.metadata, **_metadata(proposal)},
             status=MemoryStatus.ACTIVE.value,
+            reinforcement_count=reinforcement_count,
             updated_at=now,
             last_operation=action,
             version=current.version + 1,

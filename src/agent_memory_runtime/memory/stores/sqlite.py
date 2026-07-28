@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from agent_memory_runtime.memory.embeddings import (
         EmbeddingProvider,
         SQLiteEmbeddingScheduler,
-        SQLiteVectorIndex,
+        VectorIndex,
     )
 
 
@@ -93,7 +93,7 @@ class SQLiteMemoryStore(SQLiteStore):
         *,
         embedding_scheduler: SQLiteEmbeddingScheduler | None = None,
         embedding_provider: EmbeddingProvider | None = None,
-        vector_index: SQLiteVectorIndex | None = None,
+        vector_index: VectorIndex | None = None,
     ) -> None:
         super().__init__(path_or_manager)
         self.embedding_scheduler = embedding_scheduler
@@ -174,8 +174,7 @@ class SQLiteMemoryStore(SQLiteStore):
         return MemoryRecord.from_dict(json.loads(row[0]))
 
     def delete(self, memory_id: str) -> None:
-        if self.vector_index is not None:
-            self.vector_index.mark_retired_stale(memory_id)
+        _retire_vector_memory(self.vector_index, memory_id)
         with self._manager.connection() as connection:
             connection.execute("DELETE FROM memory_fts WHERE memory_id = ?", (memory_id,))
             connection.execute("DELETE FROM memory_tags WHERE memory_id = ?", (memory_id,))
@@ -411,8 +410,7 @@ class SQLiteMemoryStore(SQLiteStore):
         )
 
     def _schedule_embedding(self, record: MemoryRecord) -> None:
-        if self.vector_index is not None:
-            self.vector_index.mark_retired_stale(record.memory_id)
+        _retire_vector_memory(self.vector_index, record.memory_id)
         if self.embedding_scheduler is None:
             return
         self.embedding_scheduler.schedule(
@@ -513,6 +511,7 @@ class SQLiteStoreBundle:
         *,
         agent_state_codec: StateCodec | None = None,
         embedding_provider: EmbeddingProvider | None = None,
+        vector_index: VectorIndex | None = None,
     ) -> None:
         from agent_memory_runtime.agent.orchestration.stores import (
             SQLiteOrchestrationStore,
@@ -524,11 +523,12 @@ class SQLiteStoreBundle:
             SQLiteEmbeddingScheduler,
             SQLiteVectorIndex,
         )
+        from agent_memory_runtime.memory.intake.worker import SQLiteDreamStore
 
         self._manager = SQLiteTransactionManager(path)
         self.embedding_generations = SQLiteEmbeddingGenerationStore(self._manager)
         self.embedding_jobs = SQLiteEmbeddingJobStore(self._manager)
-        self.vector_index = SQLiteVectorIndex(self._manager)
+        self.vector_index = vector_index or SQLiteVectorIndex(self._manager)
         if embedding_provider is not None:
             self.embedding_generations.ensure_active(embedding_provider.spec)
         self.embedding_provider = embedding_provider
@@ -547,6 +547,7 @@ class SQLiteStoreBundle:
         self.snapshot_store = SQLiteSnapshotStore(self._manager)
         self.tombstone_store = SQLiteTombstoneStore(self._manager)
         self.audit_store = SQLiteAuditStore(self._manager)
+        self.dream_store = SQLiteDreamStore(self._manager)
         self.agent_state_store = SQLiteAgentStateStore(
             self._manager,
             codec=agent_state_codec,
@@ -612,9 +613,7 @@ class SQLiteStoreBundle:
                     "embedding_coverage": self.vector_index.coverage(
                         generation=item_generation
                     ),
-                    "ready_vectors": self.vector_index.ready_count(
-                        generation=item_generation
-                    ),
+                    "ready_vectors": _ready_count(self.vector_index, generation=item_generation),
                     "job_status_counts": item_counts,
                     "embedding_backlog_lag_seconds": (
                         self.embedding_jobs.backlog_lag_seconds(
@@ -637,7 +636,7 @@ class SQLiteStoreBundle:
             ),
             "embedding_coverage": coverage,
             "ready_vectors": (
-                0 if generation is None else self.vector_index.ready_count(generation=generation)
+                0 if generation is None else _ready_count(self.vector_index, generation=generation)
             ),
             "job_status_counts": status_counts,
             "embedding_backlog_lag_seconds": self.embedding_jobs.backlog_lag_seconds(
@@ -683,6 +682,28 @@ class SQLiteStoreBundle:
 
 def _serialize(value: object) -> str:
     return json.dumps(value, ensure_ascii=True, sort_keys=True)
+
+
+def _retire_vector_memory(vector_index: object | None, memory_id: str) -> None:
+    if vector_index is None:
+        return
+    mark_retired = getattr(vector_index, "mark_retired_stale", None)
+    try:
+        if callable(mark_retired):
+            mark_retired(memory_id)
+            return
+        delete_memory = getattr(vector_index, "delete_memory", None)
+        if callable(delete_memory):
+            delete_memory(memory_id)
+    except Exception:
+        return
+
+
+def _ready_count(vector_index: object, *, generation: str) -> int:
+    ready_count = getattr(vector_index, "ready_count", None)
+    if not callable(ready_count):
+        return 0
+    return int(ready_count(generation=generation))
 
 
 def _memory_row(record: MemoryRecord) -> tuple[object, ...]:

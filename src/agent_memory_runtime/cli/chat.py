@@ -23,7 +23,11 @@ from agent_memory_runtime.agent import (
 from agent_memory_runtime.config import LLMConfig, RuntimeConfig, provider_presets
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.exceptions import EmbeddingConfigurationError, StoreError
-from agent_memory_runtime.memory.embeddings import load_embedding_environment
+from agent_memory_runtime.memory.embeddings import (
+    QdrantVectorIndex,
+    VectorIndex,
+    load_embedding_environment,
+)
 from agent_memory_runtime.memory.stores import SQLiteStoreBundle
 from agent_memory_runtime.runtime import AgentMemoryRuntime
 
@@ -94,9 +98,15 @@ def build_chat_context(data_dir: Path, config: LLMConfig) -> ChatRuntimeContext:
     except EmbeddingConfigurationError as error:
         raise ValueError(str(error)) from error
     try:
+        vector_index = (
+            None
+            if embedding_environment.provider is None
+            else _vector_index_from_environment(embedding_environment)
+        )
         bundle = SQLiteStoreBundle(
             data_dir / "runtime.sqlite",
             embedding_provider=embedding_environment.provider,
+            vector_index=vector_index,
         )
     except StoreError as error:
         raise ValueError(str(error)) from error
@@ -116,6 +126,7 @@ def build_chat_context(data_dir: Path, config: LLMConfig) -> ChatRuntimeContext:
         snapshot_store=bundle.snapshot_store,
         audit_store=bundle.audit_store,
         tombstone_store=bundle.tombstone_store,
+        dream_store=bundle.dream_store,
         transaction_manager=bundle,
     )
     runtime = BusinessAgentRuntime(
@@ -128,6 +139,16 @@ def build_chat_context(data_dir: Path, config: LLMConfig) -> ChatRuntimeContext:
         bundle=bundle,
         memory_runtime=memory_runtime,
         runtime=runtime,
+    )
+
+
+def _vector_index_from_environment(embedding_environment: object) -> VectorIndex | None:
+    if getattr(embedding_environment, "vector_backend", "sqlite") != "qdrant":
+        return None
+    return QdrantVectorIndex(
+        collection_name=str(getattr(embedding_environment, "qdrant_collection", "agent_memory")),
+        url=getattr(embedding_environment, "qdrant_url", None),
+        api_key=getattr(embedding_environment, "qdrant_api_key", None),
     )
 
 

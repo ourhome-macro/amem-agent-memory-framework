@@ -16,6 +16,7 @@ from agent_memory_runtime.memory.intake import (
     MemoryToolIdentity,
     build_memory_intake_tools,
 )
+from agent_memory_runtime.memory.intake.worker import AutoDreamWorker
 from agent_memory_runtime.memory.stores import SQLiteStoreBundle
 from agent_memory_runtime.runtime import AgentMemoryRuntime
 
@@ -225,11 +226,61 @@ def test_auto_dream_detects_duplicate_active_memories() -> None:
 
     report = AutoDreamAnalyzer().analyze(events=[], records=records)
 
-    assert len(report.proposals) == 1
+    assert [proposal.action for proposal in report.proposals] == ["reinforce", "archive"]
     assert report.proposals[0].action == "reinforce"
     assert report.proposals[0].target_memory_id == "m1"
     assert report.proposals[0].source_memory_ids == ("m2",)
-    assert report.proposals[0].reason == "duplicate_of:m1"
+    assert report.proposals[0].reason == "semantic_duplicate_of:m1"
+
+
+def test_auto_dream_worker_persists_checkpoint_and_applies_proposals(tmp_path) -> None:
+    stores = SQLiteStoreBundle(tmp_path / "dream-runtime.sqlite")
+    runtime = _runtime_from_stores(stores)
+    runtime.ingest(
+        _message(
+            "dream-message-1",
+            0,
+            "\u4ee5\u540e Python \u4ee3\u7801\u8981\u5199\u7c7b\u578b\u6807\u6ce8",
+        )
+    )
+
+    runtime.on_session_end(
+        tenant_id="tenant-a",
+        user_id="user-a",
+        agent_id="assistant",
+        session_id="s1",
+    )
+    report = AutoDreamWorker(runtime=runtime, store=stores.dream_store).run_once()
+
+    assert report.analyzed is True
+    assert report.applied == 1
+    assert stores.memory_store.list_records()[0].content.endswith("\u7c7b\u578b\u6807\u6ce8")
+    assert stores.audit_store.list_memory_logs()[0].proposal_id.startswith("auto-dream:")
+    persisted = stores.dream_store.checkpoint_for(stores.dream_store.list_jobs()[0])
+    assert persisted.last_processed_sequence == 1
+
+
+def test_auto_dream_worker_retains_review_for_conflicting_same_key(tmp_path) -> None:
+    stores = SQLiteStoreBundle(tmp_path / "dream-review.sqlite")
+    runtime = _runtime_from_stores(stores)
+    stores.memory_store.upsert(_record("db-1", "The user uses MySQL.", ("e1",), key="database"))
+    stores.memory_store.upsert(
+        _record("db-2", "The user uses PostgreSQL.", ("e2",), key="database")
+    )
+
+    runtime.schedule_auto_dream(
+        tenant_id="tenant-a",
+        user_id="user-a",
+        agent_id="assistant",
+        session_id="s1",
+        reason="test",
+    )
+    report = runtime.run_auto_dream_once()
+
+    assert report.review == 1
+    reviews = stores.dream_store.list_reviews()
+    assert reviews[0]["status"] == "needs_review"
+    assert "same_key_conflict" in str(reviews[0]["reason"])
 
 
 def test_duplicate_proposal_is_idempotent_and_does_not_reinforce_twice() -> None:
@@ -445,7 +496,13 @@ def _message(event_id: str, sequence: int, text: str) -> Event:
     )
 
 
-def _record(memory_id: str, content: str, source_event_ids: tuple[str, ...]) -> MemoryRecord:
+def _record(
+    memory_id: str,
+    content: str,
+    source_event_ids: tuple[str, ...],
+    *,
+    key: str | None = None,
+) -> MemoryRecord:
     return MemoryRecord(
         memory_id=memory_id,
         memory_type="belief",
@@ -464,6 +521,7 @@ def _record(memory_id: str, content: str, source_event_ids: tuple[str, ...]) -> 
         created_at="2026-07-28T00:00:00+00:00",
         updated_at="2026-07-28T00:00:00+00:00",
         last_event_sequence=1,
+        metadata=({} if key is None else {"key": key}),
     )
 
 
@@ -512,3 +570,15 @@ def _stores_with_provider(path: object, provider: object) -> SQLiteStoreBundle:
     staging.embedding_generations.register(provider.spec, status="backfill")
     staging.activate_embedding_generation(provider.spec.generation)
     return SQLiteStoreBundle(path, embedding_provider=provider)
+
+
+def _runtime_from_stores(stores: SQLiteStoreBundle) -> AgentMemoryRuntime:
+    return AgentMemoryRuntime(
+        event_store=stores.event_store,
+        memory_store=stores.memory_store,
+        snapshot_store=stores.snapshot_store,
+        tombstone_store=stores.tombstone_store,
+        audit_store=stores.audit_store,
+        dream_store=stores.dream_store,
+        transaction_manager=stores,
+    )

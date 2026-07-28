@@ -122,6 +122,7 @@ class AgentMemoryRuntime:
         token_estimator: TokenEstimator | None = None,
         tombstone_store: TombstoneStore | None = None,
         candidate_retriever: CandidateRetriever | None = None,
+        dream_store: object | None = None,
     ) -> None:
         self.config = config or RuntimeConfig()
         self.event_store = event_store or InMemoryEventStore()
@@ -142,8 +143,10 @@ class AgentMemoryRuntime:
         self.llm_client = llm_client or OpenAICompatibleChatClient(self.config.llm)
         self.audit_store = audit_store or InMemoryAuditStore()
         self.transaction_manager = transaction_manager
+        self.dream_store = dream_store
         self.last_trace = RuntimeTrace()
         self._fast_executor = ThreadPoolExecutor(max_workers=1)
+        self._auto_dream_worker = None
 
     def ingest(self, event: Event | dict[str, object]) -> IngestResult:
         with self._transaction():
@@ -188,6 +191,58 @@ class AgentMemoryRuntime:
         ).apply_proposal(proposal)
         self.refresh_snapshot()
         return result
+
+    def schedule_auto_dream(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+        reason: str = "scheduled",
+    ) -> object:
+        if self.dream_store is None:
+            raise ValueError("dream_store is required to schedule Auto Dream")
+        return self.dream_store.schedule(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            reason=reason,
+        )
+
+    def on_session_end(
+        self,
+        *,
+        tenant_id: str,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        session_id: str | None = None,
+    ) -> object:
+        return self.schedule_auto_dream(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            session_id=session_id,
+            reason="session_end",
+        )
+
+    def run_auto_dream_once(self, **kwargs: object) -> object:
+        if self.dream_store is None:
+            raise ValueError("dream_store is required to run Auto Dream")
+        from agent_memory_runtime.memory.intake.worker import AutoDreamWorker
+
+        return AutoDreamWorker(runtime=self, store=self.dream_store, **kwargs).run_once()
+
+    def start_auto_dream_background(self, **kwargs: object) -> object:
+        if self.dream_store is None:
+            raise ValueError("dream_store is required to start Auto Dream")
+        from agent_memory_runtime.memory.intake.worker import AutoDreamWorker
+
+        worker = AutoDreamWorker(runtime=self, store=self.dream_store, **kwargs)
+        worker.start_background()
+        self._auto_dream_worker = worker
+        return worker
 
     def retrieve(
         self,
@@ -255,6 +310,8 @@ class AgentMemoryRuntime:
         return context
 
     def close(self) -> None:
+        if self._auto_dream_worker is not None:
+            self._auto_dream_worker.stop()
         self._fast_executor.shutdown(wait=False, cancel_futures=True)
         if self.candidate_retriever is not None:
             self.candidate_retriever.close()

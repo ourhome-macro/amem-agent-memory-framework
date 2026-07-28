@@ -1,6 +1,8 @@
 from agent_memory_runtime.memory.intake.models import (
     AutoDreamReport,
+    AutoDreamRunReport,
     DreamCheckpoint,
+    DreamJob,
     DreamProposal,
     MemoryAuditLog,
     MemoryProposal,
@@ -12,7 +14,10 @@ from agent_memory_runtime.memory.intake.models import (
 __all__ = [
     "AutoDreamAnalyzer",
     "AutoDreamReport",
+    "AutoDreamRunReport",
+    "AutoDreamWorker",
     "DreamCheckpoint",
+    "DreamJob",
     "DreamProposal",
     "MemoryAuditLog",
     "MemoryProposal",
@@ -21,6 +26,7 @@ __all__ = [
     "MemoryIntakeService",
     "MemoryToolIdentity",
     "MemoryToolResult",
+    "SQLiteDreamStore",
     "build_memory_intake_tools",
 ]
 
@@ -30,6 +36,13 @@ def __getattr__(name: str) -> object:
         from agent_memory_runtime.memory.intake.dream import AutoDreamAnalyzer
 
         return AutoDreamAnalyzer
+    if name in {"AutoDreamWorker", "SQLiteDreamStore"}:
+        from agent_memory_runtime.memory.intake.worker import AutoDreamWorker, SQLiteDreamStore
+
+        return {
+            "AutoDreamWorker": AutoDreamWorker,
+            "SQLiteDreamStore": SQLiteDreamStore,
+        }[name]
     if name in {"MemoryIntakeError", "MemoryIntakeService"}:
         from agent_memory_runtime.memory.intake.service import (
             MemoryIntakeError,
