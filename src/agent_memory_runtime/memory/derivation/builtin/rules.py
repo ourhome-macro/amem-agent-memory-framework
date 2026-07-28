@@ -110,6 +110,9 @@ class BeliefRule:
                 subject_id=subject,
                 content=statement,
                 source_event_ids=(event.event_id,),
+                source_memory_ids=tuple(
+                    str(item) for item in event.payload.get("source_memory_ids", ())
+                ),
                 rule_id=self.rule_id,
                 tenant_id=event.tenant_id,
                 user_id=event.user_id,
