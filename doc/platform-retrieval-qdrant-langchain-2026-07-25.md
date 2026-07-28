@@ -132,7 +132,7 @@ amem eval examples\evals\semantic_retrieval_cases.yml --mode hybrid-business --d
 可以按这条主线讲：
 
 ```text
-这个项目不是普通 RAG，而是 event-sourced agent memory runtime。
+这个项目不是普通 RAG，而是 proposal-first audited agent memory runtime。
 事实源是 SQLite，保证事件回放、删除水位、审计、队列和 lease。
 检索层拆成 lexical 和 semantic 两条腿：
   lexical 用 FTS5/BM25，适合精确词、编号、中文词面命中；

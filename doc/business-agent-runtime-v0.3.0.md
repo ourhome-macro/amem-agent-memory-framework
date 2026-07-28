@@ -86,7 +86,6 @@ memory = AgentMemoryRuntime(
     memory_store=stores.memory_store,
     snapshot_store=stores.snapshot_store,
     audit_store=stores.audit_store,
-    derivation_queue=stores.derivation_queue,
     transaction_manager=stores,
 )
 agent = BusinessAgentRuntime(

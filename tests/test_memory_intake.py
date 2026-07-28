@@ -416,7 +416,6 @@ def test_default_event_ingest_is_audit_only_not_memory_derivation() -> None:
     )
 
     assert result.records == ()
-    assert result.candidates == ()
     assert runtime.memory_store.list_records() == []
     assert runtime.event_store.get("audit-only-event") is not None
     assert runtime.audit_store.list_envelopes()[-1].audit_type == "memory_event_audit"

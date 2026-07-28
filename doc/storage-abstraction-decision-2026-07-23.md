@@ -51,7 +51,7 @@ class RuntimeStateBackend(Protocol):
     memories: MemoryStore
     snapshots: SnapshotStore
     tombstones: TombstoneStore
-    derivation_queue: DerivationQueueStore
+    audit_store: AuditStore
     audit: AuditStore
     agent_state: AgentStateStore
     orchestration_state: OrchestrationStateStore

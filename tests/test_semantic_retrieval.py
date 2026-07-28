@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from agent_memory_runtime.config import HybridRetrievalConfig, RuntimeConfig
-from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.exceptions import (
@@ -214,23 +213,8 @@ def test_tombstone_replay_cannot_resurrect_memory_or_vector(tmp_path) -> None:
     )
     stores = _stores_with_provider(tmp_path / "tombstone.sqlite", provider)
     runtime = _runtime(stores)
-    record = runtime.ingest(
-        Event(
-            event_id="erase-event",
-            kind="message.created",
-            actor_id="user-1",
-            session_id="s1",
-            tenant_id="tenant-1",
-            user_id="user-1",
-            agent_id="assistant",
-            labels=("private",),
-            payload={
-                "agent_id": "assistant",
-                "subject_id": "user-1",
-                "text": "Erased memory.",
-            },
-        )
-    ).records[0]
+    record = _record("erase-event", "Erased memory.", sequence=1)
+    stores.memory_store.upsert(record)
     stores.embedding_worker().run_until_idle()
     assert stores.vector_index.ready_count(generation=provider.spec.generation) == 1
 
@@ -541,7 +525,6 @@ def _runtime(
     hybrid: HybridRetrievalConfig | None = None,
 ) -> AgentMemoryRuntime:
     return AgentMemoryRuntime(
-        legacy_event_derivation=True,
         config=RuntimeConfig(
             hybrid_retrieval=hybrid or HybridRetrievalConfig(min_semantic_similarity=0.2)
         ),
@@ -549,7 +532,6 @@ def _runtime(
         memory_store=stores.memory_store,
         snapshot_store=stores.snapshot_store,
         audit_store=stores.audit_store,
-        derivation_queue=stores.derivation_queue,
         tombstone_store=stores.tombstone_store,
         transaction_manager=stores,
     )

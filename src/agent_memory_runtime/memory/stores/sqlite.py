@@ -518,7 +518,6 @@ class SQLiteStoreBundle:
             SQLiteOrchestrationStore,
         )
         from agent_memory_runtime.agent.stores import SQLiteAgentStateStore
-        from agent_memory_runtime.governance.queue import SQLiteDerivationQueueStore
         from agent_memory_runtime.memory.embeddings import (
             SQLiteEmbeddingGenerationStore,
             SQLiteEmbeddingJobStore,
@@ -548,7 +547,6 @@ class SQLiteStoreBundle:
         self.snapshot_store = SQLiteSnapshotStore(self._manager)
         self.tombstone_store = SQLiteTombstoneStore(self._manager)
         self.audit_store = SQLiteAuditStore(self._manager)
-        self.derivation_queue = SQLiteDerivationQueueStore(self._manager)
         self.agent_state_store = SQLiteAgentStateStore(
             self._manager,
             codec=agent_state_codec,
@@ -673,7 +671,6 @@ class SQLiteStoreBundle:
         self,
         *,
         config: object | None = None,
-        derivation_engine: object | None = None,
     ) -> object:
         from agent_memory_runtime.audit.replay import shadow_replay_events
 
@@ -681,7 +678,6 @@ class SQLiteStoreBundle:
             self.event_store.list_events(),
             self.snapshot_store.latest(),
             config=config,
-            derivation_engine=derivation_engine,
         )
 
 

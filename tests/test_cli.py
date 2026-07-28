@@ -46,10 +46,11 @@ def test_cli_ingest_retrieve_project_and_replay(tmp_path) -> None:
     assert (
         runner.invoke(
             cli_app.app,
-            ["ingest", str(events), "--legacy-derive", "--data-dir", str(data_dir)],
+            ["ingest", str(events), "--data-dir", str(data_dir)],
         ).exit_code
         == 0
     )
+    assert SQLiteStoreBundle(data_dir / "runtime.sqlite").memory_store.list_records() == []
 
     retrieve = runner.invoke(
         cli_app.app,
@@ -66,7 +67,7 @@ def test_cli_ingest_retrieve_project_and_replay(tmp_path) -> None:
         ],
     )
     assert retrieve.exit_code == 0
-    assert "episodic:cli-s1:evt-cli-1" in retrieve.output
+    assert "episodic:cli-s1:evt-cli-1" not in retrieve.output
     assert "score_breakdown" in retrieve.output
 
     project = runner.invoke(
@@ -141,9 +142,10 @@ def test_cli_cross_session_profile_retention_worker_and_eval_gate(tmp_path) -> N
     runner.invoke(cli_app.app, ["--no-banner", "init", "--path", str(data_dir)])
     ingest = runner.invoke(
         cli_app.app,
-        ["--no-banner", "ingest", str(events), "--legacy-derive", "--data-dir", str(data_dir)],
+        ["--no-banner", "ingest", str(events), "--data-dir", str(data_dir)],
     )
     assert ingest.exit_code == 0
+    assert "audited_events=1" in ingest.output
 
     retrieve = runner.invoke(
         cli_app.app,
@@ -167,7 +169,7 @@ def test_cli_cross_session_profile_retention_worker_and_eval_gate(tmp_path) -> N
         ],
     )
     assert retrieve.exit_code == 0
-    assert "v3:belief:tenant-1:user-1:assistant:response_style" in retrieve.output
+    assert "v3:belief:tenant-1:user-1:assistant:response_style" not in retrieve.output
 
     retention = runner.invoke(
         cli_app.app,
@@ -184,65 +186,7 @@ def test_cli_cross_session_profile_retention_worker_and_eval_gate(tmp_path) -> N
     assert '"failed": 1' in evaluation.output
 
 
-def test_cli_async_ingest_and_queue_run_once(tmp_path) -> None:
-    runner = CliRunner()
-    data_dir = tmp_path / ".amem"
-    events = tmp_path / "events.jsonl"
-    events.write_text(
-        json.dumps(
-            {
-                "event_id": "evt-async-1",
-                "kind": "message.created",
-                "actor_id": "customer",
-                "session_id": "cli-s1",
-                "labels": ["private"],
-                "tags": ["refund"],
-                "payload": {
-                    "agent_id": "support_agent",
-                    "subject_id": "order",
-                    "text": "Async refund status memory.",
-                    "salience": 0.8,
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    assert runner.invoke(cli_app.app, ["init", "--path", str(data_dir)]).exit_code == 0
-    assert (data_dir / "runtime.sqlite").exists()
-    ingest = runner.invoke(
-        cli_app.app,
-        [
-            "ingest",
-            str(events),
-            "--async-derive",
-            "--legacy-derive",
-            "--data-dir",
-            str(data_dir),
-        ],
-    )
-
-    assert ingest.exit_code == 0
-    assert "pending_derivation_jobs=1" in ingest.output
-    assert SQLiteStoreBundle(data_dir / "runtime.sqlite").memory_store.list_records() == []
-
-    status = runner.invoke(cli_app.app, ["queue", "--data-dir", str(data_dir)])
-    assert status.exit_code == 0
-    assert '"status": "pending"' in status.output
-
-    run_once = runner.invoke(cli_app.app, ["queue", "run-once", "--data-dir", str(data_dir)])
-    assert run_once.exit_code == 0
-    assert '"status": "succeeded"' in run_once.output
-    assert (
-        SQLiteStoreBundle(data_dir / "runtime.sqlite").memory_store.get(
-            "episodic:cli-s1:evt-async-1"
-        )
-        is not None
-    )
-
-
-def test_cli_worker_and_audit_dashboard(tmp_path) -> None:
+def test_cli_audit_dashboard_for_event_audit(tmp_path) -> None:
     runner = CliRunner()
     data_dir = tmp_path / ".amem"
     dashboard = tmp_path / "audit.html"
@@ -272,17 +216,10 @@ def test_cli_worker_and_audit_dashboard(tmp_path) -> None:
         [
             "ingest",
             str(events),
-            "--async-derive",
-            "--legacy-derive",
             "--data-dir",
             str(data_dir),
         ],
     )
-    worker = runner.invoke(cli_app.app, ["worker", "--data-dir", str(data_dir)])
-
-    assert worker.exit_code == 0
-    assert '"processed": 1' in worker.output
-    assert '"succeeded": 1' in worker.output
 
     dashboard_result = runner.invoke(
         cli_app.app,
@@ -292,7 +229,7 @@ def test_cli_worker_and_audit_dashboard(tmp_path) -> None:
     assert dashboard_result.exit_code == 0
     html = dashboard.read_text(encoding="utf-8")
     assert "Agent Memory Runtime 审计面板" in html
-    assert "governance_job" in html
+    assert "memory_event_audit" in html
 
 
 def test_cli_embedding_status_reports_sqlite_vec_lexical_only_mode(
@@ -469,7 +406,6 @@ def test_cli_chat_remembers_completed_turn_atomically(monkeypatch, tmp_path) -> 
         memory_store=bundle.memory_store,
         snapshot_store=bundle.snapshot_store,
         audit_store=bundle.audit_store,
-        derivation_queue=bundle.derivation_queue,
         transaction_manager=bundle,
     )
     context = SimpleNamespace(

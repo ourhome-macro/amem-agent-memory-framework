@@ -228,9 +228,6 @@ amem replay
 
 ```powershell
 amem init
-amem ingest examples/data/customer_support_events.jsonl --async-derive
-amem queue
-amem worker
 amem retrieve --agent support_agent --query "refund status"
 ```
 
@@ -245,13 +242,9 @@ amem respond --agent support_agent --query "退款进度怎么样" --stream --fa
 ```powershell
 amem init
 amem ingest examples/data/customer_support_events.jsonl
-amem ingest examples/data/customer_support_events.jsonl --async-derive
-amem queue
-amem queue run-once
 amem retention plan
 amem retention apply
 amem retention worker --forever --interval-seconds 300
-amem derive
 amem retrieve --agent support_agent --query "refund status" --session support-001
 amem retrieve --agent assistant --query "按我的偏好回答" --tenant tenant-1 --user user-1 --session current --session-policy profile
 amem project --agent support_agent --query "refund status"
@@ -261,9 +254,7 @@ amem providers
 amem audit
 amem audit --type access
 amem audit-dashboard --out .amem/audit.html
-amem worker
 amem replay
-amem ingest examples/data/memory_eval_events.jsonl
 amem eval examples/evals/retrieval_cases.yml
 amem demo customer-support
 amem demo personal-assistant
@@ -397,7 +388,7 @@ src/agent_memory_runtime/
 
 ## 记忆治理
 
-治理模块已经提供异步派生队列、保留策略、人工审核和 PII Vault。同步写入仍是默认路径；需要优化用户请求首字延迟时，使用 `ingest --async-derive` 或 Python 的 `runtime.ingest_async(event)` 先落 Event 并创建队列任务，再由 `runtime.run_derivation_once()` 或 `amem queue run-once` 后台派生记忆。
+治理模块保留确定性保留策略、人工审核和 PII Vault。长期记忆写入主链路是 `MemoryProposal -> MemoryWritePolicy -> MemoryService -> MemoryAuditLog`；`amem ingest` 和 Python 的 `runtime.ingest(event)` 只记录兼容事件审计，不再派生或归并 `MemoryRecord`。
 
 Retention 可按事件序列年龄归档低价值 working memory，或删除过期 sensitive memory。Human Review 会把高风险 `MemoryCandidate` 先放进审核队列，批准后才进入 `MemoryStore`。PII Vault 负责把可逆敏感值换成 `${PII_...}` 令牌；runtime 的 `sanitize_event` 仍会作为兜底，阻止原文敏感载荷进入事件、记忆和审计。
 

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agent-memory-runtime"
 version = "0.6.0"
-description = "Durable business-agent orchestration and event-sourced memory runtime."
+description = "Durable business-agent orchestration and proposal-first audited memory runtime."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

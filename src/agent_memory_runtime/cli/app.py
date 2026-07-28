@@ -31,7 +31,6 @@ from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.evals import evaluate_retrieval
 from agent_memory_runtime.exceptions import EmbeddingConfigurationError, StoreError
-from agent_memory_runtime.governance.queue.worker import DerivationWorker
 from agent_memory_runtime.governance.retention import (
     RetentionCycle,
     RetentionExecutor,
@@ -99,35 +98,15 @@ def init(path: Annotated[Path, PATH_OPTION] = DEFAULT_DATA_DIR) -> None:
 @app.command()
 def ingest(
     source: Path,
-    async_derive: Annotated[
-        bool,
-        typer.Option("--async-derive", help="Only persist events and enqueue derivation jobs."),
-    ] = False,
-    legacy_derive: Annotated[
-        bool,
-        typer.Option("--legacy-derive", help="Run legacy Event -> Derivation compatibility path."),
-    ] = False,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir, legacy_event_derivation=legacy_derive)
+    runtime = _runtime(data_dir)
     count = 0
     for event in _load_events(source):
-        if async_derive:
-            runtime.ingest_async(event)
-        else:
-            runtime.ingest(event)
+        runtime.ingest(event)
         count += 1
     _print_snapshot(runtime)
-    console.print(f"ingested_events={count}")
-    if async_derive:
-        console.print(f"pending_derivation_jobs={runtime.derivation_queue.pending_count()}")
-
-
-@app.command()
-def derive(data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR) -> None:
-    runtime = _runtime(data_dir, legacy_event_derivation=True)
-    runtime.replay()
-    _print_snapshot(runtime)
+    console.print(f"audited_events={count}")
 
 
 @app.command()
@@ -143,7 +122,7 @@ def retrieve(
     ] = MemorySessionPolicy.EXACT,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir, legacy_event_derivation=True)
+    runtime = _runtime(data_dir)
     records, trace = runtime.retrieve(
         _memory_query(
             agent=agent,
@@ -171,7 +150,7 @@ def project(
     ] = MemorySessionPolicy.EXACT,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir, legacy_event_derivation=True)
+    runtime = _runtime(data_dir)
     context = runtime.project(
         _memory_query(
             agent=agent,
@@ -328,7 +307,7 @@ def show_audit(
     subject: Annotated[str | None, typer.Option("--subject")] = None,
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir, legacy_event_derivation=True)
+    runtime = _runtime(data_dir)
     try:
         records = filter_audit_records(
             runtime.audit_store.list_envelopes(),
@@ -352,80 +331,13 @@ def audit_dashboard(
     out: Annotated[Path, typer.Option("--out", help="HTML dashboard output path.")],
     data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
 ) -> None:
-    runtime = _runtime(data_dir, legacy_event_derivation=True)
+    runtime = _runtime(data_dir)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         generate_audit_dashboard_html(runtime.audit_store.list_envelopes()),
         encoding="utf-8",
     )
     console.print(f"audit_dashboard={out}")
-
-
-queue_app = typer.Typer(help="Derivation queue debugger.", invoke_without_command=True)
-app.add_typer(queue_app, name="queue")
-
-
-@queue_app.callback(invoke_without_command=True)
-def queue_status(
-    ctx: typer.Context,
-    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
-) -> None:
-    if ctx.invoked_subcommand is not None:
-        return
-    runtime = _runtime(data_dir, legacy_event_derivation=True)
-    _print_trace(
-        {
-            "pending_derivation_jobs": runtime.derivation_queue.pending_count(),
-            "jobs": [job.to_dict() for job in runtime.derivation_queue.list_jobs()],
-        }
-    )
-
-
-@queue_app.command("run-once")
-def queue_run_once(data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR) -> None:
-    runtime = _runtime(data_dir, legacy_event_derivation=True)
-    job = runtime.run_derivation_once()
-    _print_trace(
-        {
-            "job": None if job is None else job.to_dict(),
-            "pending_derivation_jobs": runtime.derivation_queue.pending_count(),
-            "snapshot": runtime.snapshot().to_dict(),
-        }
-    )
-
-
-@app.command("worker")
-def worker(
-    forever: Annotated[
-        bool,
-        typer.Option("--forever", help="Keep polling until interrupted."),
-    ] = False,
-    max_jobs: Annotated[int | None, typer.Option("--max-jobs")] = None,
-    poll_interval_seconds: Annotated[
-        float,
-        typer.Option("--poll-interval-seconds"),
-    ] = 1.0,
-    data_dir: Annotated[Path, DATA_DIR_OPTION] = DEFAULT_DATA_DIR,
-) -> None:
-    runtime = _runtime(data_dir, legacy_event_derivation=True)
-    derivation_worker = DerivationWorker(
-        runtime,
-        poll_interval_seconds=poll_interval_seconds,
-    )
-    if forever:
-        report = derivation_worker.run_forever(stop_after_jobs=max_jobs)
-    else:
-        report = derivation_worker.run_until_idle(max_jobs=max_jobs)
-    _print_trace(
-        {
-            "processed": report.processed,
-            "succeeded": report.succeeded,
-            "failed": report.failed,
-            "dead_lettered": report.dead_lettered,
-            "pending_derivation_jobs": runtime.derivation_queue.pending_count(),
-        }
-    )
-
 
 embedding_app = typer.Typer(help="sqlite-vec embedding index operations.")
 app.add_typer(embedding_app, name="embedding")
@@ -837,7 +749,7 @@ def demo_mock_interviewer() -> None:
 
 
 def _run_demo(filename: str, agent: str, query: str) -> None:
-    runtime = AgentMemoryRuntime(legacy_event_derivation=True)
+    runtime = AgentMemoryRuntime()
     for event in _load_events(_examples_dir() / filename):
         runtime.ingest(event)
     context = runtime.project(MemoryQuery(agent_id=agent, text=query))
@@ -942,7 +854,6 @@ def _runtime(
     data_dir: Path,
     *,
     config: RuntimeConfig | None = None,
-    legacy_event_derivation: bool = False,
 ) -> AgentMemoryRuntime:
     data_dir.mkdir(parents=True, exist_ok=True)
     runtime_config = config or RuntimeConfig()
@@ -983,10 +894,8 @@ def _runtime(
         memory_store=stores.memory_store,
         snapshot_store=stores.snapshot_store,
         audit_store=stores.audit_store,
-        derivation_queue=stores.derivation_queue,
         tombstone_store=stores.tombstone_store,
         transaction_manager=stores,
-        legacy_event_derivation=legacy_event_derivation,
     )
 
 

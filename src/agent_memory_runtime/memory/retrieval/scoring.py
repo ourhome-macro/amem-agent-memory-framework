@@ -6,7 +6,6 @@ from agent_memory_runtime.config import RuntimeConfig
 from agent_memory_runtime.domain.enums import MemoryLayer, MemoryType
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery, ScoreBreakdown
-from agent_memory_runtime.memory.lifecycle.reinforcement import reinforcement_boost
 from agent_memory_runtime.memory.retrieval.candidates import CandidateHit
 from agent_memory_runtime.memory.retrieval.lexical import (
     lexical_tokens,
@@ -38,7 +37,7 @@ def score_record(
         semantic = candidate.semantic_relevance * config.retrieval_weights.semantic
         fusion = candidate.fusion_score * config.retrieval_weights.fusion
     recency = _recency(record) * config.retrieval_weights.recency
-    salience = (record.salience + reinforcement_boost(record)) * config.retrieval_weights.salience
+    salience = (record.salience + _reinforcement_boost(record)) * config.retrieval_weights.salience
     confidence = record.confidence * config.retrieval_weights.confidence
     type_boost = _type_boost(record, query) * config.retrieval_weights.type_boost
     source_link = _source_link(record, query) * config.retrieval_weights.source_link
@@ -70,6 +69,12 @@ def _recency(record: MemoryRecord) -> float:
     if age_seconds <= 7 * 86400:
         return 0.35
     return 0.0
+
+
+def _reinforcement_boost(record: MemoryRecord) -> float:
+    if record.reinforcement_count <= 1:
+        return 0.0
+    return min(0.35, (record.reinforcement_count - 1) * 0.08)
 
 
 def _type_boost(record: MemoryRecord, query: MemoryQuery) -> float:

@@ -6,7 +6,6 @@ from agent_memory_runtime.audit.consistency import ConsistencyReport, compare_sn
 from agent_memory_runtime.audit.snapshot import RuntimeSnapshot
 from agent_memory_runtime.config import RuntimeConfig
 from agent_memory_runtime.domain.event import Event
-from agent_memory_runtime.memory.derivation import DerivationEngine
 
 
 @dataclass(frozen=True)
@@ -19,9 +18,8 @@ class ShadowReplayReport:
 
 
 def replay_events(runtime: object, events: list[Event]) -> RuntimeSnapshot:
-    runtime.memory_store.clear()
     for event in events:
-        runtime.apply_event(event)
+        runtime.ingest(event)
     return runtime.snapshot()
 
 
@@ -39,16 +37,11 @@ def shadow_replay_events(
     expected: RuntimeSnapshot | dict[str, object] | None,
     *,
     config: RuntimeConfig | None = None,
-    derivation_engine: DerivationEngine | None = None,
 ) -> ShadowReplayReport:
-    """Rebuild state in isolated stores without mutating live runtime data."""
+    """Rebuild audit-only event state in isolated stores without mutating live data."""
     from agent_memory_runtime.runtime import AgentMemoryRuntime
 
-    shadow = AgentMemoryRuntime(
-        config=config,
-        derivation_engine=derivation_engine,
-        legacy_event_derivation=True,
-    )
+    shadow = AgentMemoryRuntime(config=config)
     try:
         for event in events:
             shadow.ingest(event)

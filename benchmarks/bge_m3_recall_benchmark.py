@@ -374,7 +374,6 @@ def main() -> None:
         snapshot_store=bundle.snapshot_store,
         tombstone_store=bundle.tombstone_store,
         transaction_manager=bundle._manager,
-        derivation_queue=bundle.derivation_queue,
         audit_store=bundle.audit_store,
     )
 
@@ -432,7 +431,6 @@ def main() -> None:
         snapshot_store=bundle.snapshot_store,
         tombstone_store=bundle.tombstone_store,
         transaction_manager=bundle._manager,
-        derivation_queue=bundle.derivation_queue,
         audit_store=bundle.audit_store,
         candidate_retriever=HybridCandidateRetriever(
             lexical=StoreLexicalRetriever(bundle.memory_store),
@@ -469,7 +467,6 @@ def main() -> None:
             snapshot_store=bundle.snapshot_store,
             tombstone_store=bundle.tombstone_store,
             transaction_manager=bundle._manager,
-            derivation_queue=bundle.derivation_queue,
             audit_store=bundle.audit_store,
             candidate_retriever=vo_retriever,
         )
@@ -491,7 +488,6 @@ def main() -> None:
             snapshot_store=bundle.snapshot_store,
             tombstone_store=bundle.tombstone_store,
             transaction_manager=bundle._manager,
-            derivation_queue=bundle.derivation_queue,
             audit_store=bundle.audit_store,
             candidate_retriever=hybrid_retriever,
         )

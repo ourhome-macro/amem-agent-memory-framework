@@ -22,10 +22,6 @@ class LeaseLostError(StoreError):
     """Raised when a worker attempts to mutate a job after losing its lease."""
 
 
-class WriteGuardError(AgentMemoryRuntimeError):
-    """Raised when a memory candidate violates information-flow constraints."""
-
-
 class LLMConfigurationError(AgentMemoryRuntimeError):
     """Raised when the LLM provider configuration is incomplete or invalid."""
 
