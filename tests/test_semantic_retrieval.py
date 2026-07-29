@@ -168,6 +168,61 @@ def test_state_conflict_guard_demotes_negation_hard_negative(tmp_path) -> None:
     runtime.close()
 
 
+def test_final_filter_removes_query_state_hard_negative(tmp_path) -> None:
+    provider = _provider(
+        model="final-filter-state-conflict",
+        vectors={
+            "自动续费": [1.0, 0.0, 0.0],
+        },
+    )
+    stores = _stores_with_provider(tmp_path / "final-filter-state.sqlite", provider)
+    stores.memory_store.upsert(_record("renewal-off", "自动续费已经关闭。"))
+    stores.memory_store.upsert(_record("renewal-on", "自动续费仍然开启。"))
+    stores.embedding_worker().run_until_idle()
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(
+            semantic_candidate_limit=4,
+            min_semantic_similarity=0.0,
+        ),
+    )
+
+    selected, trace = runtime.retrieve(replace(_query("自动续费已经关闭"), limit=5))
+
+    assert [record.memory_id for record in selected] == ["renewal-off"]
+    renewal_on = stores.memory_store.get("renewal-on")
+    assert renewal_on is not None
+    assert score_record(renewal_on, _query("自动续费已经关闭"), runtime.config).hard_negative < 0
+    runtime.close()
+
+
+def test_final_filter_abstains_when_candidates_have_weak_evidence(tmp_path) -> None:
+    provider = _provider(
+        model="final-filter-abstain",
+        vectors={
+            "refund policy": [1.0, 0.0, 0.0],
+            "support calendar": [0.0, 1.0, 0.0],
+        },
+    )
+    stores = _stores_with_provider(tmp_path / "final-filter-abstain.sqlite", provider)
+    stores.memory_store.upsert(_record("refund", "Refund policy requires manager approval."))
+    stores.memory_store.upsert(_record("calendar", "Support calendar is reviewed weekly."))
+    stores.embedding_worker().run_until_idle()
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(
+            semantic_candidate_limit=4,
+            min_semantic_similarity=-1.0,
+        ),
+    )
+
+    selected, trace = runtime.retrieve(replace(_query("passport number"), limit=5))
+
+    assert selected == []
+    assert trace.semantic_candidate_count == 2
+    runtime.close()
+
+
 def test_state_conflict_guard_handles_allowed_chinese_substrings() -> None:
     assert has_state_conflict(
         "以后Java代码不要用Lambda",
@@ -189,6 +244,11 @@ def test_state_conflict_guard_demotes_current_query_past_record() -> None:
         "用户当前项目还主打Event Sourcing吗",
         "用户熟悉Event Sourcing但当前项目不主打它。",
     )
+
+
+def test_state_conflict_guard_handles_payment_and_success_markers() -> None:
+    assert has_state_conflict("发票INV-42已经支付完成。", "发票INV-42仍然未支付。")
+    assert has_state_conflict("昨晚夜间备份任务成功完成。", "昨晚夜间备份任务失败。")
 
 
 def test_sensitive_memory_is_not_copied_into_search_indexes(tmp_path) -> None:

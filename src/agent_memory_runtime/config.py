@@ -66,6 +66,28 @@ class HybridRetrievalConfig:
 
 
 @dataclass(frozen=True)
+class FinalRetrievalFilterConfig:
+    enabled: bool = True
+    filter_hard_negative: bool = True
+    filter_pairwise_conflicts: bool = True
+    abstain_enabled: bool = True
+    min_semantic_similarity: float = 0.48
+    min_lexical_coverage: float = 0.28
+    min_rank_score: float = 1.45
+    max_filter_candidates: int = 32
+
+    def __post_init__(self) -> None:
+        if not -1.0 <= self.min_semantic_similarity <= 1.0:
+            raise ValueError("final filter min_semantic_similarity must be between -1 and 1")
+        if not 0.0 <= self.min_lexical_coverage <= 1.0:
+            raise ValueError("final filter min_lexical_coverage must be between 0 and 1")
+        if self.min_rank_score < 0:
+            raise ValueError("final filter min_rank_score cannot be negative")
+        if self.max_filter_candidates <= 0:
+            raise ValueError("final filter max_filter_candidates must be positive")
+
+
+@dataclass(frozen=True)
 class FastResponseConfig:
     retrieval_timeout_ms: int = 150
     snapshot_hot_memory_limit: int = 8
@@ -217,6 +239,9 @@ class RuntimeConfig:
     low_salience_archive_threshold: float = 0.12
     retrieval_weights: RetrievalWeights = field(default_factory=RetrievalWeights)
     hybrid_retrieval: HybridRetrievalConfig = field(default_factory=HybridRetrievalConfig)
+    final_retrieval_filter: FinalRetrievalFilterConfig = field(
+        default_factory=FinalRetrievalFilterConfig
+    )
     fast_response: FastResponseConfig = field(default_factory=FastResponseConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)

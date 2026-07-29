@@ -8,6 +8,7 @@ from agent_memory_runtime.domain.query import MemoryQuery, RetrievalResult, Retr
 from agent_memory_runtime.memory.retrieval.candidate_budget import apply_candidate_budget
 from agent_memory_runtime.memory.retrieval.candidates import CandidateBatch
 from agent_memory_runtime.memory.retrieval.filters import hard_filter
+from agent_memory_runtime.memory.retrieval.final_filter import apply_final_filter
 from agent_memory_runtime.memory.retrieval.planner import normalize_query
 from agent_memory_runtime.memory.retrieval.reranker import rerank
 from agent_memory_runtime.memory.retrieval.scoring import score_record
@@ -69,8 +70,15 @@ class RetrievalPipeline:
             if score.total > 0:
                 scored.append(RetrievalResult(memory_id=record.memory_id, score=score))
         ranked_results = rerank(scored)
+        filtered_results = apply_final_filter(
+            ranked_results,
+            records_by_id=record_by_id,
+            query=planned,
+            config=self.config,
+            candidate_batch=candidate_batch,
+        )
         selected_results = apply_candidate_budget(
-            [item for item in ranked_results if not item.blocked],
+            [item for item in filtered_results if not item.blocked],
             planned.limit or self.config.max_retrieval_results,
         )
         selected = [record_by_id[item.memory_id] for item in selected_results]
