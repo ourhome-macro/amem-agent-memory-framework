@@ -1,0 +1,935 @@
+{
+  "version": "recall_holdout_50_v1",
+  "description": "Manual retrieval benchmark with hard negatives, temporal shifts, scope distractors, cross-lingual paraphrases, and no-answer cases.",
+  "memory_count": 45,
+  "case_count": 50,
+  "category_counts": {
+    "hard_negative_state": 12,
+    "temporal_shift": 8,
+    "near_entity_scope": 8,
+    "cross_lingual": 8,
+    "semantic_paraphrase_hard": 8,
+    "no_answer": 6
+  },
+  "memories": [
+    {
+      "memory_id": "hold_hn_001_yes",
+      "category": "hard_negative_state",
+      "content": "用户的账单自动续费已经关闭。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_hn_001_no",
+      "category": "hard_negative_state",
+      "content": "用户的账单自动续费仍然开启。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_hn_002_yes",
+      "category": "hard_negative_state",
+      "content": "生产告警短信通知已经开启。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_hn_002_no",
+      "category": "hard_negative_state",
+      "content": "生产告警短信通知已经关闭。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_hn_003_yes",
+      "category": "hard_negative_state",
+      "content": "The admin account MFA is enabled.",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_hn_003_no",
+      "category": "hard_negative_state",
+      "content": "The admin account MFA is disabled.",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_hn_004_yes",
+      "category": "hard_negative_state",
+      "content": "发票INV-42已经支付完成。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_hn_004_no",
+      "category": "hard_negative_state",
+      "content": "发票INV-42仍然未支付。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_hn_005_yes",
+      "category": "hard_negative_state",
+      "content": "昨晚夜间备份任务成功完成。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_hn_005_no",
+      "category": "hard_negative_state",
+      "content": "昨晚夜间备份任务失败。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_hn_006_yes",
+      "category": "hard_negative_state",
+      "content": "支持工单T-900已经解决并关闭。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_hn_006_no",
+      "category": "hard_negative_state",
+      "content": "支持工单T-900仍未解决。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_ts_db_past",
+      "category": "temporal_shift",
+      "content": "过去订单系统使用MySQL。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_ts_db_current",
+      "category": "temporal_shift",
+      "content": "当前订单系统使用PostgreSQL。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_ts_db_future",
+      "category": "temporal_shift",
+      "content": "计划明年评估是否回迁MySQL。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_ts_rag_past",
+      "category": "temporal_shift",
+      "content": "以前项目主线是Event Sourcing。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_ts_rag_current",
+      "category": "temporal_shift",
+      "content": "当前项目主线是MemoryRecord加AuditLog。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_ts_rag_future",
+      "category": "temporal_shift",
+      "content": "未来可能只把Event作为外部审计输入。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_ts_ui_past",
+      "category": "temporal_shift",
+      "content": "去年后台UI使用深蓝色主题。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_ts_ui_current",
+      "category": "temporal_shift",
+      "content": "现在后台UI改为中性色和少量绿色强调。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_ts_ui_future",
+      "category": "temporal_shift",
+      "content": "下季度可能引入品牌红色。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_scope_pay_owner",
+      "category": "near_entity_scope",
+      "content": "张敏负责支付项目需求确认。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_scope_order_owner",
+      "category": "near_entity_scope",
+      "content": "李航负责订单项目需求确认。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_scope_pay_qa",
+      "category": "near_entity_scope",
+      "content": "王琦负责支付项目回归测试。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_scope_pay_ops",
+      "category": "near_entity_scope",
+      "content": "刘洋负责支付项目生产告警。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_scope_invoice_finance",
+      "category": "near_entity_scope",
+      "content": "孙悦负责发票开具和财务报销。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_scope_contract_legal",
+      "category": "near_entity_scope",
+      "content": "周可负责合同法务审核。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_scope_eu_contact",
+      "category": "near_entity_scope",
+      "content": "Maya负责欧洲团队项目沟通。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_scope_us_contact",
+      "category": "near_entity_scope",
+      "content": "Noah负责北美团队PoC环境。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_xl_concise",
+      "category": "cross_lingual",
+      "content": "回答要短，直接给结论，不要铺垫。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_xl_audit",
+      "category": "cross_lingual",
+      "content": "MemoryRecord是事实源，AuditLog只记录变更证据。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_xl_outbox",
+      "category": "cross_lingual",
+      "content": "Qdrant失败不影响SQLite写入，embedding outbox负责重试。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_xl_acl",
+      "category": "cross_lingual",
+      "content": "ACL filtering must happen before TopK candidate ranking.",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_xl_dream",
+      "category": "cross_lingual",
+      "content": "Auto Dream only proposes memory changes and does not directly mutate records.",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_xl_lambda",
+      "category": "cross_lingual",
+      "content": "Java examples should avoid Lambda unless readability tradeoffs are explained.",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_xl_rrf",
+      "category": "cross_lingual",
+      "content": "Hybrid retrieval fuses FTS5 and vector candidates with Reciprocal Rank Fusion.",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_xl_lock",
+      "category": "cross_lingual",
+      "content": "Optimistic locking uses the MemoryRecord version to prevent silent overwrite.",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_para_minimal_example",
+      "category": "semantic_paraphrase_hard",
+      "content": "解释代码问题时先给最小可运行示例，再补上下文。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_para_review_first",
+      "category": "semantic_paraphrase_hard",
+      "content": "做代码评审时先列风险和缺陷，再写总结。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_para_no_marketing",
+      "category": "semantic_paraphrase_hard",
+      "content": "做工具界面时第一屏必须是可用工作台，不要营销落地页。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_para_facts_first",
+      "category": "semantic_paraphrase_hard",
+      "content": "回答当前代码状态时只说已接通的模块，不把设计稿当实现。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_para_source_truth",
+      "category": "semantic_paraphrase_hard",
+      "content": "SQLite保存MemoryRecord真实状态，Qdrant只做向量投影。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_para_risk_review",
+      "category": "semantic_paraphrase_hard",
+      "content": "删除、敏感信息、扩大可见性和跨用户写入必须审核或拒绝。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_para_dream_semantics",
+      "category": "semantic_paraphrase_hard",
+      "content": "语义冲突、合并和去重应该由Auto Dream裁决。",
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "memory_id": "hold_para_policy_boundary",
+      "category": "semantic_paraphrase_hard",
+      "content": "确定性代码只处理schema、权限、安全和scope不变量。",
+      "session_id": "recall-v1",
+      "k": 5
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "hold_hn_001_yes",
+      "category": "hard_negative_state",
+      "query": "现在还会自动续费吗",
+      "ground_truth_memory_ids": [
+        "hold_hn_001_yes"
+      ],
+      "forbidden_memory_ids": [
+        "hold_hn_001_no"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_hn_001_no",
+      "category": "hard_negative_state",
+      "query": "现在还会自动续费吗 的相反状态是什么",
+      "ground_truth_memory_ids": [
+        "hold_hn_001_no"
+      ],
+      "forbidden_memory_ids": [
+        "hold_hn_001_yes"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_hn_002_yes",
+      "category": "hard_negative_state",
+      "query": "生产告警会发短信吗",
+      "ground_truth_memory_ids": [
+        "hold_hn_002_yes"
+      ],
+      "forbidden_memory_ids": [
+        "hold_hn_002_no"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_hn_002_no",
+      "category": "hard_negative_state",
+      "query": "生产告警会发短信吗 的相反状态是什么",
+      "ground_truth_memory_ids": [
+        "hold_hn_002_no"
+      ],
+      "forbidden_memory_ids": [
+        "hold_hn_002_yes"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_hn_003_yes",
+      "category": "hard_negative_state",
+      "query": "Is MFA active on the admin account?",
+      "ground_truth_memory_ids": [
+        "hold_hn_003_yes"
+      ],
+      "forbidden_memory_ids": [
+        "hold_hn_003_no"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_hn_003_no",
+      "category": "hard_negative_state",
+      "query": "Is MFA inactive on the admin account?",
+      "ground_truth_memory_ids": [
+        "hold_hn_003_no"
+      ],
+      "forbidden_memory_ids": [
+        "hold_hn_003_yes"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_hn_004_yes",
+      "category": "hard_negative_state",
+      "query": "INV-42现在付款了吗",
+      "ground_truth_memory_ids": [
+        "hold_hn_004_yes"
+      ],
+      "forbidden_memory_ids": [
+        "hold_hn_004_no"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_hn_004_no",
+      "category": "hard_negative_state",
+      "query": "INV-42现在付款了吗 的相反状态是什么",
+      "ground_truth_memory_ids": [
+        "hold_hn_004_no"
+      ],
+      "forbidden_memory_ids": [
+        "hold_hn_004_yes"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_hn_005_yes",
+      "category": "hard_negative_state",
+      "query": "昨晚备份结果怎么样",
+      "ground_truth_memory_ids": [
+        "hold_hn_005_yes"
+      ],
+      "forbidden_memory_ids": [
+        "hold_hn_005_no"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_hn_005_no",
+      "category": "hard_negative_state",
+      "query": "昨晚备份结果怎么样 的相反状态是什么",
+      "ground_truth_memory_ids": [
+        "hold_hn_005_no"
+      ],
+      "forbidden_memory_ids": [
+        "hold_hn_005_yes"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_hn_006_yes",
+      "category": "hard_negative_state",
+      "query": "T-900现在处理完了吗",
+      "ground_truth_memory_ids": [
+        "hold_hn_006_yes"
+      ],
+      "forbidden_memory_ids": [
+        "hold_hn_006_no"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_hn_006_no",
+      "category": "hard_negative_state",
+      "query": "T-900现在处理完了吗 的相反状态是什么",
+      "ground_truth_memory_ids": [
+        "hold_hn_006_no"
+      ],
+      "forbidden_memory_ids": [
+        "hold_hn_006_yes"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_ts_001_current",
+      "category": "temporal_shift",
+      "query": "订单系统现在用什么数据库",
+      "ground_truth_memory_ids": [
+        "hold_ts_db_current"
+      ],
+      "forbidden_memory_ids": [
+        "hold_ts_db_past",
+        "hold_ts_db_future"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_ts_001_past",
+      "category": "temporal_shift",
+      "query": "db 以前是什么状态",
+      "ground_truth_memory_ids": [
+        "hold_ts_db_past"
+      ],
+      "forbidden_memory_ids": [
+        "hold_ts_db_current",
+        "hold_ts_db_future"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_ts_001_future",
+      "category": "temporal_shift",
+      "query": "db 后续计划是什么",
+      "ground_truth_memory_ids": [
+        "hold_ts_db_future"
+      ],
+      "forbidden_memory_ids": [
+        "hold_ts_db_past",
+        "hold_ts_db_current"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_ts_002_current",
+      "category": "temporal_shift",
+      "query": "现在主线还主打Event Sourcing吗",
+      "ground_truth_memory_ids": [
+        "hold_ts_rag_current"
+      ],
+      "forbidden_memory_ids": [
+        "hold_ts_rag_past",
+        "hold_ts_rag_future"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_ts_002_past",
+      "category": "temporal_shift",
+      "query": "rag 以前是什么状态",
+      "ground_truth_memory_ids": [
+        "hold_ts_rag_past"
+      ],
+      "forbidden_memory_ids": [
+        "hold_ts_rag_current",
+        "hold_ts_rag_future"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_ts_002_future",
+      "category": "temporal_shift",
+      "query": "rag 后续计划是什么",
+      "ground_truth_memory_ids": [
+        "hold_ts_rag_future"
+      ],
+      "forbidden_memory_ids": [
+        "hold_ts_rag_past",
+        "hold_ts_rag_current"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_ts_003_current",
+      "category": "temporal_shift",
+      "query": "后台现在是什么视觉主题",
+      "ground_truth_memory_ids": [
+        "hold_ts_ui_current"
+      ],
+      "forbidden_memory_ids": [
+        "hold_ts_ui_past",
+        "hold_ts_ui_future"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_ts_003_past",
+      "category": "temporal_shift",
+      "query": "ui 以前是什么状态",
+      "ground_truth_memory_ids": [
+        "hold_ts_ui_past"
+      ],
+      "forbidden_memory_ids": [
+        "hold_ts_ui_current",
+        "hold_ts_ui_future"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_scope_001_a",
+      "category": "near_entity_scope",
+      "query": "支付项目需求找谁确认",
+      "ground_truth_memory_ids": [
+        "hold_scope_pay_owner"
+      ],
+      "forbidden_memory_ids": [
+        "hold_scope_order_owner"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_scope_001_b",
+      "category": "near_entity_scope",
+      "query": "订单项目需求找谁确认",
+      "ground_truth_memory_ids": [
+        "hold_scope_order_owner"
+      ],
+      "forbidden_memory_ids": [
+        "hold_scope_pay_owner"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_scope_002_a",
+      "category": "near_entity_scope",
+      "query": "支付项目回归测试找谁",
+      "ground_truth_memory_ids": [
+        "hold_scope_pay_qa"
+      ],
+      "forbidden_memory_ids": [
+        "hold_scope_pay_ops"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_scope_002_b",
+      "category": "near_entity_scope",
+      "query": "订单项目回归测试找谁",
+      "ground_truth_memory_ids": [
+        "hold_scope_pay_ops"
+      ],
+      "forbidden_memory_ids": [
+        "hold_scope_pay_qa"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_scope_003_a",
+      "category": "near_entity_scope",
+      "query": "发票开具找哪个接口人",
+      "ground_truth_memory_ids": [
+        "hold_scope_invoice_finance"
+      ],
+      "forbidden_memory_ids": [
+        "hold_scope_contract_legal"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_scope_003_b",
+      "category": "near_entity_scope",
+      "query": "合同审核找哪个接口人",
+      "ground_truth_memory_ids": [
+        "hold_scope_contract_legal"
+      ],
+      "forbidden_memory_ids": [
+        "hold_scope_invoice_finance"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_scope_004_a",
+      "category": "near_entity_scope",
+      "query": "欧洲团队项目联系人是谁",
+      "ground_truth_memory_ids": [
+        "hold_scope_eu_contact"
+      ],
+      "forbidden_memory_ids": [
+        "hold_scope_us_contact"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_scope_004_b",
+      "category": "near_entity_scope",
+      "query": "北美团队项目联系人是谁",
+      "ground_truth_memory_ids": [
+        "hold_scope_us_contact"
+      ],
+      "forbidden_memory_ids": [
+        "hold_scope_eu_contact"
+      ],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_xl_001",
+      "category": "cross_lingual",
+      "query": "Keep the response focused and concise.",
+      "ground_truth_memory_ids": [
+        "hold_xl_concise"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_xl_002",
+      "category": "cross_lingual",
+      "query": "Which store is the source of truth for memory?",
+      "ground_truth_memory_ids": [
+        "hold_xl_audit"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_xl_003",
+      "category": "cross_lingual",
+      "query": "What happens if Qdrant indexing fails?",
+      "ground_truth_memory_ids": [
+        "hold_xl_outbox"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_xl_004",
+      "category": "cross_lingual",
+      "query": "Where should ACL filtering happen in retrieval?",
+      "ground_truth_memory_ids": [
+        "hold_xl_acl"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_xl_005",
+      "category": "cross_lingual",
+      "query": "Can Auto Dream directly write memory records?",
+      "ground_truth_memory_ids": [
+        "hold_xl_dream"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_xl_006",
+      "category": "cross_lingual",
+      "query": "Java示例默认能不能写Lambda",
+      "ground_truth_memory_ids": [
+        "hold_xl_lambda"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_xl_007",
+      "category": "cross_lingual",
+      "query": "FTS5和向量结果怎么融合",
+      "ground_truth_memory_ids": [
+        "hold_xl_rrf"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_xl_008",
+      "category": "cross_lingual",
+      "query": "乐观锁靠哪个字段避免静默覆盖",
+      "ground_truth_memory_ids": [
+        "hold_xl_lock"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_para_001",
+      "category": "semantic_paraphrase_hard",
+      "query": "别先讲一堆背景，给我能跑的东西",
+      "ground_truth_memory_ids": [
+        "hold_para_minimal_example"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_para_002",
+      "category": "semantic_paraphrase_hard",
+      "query": "review别先夸，直接指出会坏在哪里",
+      "ground_truth_memory_ids": [
+        "hold_para_review_first"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_para_003",
+      "category": "semantic_paraphrase_hard",
+      "query": "我要的是能操作的界面，不是宣传页",
+      "ground_truth_memory_ids": [
+        "hold_para_no_marketing"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_para_004",
+      "category": "semantic_paraphrase_hard",
+      "query": "别把还没连上的东西说成已经有",
+      "ground_truth_memory_ids": [
+        "hold_para_facts_first"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_para_005",
+      "category": "semantic_paraphrase_hard",
+      "query": "哪个库说了算，不要拿索引当真相",
+      "ground_truth_memory_ids": [
+        "hold_para_source_truth"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_para_006",
+      "category": "semantic_paraphrase_hard",
+      "query": "哪些写入不能自动放行",
+      "ground_truth_memory_ids": [
+        "hold_para_risk_review"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_para_007",
+      "category": "semantic_paraphrase_hard",
+      "query": "谁来判断两条记忆是不是意思冲突",
+      "ground_truth_memory_ids": [
+        "hold_para_dream_semantics"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_para_008",
+      "category": "semantic_paraphrase_hard",
+      "query": "policy不要做哪些语义判断",
+      "ground_truth_memory_ids": [
+        "hold_para_policy_boundary"
+      ],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_none_001",
+      "category": "no_answer",
+      "query": "用户的护照号码是什么",
+      "ground_truth_memory_ids": [],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_none_002",
+      "category": "no_answer",
+      "query": "火星基地发布窗口是哪天",
+      "ground_truth_memory_ids": [],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_none_003",
+      "category": "no_answer",
+      "query": "量子航运许可证由谁审批",
+      "ground_truth_memory_ids": [],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_none_004",
+      "category": "no_answer",
+      "query": "用户的银行卡CVV是多少",
+      "ground_truth_memory_ids": [],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_none_005",
+      "category": "no_answer",
+      "query": "北京办公室门禁密码是什么",
+      "ground_truth_memory_ids": [],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    },
+    {
+      "case_id": "hold_none_006",
+      "category": "no_answer",
+      "query": "用户女儿的小学校名是什么",
+      "ground_truth_memory_ids": [],
+      "forbidden_memory_ids": [],
+      "session_id": "recall-v1",
+      "k": 5
+    }
+  ]
+}

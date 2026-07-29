@@ -11,6 +11,7 @@ retrieval modes and multiple similarity thresholds.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from collections import defaultdict
@@ -61,7 +62,12 @@ SPEC = EmbeddingSpec(
     distance_metric="cosine",
     normalized=True,
 )
-RECALL_DATASET_PATH = ROOT / "benchmarks" / "data" / "recall_100_v1.json"
+RECALL_DATASET_PATH = Path(
+    os.environ.get("AMEM_RECALL_DATASET", ROOT / "benchmarks" / "data" / "recall_250_v1.json")
+)
+BENCHMARK_REPORT_PATH = Path(
+    os.environ.get("AMEM_BENCHMARK_REPORT", ROOT / "doc" / "bge-m3-benchmark-results.json")
+)
 
 # ══════════════════════════════════════════════════════════════
 # Expanded event data — mix of target + distractor memories
@@ -87,7 +93,10 @@ def _load_recall_dataset() -> dict[str, Any] | None:
 
 def _dataset_events(dataset: dict[str, Any]) -> list[dict[str, Any]]:
     events = []
-    for item in dataset.get("items", []):
+    memories = dataset.get("memories") or dataset.get("items", [])
+    for item in memories:
+        if not item.get("content"):
+            continue
         events.append(
             {
                 "event_id": str(item["memory_id"]),
@@ -113,6 +122,20 @@ def _dataset_events(dataset: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _dataset_cases(dataset: dict[str, Any]) -> list[dict[str, Any]]:
     cases = []
+    if dataset.get("cases"):
+        for item in dataset["cases"]:
+            cases.append(
+                {
+                    "id": str(item["case_id"]),
+                    "category": str(item["category"]),
+                    "query": str(item["query"]),
+                    "expected_memory_ids": list(item.get("ground_truth_memory_ids") or []),
+                    "forbidden_memory_ids": list(item.get("forbidden_memory_ids") or []),
+                    "session": str(item.get("session_id") or "recall-v1"),
+                    "k": int(item.get("k") or 5),
+                }
+            )
+        return cases
     for item in dataset.get("items", []):
         cases.append(
             {
@@ -429,16 +452,19 @@ def run_mode(
             "precision_at_k": eval_result.precision_at_k,
             "mrr": eval_result.reciprocal_rank,
             "ndcg_at_k": eval_result.ndcg_at_k,
-            "forbidden_hits": eval_result.forbidden_hit_count,
-            "selected_ids": selected_ids[:5],
-            "expected_ids": case["expected_memory_ids"],
-            "elapsed_ms": round(elapsed_ms, 1),
+                "forbidden_hits": eval_result.forbidden_hit_count,
+                "no_result_case": eval_result.no_result_case,
+                "no_result_correct": eval_result.no_result_correct,
+                "selected_ids": selected_ids[:5],
+                "expected_ids": case["expected_memory_ids"],
+                "elapsed_ms": round(elapsed_ms, 1),
         })
     return results
 
 
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(results)
+    no_result_cases = [r for r in results if r["no_result_case"]]
     return {
         "cases": n,
         "passed": sum(r["passed"] for r in results),
@@ -448,6 +474,13 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_mrr": round(mean(r["mrr"] for r in results), 4) if n else 0,
         "mean_ndcg": round(mean(r["ndcg_at_k"] for r in results), 4) if n else 0,
         "forbidden_hits_total": sum(r["forbidden_hits"] for r in results),
+        "no_result_cases": len(no_result_cases),
+        "no_result_correct": sum(r["no_result_correct"] for r in no_result_cases),
+        "no_result_accuracy": round(
+            sum(r["no_result_correct"] for r in no_result_cases) / len(no_result_cases), 4
+        )
+        if no_result_cases
+        else 0,
         "mean_latency_ms": round(mean(r["elapsed_ms"] for r in results), 1) if n else 0,
     }
 
@@ -653,7 +686,8 @@ def main() -> None:
     _print_category_breakdown(best_hy_key, all_results[best_hy_key]["details"])
 
     # ── 8. Write JSON report ──
-    report_path = ROOT / "doc" / "bge-m3-benchmark-results.json"
+    report_path = BENCHMARK_REPORT_PATH
+    report_path.parent.mkdir(parents=True, exist_ok=True)
     serializable = {}
     for key, val in all_results.items():
         serializable[key] = {
