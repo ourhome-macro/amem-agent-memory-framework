@@ -32,6 +32,7 @@ from agent_memory_runtime.memory.embeddings import (
 )
 from agent_memory_runtime.memory.embeddings.base import validate_vector
 from agent_memory_runtime.memory.retrieval import SemanticRetriever
+from agent_memory_runtime.memory.retrieval.contradiction import has_state_conflict
 from agent_memory_runtime.memory.retrieval.scoring import score_record
 from agent_memory_runtime.memory.stores import SQLiteStoreBundle
 from agent_memory_runtime.memory.stores.sqlite_manager import _MIGRATIONS
@@ -165,6 +166,29 @@ def test_state_conflict_guard_demotes_negation_hard_negative(tmp_path) -> None:
         < 0
     )
     runtime.close()
+
+
+def test_state_conflict_guard_handles_allowed_chinese_substrings() -> None:
+    assert has_state_conflict(
+        "以后Java代码不要用Lambda",
+        "Java代码示例允许使用Lambda，但必须解释可读性取舍。",
+    )
+    assert has_state_conflict(
+        "Java示例可以使用Lambda吗",
+        "以后Java代码不要用Lambda，示例优先写显式循环。",
+    )
+    assert not has_state_conflict("不要使用Lambda", "不允许使用Lambda")
+
+
+def test_state_conflict_guard_demotes_current_query_past_record() -> None:
+    assert has_state_conflict(
+        "用户当前项目还主打Event Sourcing吗",
+        "用户过去研究过Event Sourcing方案。",
+    )
+    assert not has_state_conflict(
+        "用户当前项目还主打Event Sourcing吗",
+        "用户熟悉Event Sourcing但当前项目不主打它。",
+    )
 
 
 def test_sensitive_memory_is_not_copied_into_search_indexes(tmp_path) -> None:

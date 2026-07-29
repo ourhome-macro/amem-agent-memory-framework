@@ -31,8 +31,29 @@ _STATE_MARKERS: dict[str, dict[str, tuple[str, ...]]] = {
         ),
     },
     "allowed": {
-        "yes": ("允许", "准许", "可用", "allowed", "permitted", "approved"),
-        "no": ("禁止", "不允许", "拒绝", "forbidden", "blocked", "denied", "rejected"),
+        "yes": (
+            "允许",
+            "准许",
+            "可以",
+            "可用",
+            "能用",
+            "allowed",
+            "permitted",
+            "approved",
+        ),
+        "no": (
+            "禁止",
+            "不允许",
+            "不要",
+            "不要用",
+            "不能",
+            "不可",
+            "拒绝",
+            "forbidden",
+            "blocked",
+            "denied",
+            "rejected",
+        ),
     },
     "success": {
         "yes": ("成功", "通过", "完成", "succeeded", "successful", "passed", "completed"),
@@ -45,6 +66,10 @@ _STATE_MARKERS: dict[str, dict[str, tuple[str, ...]]] = {
     "paid": {
         "yes": ("已支付", "已付款", "paid", "payment completed"),
         "no": ("未支付", "未付款", "unpaid", "payment pending"),
+    },
+    "temporal_scope": {
+        "current": ("当前", "现在", "如今", "current", "currently"),
+        "past": ("过去", "曾经", "以前", "previously", "historical"),
     },
 }
 
@@ -87,15 +112,29 @@ def has_state_conflict(query_text: str, record_text: str) -> bool:
         for other_family, other_value in record_signals
     ):
         return False
-    return _topic_similarity(query, record) >= 0.25
+    return _topic_similarity(query, record) >= 0.25 or bool(
+        _identifier_tokens(query) & _identifier_tokens(record)
+    )
 
 
 def _signals(text: str) -> set[tuple[str, str]]:
     signals: set[tuple[str, str]] = set()
     for family, values in _STATE_MARKERS.items():
+        hits: list[tuple[str, tuple[int, int]]] = []
         for value, markers in values.items():
-            if any(marker in text for marker in markers):
-                signals.add((family, value))
+            for marker in markers:
+                for match in re.finditer(re.escape(marker), text):
+                    hits.append((value, match.span()))
+        for value, span in hits:
+            if any(
+                other_value != value
+                and other_span != span
+                and other_span[0] <= span[0]
+                and span[1] <= other_span[1]
+                for other_value, other_span in hits
+            ):
+                continue
+            signals.add((family, value))
     return signals
 
 
@@ -125,6 +164,14 @@ def _topic_tokens(text: str) -> set[str]:
         if token and token not in _STOPWORDS
     )
     return words
+
+
+def _identifier_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9_]{3,}", text)
+        if token not in _STOPWORDS
+    }
 
 
 def _normalize(text: str) -> str:

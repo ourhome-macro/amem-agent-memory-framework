@@ -61,6 +61,7 @@ SPEC = EmbeddingSpec(
     distance_metric="cosine",
     normalized=True,
 )
+RECALL_DATASET_PATH = ROOT / "benchmarks" / "data" / "recall_100_v1.json"
 
 # ══════════════════════════════════════════════════════════════
 # Expanded event data — mix of target + distractor memories
@@ -76,6 +77,55 @@ def _load_existing_events() -> list[dict[str, Any]]:
             if line:
                 events.append(json.loads(line))
     return events
+
+
+def _load_recall_dataset() -> dict[str, Any] | None:
+    if not RECALL_DATASET_PATH.exists():
+        return None
+    return json.loads(RECALL_DATASET_PATH.read_text(encoding="utf-8"))
+
+
+def _dataset_events(dataset: dict[str, Any]) -> list[dict[str, Any]]:
+    events = []
+    for item in dataset.get("items", []):
+        events.append(
+            {
+                "event_id": str(item["memory_id"]),
+                "kind": "belief.stated",
+                "actor_id": "alice",
+                "session_id": str(item.get("session_id") or "recall-v1"),
+                "tenant_id": "eval-tenant",
+                "user_id": "alice",
+                "agent_id": "companion",
+                "labels": ["private"],
+                "payload": {
+                    "agent_id": "companion",
+                    "subject_id": "alice",
+                    "key": str(item["memory_id"]),
+                    "belief": str(item["content"]),
+                    "salience": float(item.get("salience") or 0.7),
+                    "confidence": float(item.get("confidence") or 0.9),
+                },
+            }
+        )
+    return events
+
+
+def _dataset_cases(dataset: dict[str, Any]) -> list[dict[str, Any]]:
+    cases = []
+    for item in dataset.get("items", []):
+        cases.append(
+            {
+                "id": f"case_{item['memory_id']}",
+                "category": str(item["category"]),
+                "query": str(item["query"]),
+                "expected_content": str(item["content"]),
+                "forbidden_memory_ids": list(item.get("forbidden_memory_ids") or []),
+                "session": str(item.get("session_id") or "recall-v1"),
+                "k": int(item.get("k") or 5),
+            }
+        )
+    return cases
 
 
 # New distractor + target events to expand the test set.
@@ -316,21 +366,32 @@ def resolve_ids(
     cases: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Match expected_content/forbidden_content substrings to real memory_ids."""
+    by_logical_id = {}
+    for record in records:
+        key = str(getattr(record, "metadata", {}).get("key") or "")
+        if key:
+            by_logical_id[key] = record.memory_id
     resolved = []
     for case in cases:
         rc = dict(case)
         expected_ids: list[str] = []
         forbidden_ids: list[str] = []
+        for logical_id in case.get("expected_memory_ids", ()):
+            if logical_id in by_logical_id:
+                expected_ids.append(by_logical_id[logical_id])
         if case.get("expected_content"):
             for r in records:
                 if case["expected_content"] in r.content:
                     expected_ids.append(r.memory_id)
+        for logical_id in case.get("forbidden_memory_ids", ()):
+            if logical_id in by_logical_id:
+                forbidden_ids.append(by_logical_id[logical_id])
         if case.get("forbidden_content"):
             for r in records:
                 if case["forbidden_content"] in r.content:
                     forbidden_ids.append(r.memory_id)
-        rc["expected_memory_ids"] = expected_ids
-        rc["forbidden_memory_ids"] = forbidden_ids
+        rc["expected_memory_ids"] = list(dict.fromkeys(expected_ids))
+        rc["forbidden_memory_ids"] = list(dict.fromkeys(forbidden_ids))
         resolved.append(rc)
     return resolved
 
@@ -449,7 +510,13 @@ def main() -> None:
         audit_store=bundle.audit_store,
     )
 
-    all_events = _load_existing_events() + NEW_EVENTS + HARD_NEGATIVE_EVENTS
+    dataset = _load_recall_dataset()
+    benchmark_cases = CASES
+    if dataset is None:
+        all_events = _load_existing_events() + NEW_EVENTS + HARD_NEGATIVE_EVENTS
+    else:
+        all_events = _dataset_events(dataset)
+        benchmark_cases = _dataset_cases(dataset)
     print(f"  Total events: {len(all_events)}")
     started = perf_counter()
     for ev_dict in all_events:
@@ -482,7 +549,7 @@ def main() -> None:
     print(f"  Vector coverage: {coverage:.2%}")
 
     # ── 5. Resolve eval cases to real memory IDs ──
-    cases = resolve_ids(records, CASES)
+    cases = resolve_ids(records, benchmark_cases)
     # Verify all expected IDs were found
     for c in cases:
         if c.get("expected_content") and not c["expected_memory_ids"]:
