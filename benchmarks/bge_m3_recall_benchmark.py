@@ -35,6 +35,7 @@ from agent_memory_runtime.memory.embeddings import (
     embedding_content_hash,
 )
 from agent_memory_runtime.memory.embeddings.models import EmbeddingSpec
+from agent_memory_runtime.memory.intake import MemoryIntakeService, MemoryToolIdentity
 from agent_memory_runtime.memory.retrieval import (
     HybridCandidateRetriever,
     SemanticRetriever,
@@ -123,6 +124,21 @@ NEW_EVENTS: list[dict[str, Any]] = [
     {"event_id": "t-neg-2", "kind": "message.created", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "text": "自动续费仍然开启", "salience": 0.8}},
 ]
 
+HARD_NEGATIVE_EVENTS: list[dict[str, Any]] = [
+    {"event_id": "hn-renewal-off", "kind": "belief.stated", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "key": "automatic_renewal_off", "belief": "Automatic renewal is turned off."}},
+    {"event_id": "hn-renewal-on", "kind": "belief.stated", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "key": "automatic_renewal_on", "belief": "Automatic renewal is still on."}},
+    {"event_id": "hn-mfa-enabled", "kind": "belief.stated", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "key": "mfa_enabled", "belief": "Two factor authentication is enabled."}},
+    {"event_id": "hn-mfa-disabled", "kind": "belief.stated", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "key": "mfa_disabled", "belief": "Two factor authentication is disabled."}},
+    {"event_id": "hn-backup-success", "kind": "belief.stated", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "key": "backup_success", "belief": "Nightly backup completed successfully."}},
+    {"event_id": "hn-backup-failed", "kind": "belief.stated", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "key": "backup_failed", "belief": "Nightly backup failed."}},
+    {"event_id": "hn-invoice-paid", "kind": "belief.stated", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "key": "invoice_paid", "belief": "Invoice INV-42 is paid."}},
+    {"event_id": "hn-invoice-unpaid", "kind": "belief.stated", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "key": "invoice_unpaid", "belief": "Invoice INV-42 is unpaid."}},
+    {"event_id": "hn-deploy-approved", "kind": "belief.stated", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "key": "deploy_approved", "belief": "Production deployment is approved."}},
+    {"event_id": "hn-deploy-blocked", "kind": "belief.stated", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "key": "deploy_blocked", "belief": "Production deployment is blocked."}},
+    {"event_id": "hn-ticket-resolved", "kind": "belief.stated", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "key": "ticket_resolved", "belief": "Support ticket T-900 is resolved."}},
+    {"event_id": "hn-ticket-unresolved", "kind": "belief.stated", "actor_id": "alice", "session_id": "semantic-session", "tenant_id": "eval-tenant", "user_id": "alice", "agent_id": "companion", "labels": ["private"], "payload": {"agent_id": "companion", "subject_id": "alice", "key": "ticket_unresolved", "belief": "Support ticket T-900 is unresolved."}},
+]
+
 
 # ══════════════════════════════════════════════════════════════
 # Expanded eval cases
@@ -182,6 +198,23 @@ CASES: list[dict[str, Any]] = [
     {"id": "syn_3_workout_time", "category": "semantic_synonym", "query": "运动时间安排", "expected_content": "早晨七点跑步三公里", "k": 3, "session": "distractor-session"},
 ]
 
+HARD_NEGATIVE_CASES: list[dict[str, Any]] = [
+    {"id": "hn_renewal_off", "category": "hard_negative", "query": "Automatic renewal is turned off", "expected_content": "Automatic renewal is turned off.", "forbidden_content": "Automatic renewal is still on.", "k": 1},
+    {"id": "hn_renewal_on", "category": "hard_negative", "query": "Automatic renewal is still on", "expected_content": "Automatic renewal is still on.", "forbidden_content": "Automatic renewal is turned off.", "k": 1},
+    {"id": "hn_mfa_enabled", "category": "hard_negative", "query": "Two factor authentication is enabled", "expected_content": "Two factor authentication is enabled.", "forbidden_content": "Two factor authentication is disabled.", "k": 1},
+    {"id": "hn_mfa_disabled", "category": "hard_negative", "query": "Two factor authentication is disabled", "expected_content": "Two factor authentication is disabled.", "forbidden_content": "Two factor authentication is enabled.", "k": 1},
+    {"id": "hn_backup_success", "category": "hard_negative", "query": "Nightly backup completed successfully", "expected_content": "Nightly backup completed successfully.", "forbidden_content": "Nightly backup failed.", "k": 1},
+    {"id": "hn_backup_failed", "category": "hard_negative", "query": "Nightly backup failed", "expected_content": "Nightly backup failed.", "forbidden_content": "Nightly backup completed successfully.", "k": 1},
+    {"id": "hn_invoice_paid", "category": "hard_negative", "query": "Invoice INV-42 is paid", "expected_content": "Invoice INV-42 is paid.", "forbidden_content": "Invoice INV-42 is unpaid.", "k": 1},
+    {"id": "hn_invoice_unpaid", "category": "hard_negative", "query": "Invoice INV-42 is unpaid", "expected_content": "Invoice INV-42 is unpaid.", "forbidden_content": "Invoice INV-42 is paid.", "k": 1},
+    {"id": "hn_deploy_approved", "category": "hard_negative", "query": "Production deployment is approved", "expected_content": "Production deployment is approved.", "forbidden_content": "Production deployment is blocked.", "k": 1},
+    {"id": "hn_deploy_blocked", "category": "hard_negative", "query": "Production deployment is blocked", "expected_content": "Production deployment is blocked.", "forbidden_content": "Production deployment is approved.", "k": 1},
+    {"id": "hn_ticket_resolved", "category": "hard_negative", "query": "Support ticket T-900 is resolved", "expected_content": "Support ticket T-900 is resolved.", "forbidden_content": "Support ticket T-900 is unresolved.", "k": 1},
+    {"id": "hn_ticket_unresolved", "category": "hard_negative", "query": "Support ticket T-900 is unresolved", "expected_content": "Support ticket T-900 is unresolved.", "forbidden_content": "Support ticket T-900 is resolved.", "k": 1},
+]
+
+CASES.extend(HARD_NEGATIVE_CASES)
+
 
 # ══════════════════════════════════════════════════════════════
 # Vector-only retriever wrapper
@@ -236,6 +269,45 @@ def build_query(case: dict[str, Any]) -> MemoryQuery:
         user_id=case.get("user") or "alice",
         session_policy=str(case.get("session_policy") or "profile"),
         limit=case.get("k", 8),
+    )
+
+
+def seed_memory_from_event(runtime: AgentMemoryRuntime, event_dict: dict[str, Any]) -> None:
+    event = Event.from_dict(event_dict)
+    runtime.ingest(event)
+    payload = dict(event.payload)
+    content = str(
+        payload.get("belief")
+        or payload.get("preference")
+        or payload.get("outcome")
+        or payload.get("result")
+        or payload.get("text")
+        or ""
+    ).strip()
+    if not content:
+        return
+    kind = event.kind if event.kind in {"belief.stated", "preference.updated", "task.outcome"} else "belief.stated"
+    identity = MemoryToolIdentity(
+        actor_id=event.actor_id,
+        agent_id=str(event.agent_id or payload.get("agent_id") or "companion"),
+        session_id=event.session_id,
+        tenant_id=event.tenant_id,
+        user_id=event.user_id,
+        labels=tuple(str(item) for item in event.labels),
+    )
+    MemoryIntakeService(runtime).save_memory(
+        {
+            "kind": kind,
+            "key": str(payload.get("key") or event.event_id),
+            "content": content,
+            "subject_id": str(payload.get("subject_id") or event.user_id or event.actor_id),
+            "salience": float(payload.get("salience") or 0.6),
+            "confidence": float(payload.get("confidence") or 0.9),
+            "evidence_event_ids": (event.event_id,),
+            "evidence_text": content,
+        },
+        identity=identity,
+        idempotency_key=event.event_id,
     )
 
 
@@ -377,11 +449,11 @@ def main() -> None:
         audit_store=bundle.audit_store,
     )
 
-    all_events = _load_existing_events() + NEW_EVENTS
+    all_events = _load_existing_events() + NEW_EVENTS + HARD_NEGATIVE_EVENTS
     print(f"  Total events: {len(all_events)}")
     started = perf_counter()
     for ev_dict in all_events:
-        runtime.ingest(Event.from_dict(ev_dict))
+        seed_memory_from_event(runtime, ev_dict)
     print(f"  Ingested in {perf_counter() - started:.1f}s")
 
     records = bundle.memory_store.list_records()

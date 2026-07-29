@@ -32,6 +32,7 @@ from agent_memory_runtime.memory.embeddings import (
 )
 from agent_memory_runtime.memory.embeddings.base import validate_vector
 from agent_memory_runtime.memory.retrieval import SemanticRetriever
+from agent_memory_runtime.memory.retrieval.scoring import score_record
 from agent_memory_runtime.memory.stores import SQLiteStoreBundle
 from agent_memory_runtime.memory.stores.sqlite_manager import _MIGRATIONS
 from agent_memory_runtime.runtime import AgentMemoryRuntime
@@ -103,6 +104,66 @@ def test_vector_acl_filter_runs_before_semantic_top_k(tmp_path) -> None:
     assert [record.memory_id for record in selected] == ["allowed"]
     assert trace.semantic_candidate_count == 1
     assert "forbidden" not in trace.score_breakdown
+    runtime.close()
+
+
+def test_state_conflict_guard_demotes_negation_hard_negative(tmp_path) -> None:
+    provider = _provider(
+        model="state-conflict",
+        vectors={
+            "自动续费": [1.0, 0.0, 0.0],
+            "two factor authentication": [0.0, 1.0, 0.0],
+        },
+    )
+    stores = _stores_with_provider(tmp_path / "state-conflict.sqlite", provider)
+    stores.memory_store.upsert(_record("renewal-off", "自动续费已经关闭。"))
+    stores.memory_store.upsert(_record("renewal-on", "自动续费仍然开启。"))
+    stores.memory_store.upsert(
+        _record("mfa-enabled", "Two factor authentication is enabled.")
+    )
+    stores.memory_store.upsert(
+        _record("mfa-disabled", "Two factor authentication is disabled.")
+    )
+    stores.embedding_worker().run_until_idle()
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(
+            semantic_candidate_limit=4,
+            min_semantic_similarity=0.2,
+        ),
+    )
+
+    renewal_off, _ = runtime.retrieve(replace(_query("自动续费已经关闭"), limit=1))
+    renewal_on, _ = runtime.retrieve(replace(_query("自动续费仍然开启"), limit=1))
+    mfa_enabled, _ = runtime.retrieve(
+        replace(_query("Two factor authentication is enabled"), limit=1)
+    )
+
+    assert [record.memory_id for record in renewal_off] == ["renewal-off"]
+    assert [record.memory_id for record in renewal_on] == ["renewal-on"]
+    assert [record.memory_id for record in mfa_enabled] == ["mfa-enabled"]
+    renewal_on_record = stores.memory_store.get("renewal-on")
+    renewal_off_record = stores.memory_store.get("renewal-off")
+    mfa_disabled_record = stores.memory_store.get("mfa-disabled")
+    assert renewal_on_record is not None
+    assert renewal_off_record is not None
+    assert mfa_disabled_record is not None
+    assert (
+        score_record(renewal_on_record, _query("自动续费已经关闭"), runtime.config).hard_negative
+        < 0
+    )
+    assert (
+        score_record(renewal_off_record, _query("自动续费仍然开启"), runtime.config).hard_negative
+        < 0
+    )
+    assert (
+        score_record(
+            mfa_disabled_record,
+            _query("Two factor authentication is enabled"),
+            runtime.config,
+        ).hard_negative
+        < 0
+    )
     runtime.close()
 
 

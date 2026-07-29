@@ -7,6 +7,7 @@ from agent_memory_runtime.domain.enums import MemoryLayer, MemoryType
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery, ScoreBreakdown
 from agent_memory_runtime.memory.retrieval.candidates import CandidateHit
+from agent_memory_runtime.memory.retrieval.contradiction import has_state_conflict
 from agent_memory_runtime.memory.retrieval.lexical import (
     lexical_tokens,
     searchable_record_text,
@@ -41,6 +42,11 @@ def score_record(
     confidence = record.confidence * config.retrieval_weights.confidence
     type_boost = _type_boost(record, query) * config.retrieval_weights.type_boost
     source_link = _source_link(record, query) * config.retrieval_weights.source_link
+    hard_negative = (
+        config.retrieval_weights.hard_negative
+        if has_state_conflict(query.text, record.content)
+        else 0.0
+    )
     return ScoreBreakdown(
         keyword=round(keyword, 4),
         lexical=round(lexical, 4),
@@ -51,6 +57,7 @@ def score_record(
         confidence=round(confidence, 4),
         type_boost=round(type_boost, 4),
         source_link=round(source_link, 4),
+        hard_negative=round(hard_negative, 4),
     )
 
 

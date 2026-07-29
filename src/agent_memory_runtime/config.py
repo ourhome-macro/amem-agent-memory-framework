@@ -16,6 +16,7 @@ class RetrievalWeights:
     source_link: float = 0.6
     semantic: float = 1.0
     fusion: float = 2.0
+    hard_negative: float = -4.0
 
 
 @dataclass(frozen=True)

@@ -37,6 +37,7 @@ class ScoreBreakdown:
     lexical: float = 0.0
     semantic: float = 0.0
     fusion: float = 0.0
+    hard_negative: float = 0.0
     recency: float = 0.0
     salience: float = 0.0
     confidence: float = 0.0
@@ -54,7 +55,8 @@ class ScoreBreakdown:
             + self.salience
             + self.confidence
             + self.type_boost
-            + self.source_link,
+            + self.source_link
+            + self.hard_negative,
             4,
         )
 
@@ -64,6 +66,7 @@ class ScoreBreakdown:
             "lexical": self.lexical,
             "semantic": self.semantic,
             "fusion": self.fusion,
+            "hard_negative": self.hard_negative,
             "recency": self.recency,
             "salience": self.salience,
             "confidence": self.confidence,
