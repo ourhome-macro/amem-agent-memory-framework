@@ -7,6 +7,7 @@ from pathlib import Path
 
 LEGACY_DATASET_PATH = Path("benchmarks/data/recall_100_v1.json")
 MAIN_DATASET_PATH = Path("benchmarks/data/recall_250_v1.json")
+BALANCED_DATASET_PATH = Path("benchmarks/data/recall_250_balanced_v1.json")
 HOLDOUT_DATASET_PATH = Path("benchmarks/data/recall_holdout_50_v1.json")
 
 
@@ -80,6 +81,38 @@ def test_holdout_dataset_is_separate_and_hard() -> None:
         expected_no_answer=6,
         max_near_copy_cases=1,
     )
+
+
+def test_recall_250_balanced_dataset_mixes_easy_medium_hard_cases() -> None:
+    dataset = json.loads(BALANCED_DATASET_PATH.read_text(encoding="utf-8"))
+
+    _assert_dataset_shape(
+        dataset,
+        expected_cases=250,
+        expected_counts={
+            "semantic_preference": 30,
+            "relationship": 20,
+            "episodic": 20,
+            "profile": 20,
+            "temporal": 10,
+            "natural_rewrite": 30,
+            "cross_lingual": 20,
+            "semantic_paraphrase_hard": 20,
+            "hard_negative_state": 30,
+            "temporal_shift": 20,
+            "near_entity_scope": 15,
+            "no_answer": 15,
+        },
+        min_forbidden_cases=65,
+        expected_no_answer=15,
+        max_near_copy_cases=5,
+    )
+    assert dataset["difficulty_counts"] == {
+        "simple": 100,
+        "medium": 70,
+        "hard": 65,
+        "no_answer": 15,
+    }
 
 
 def _assert_dataset_shape(

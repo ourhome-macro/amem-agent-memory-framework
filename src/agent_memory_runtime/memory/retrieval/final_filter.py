@@ -6,6 +6,7 @@ from agent_memory_runtime.domain.query import MemoryQuery, RetrievalResult
 from agent_memory_runtime.memory.retrieval.candidates import CandidateBatch, CandidateHit
 from agent_memory_runtime.memory.retrieval.contradiction import has_state_conflict
 from agent_memory_runtime.memory.retrieval.lexical import lexical_tokens, searchable_record_text
+from agent_memory_runtime.memory.semantic_state import state_values_conflict
 
 
 def apply_final_filter(
@@ -111,7 +112,10 @@ def _first_conflict_index(
         other_record = records_by_id.get(other.memory_id)
         if other_record is None:
             continue
-        if has_state_conflict(record.content, other_record.content):
+        if state_values_conflict(record, other_record) or has_state_conflict(
+            record.content,
+            other_record.content,
+        ):
             return index
     return None
 

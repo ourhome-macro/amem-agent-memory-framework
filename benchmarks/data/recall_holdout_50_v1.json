@@ -11,6 +11,9 @@
     "semantic_paraphrase_hard": 8,
     "no_answer": 6
   },
+  "difficulty_counts": {
+    "unspecified": 50
+  },
   "memories": [
     {
       "memory_id": "hold_hn_001_yes",

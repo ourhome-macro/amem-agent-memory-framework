@@ -288,7 +288,9 @@ def _memory_id_tuple(log: MemoryAuditLog, action: str) -> tuple[str, ...]:
 
 
 def _metadata(proposal: MemoryProposal) -> dict[str, Any]:
-    return {
+    metadata = dict(proposal.metadata)
+    metadata.update(
+        {
         "key": proposal.key,
         "profile_key": "|".join(
             (
@@ -304,7 +306,9 @@ def _metadata(proposal: MemoryProposal) -> dict[str, Any]:
         "dream_version": proposal.dream_version,
         "evidence_text": proposal.evidence_text,
         "reason": proposal.reason,
-    }
+        }
+    )
+    return metadata
 
 
 def _default_visible_to(proposal: MemoryProposal) -> tuple[str, ...]:

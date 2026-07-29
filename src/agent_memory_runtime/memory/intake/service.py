@@ -15,6 +15,7 @@ from agent_memory_runtime.memory.intake.models import (
     MemoryToolIdentity,
     MemoryToolResult,
 )
+from agent_memory_runtime.memory.semantic_state import state_fact_metadata
 from agent_memory_runtime.memory.service import MemoryService, memory_type_from_kind
 
 _SAVE_KINDS = {
@@ -186,6 +187,7 @@ class MemoryIntakeService:
         if action == MemoryOperation.SUPERSEDE.value:
             action = MemoryOperation.REVISE.value
         target_memory_id = _optional_str(arguments.get("target_memory_id"))
+        content_value = _content_for_kind(kind, key=key, content=content, arguments=arguments)
         return MemoryProposal(
             proposal_id=_proposal_id(default_action, idempotency_key),
             source=source,
@@ -193,7 +195,7 @@ class MemoryIntakeService:
             target_memory_id=target_memory_id,
             subject_id=subject_id,
             key=key,
-            content=_content_for_kind(kind, key=key, content=content, arguments=arguments),
+            content=content_value,
             memory_type=memory_type_from_kind(kind),
             layer=str(arguments.get("layer") or _default_layer(kind)),
             scope=str(arguments.get("scope") or MemoryScope.PRIVATE.value),
@@ -210,6 +212,10 @@ class MemoryIntakeService:
             user_id=identity.user_id,
             labels=identity.labels,
             tags=_dedupe((*identity.tags, "memory-intake", default_action)),
+            metadata={
+                **state_fact_metadata(content_value, source=f"{source}_state_v1"),
+                **_metadata(arguments.get("metadata")),
+            },
             session_id=identity.session_id,
             expected_version=(
                 int(arguments["expected_version"])
@@ -302,6 +308,10 @@ def _tuple_str(value: object) -> tuple[str, ...]:
     if isinstance(value, (list, tuple, set)):
         return tuple(str(item) for item in value if str(item))
     return (str(value),)
+
+
+def _metadata(value: object) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _dedupe(values: tuple[str, ...]) -> tuple[str, ...]:

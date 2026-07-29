@@ -63,7 +63,10 @@ SPEC = EmbeddingSpec(
     normalized=True,
 )
 RECALL_DATASET_PATH = Path(
-    os.environ.get("AMEM_RECALL_DATASET", ROOT / "benchmarks" / "data" / "recall_250_v1.json")
+    os.environ.get(
+        "AMEM_RECALL_DATASET",
+        ROOT / "benchmarks" / "data" / "recall_250_balanced_v1.json",
+    )
 )
 BENCHMARK_REPORT_PATH = Path(
     os.environ.get("AMEM_BENCHMARK_REPORT", ROOT / "doc" / "bge-m3-benchmark-results.json")

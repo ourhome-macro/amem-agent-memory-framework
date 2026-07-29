@@ -10,14 +10,17 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "benchmarks" / "data"
 LEGACY_PATH = DATA_DIR / "recall_100_v1.json"
 MAIN_PATH = DATA_DIR / "recall_250_v1.json"
+BALANCED_PATH = DATA_DIR / "recall_250_balanced_v1.json"
 HOLDOUT_PATH = DATA_DIR / "recall_holdout_50_v1.json"
 
 
 def main() -> None:
     legacy = json.loads(LEGACY_PATH.read_text(encoding="utf-8"))
     main_dataset = _build_main_dataset(legacy["items"])
+    balanced_dataset = _build_balanced_dataset(legacy["items"])
     holdout_dataset = _build_holdout_dataset()
     _write_dataset(MAIN_PATH, main_dataset)
+    _write_dataset(BALANCED_PATH, balanced_dataset)
     _write_dataset(HOLDOUT_PATH, holdout_dataset)
 
 
@@ -61,6 +64,94 @@ def _build_holdout_dataset() -> dict[str, Any]:
     _add_no_answer_cases(cases, "hold_none", 6)
 
     return _dataset("recall_holdout_50_v1", memories, cases)
+
+
+def _build_balanced_dataset(legacy_items: list[dict[str, Any]]) -> dict[str, Any]:
+    memories: list[dict[str, Any]] = []
+    cases: list[dict[str, Any]] = []
+    memory_ids: set[str] = set()
+
+    for item in legacy_items:
+        _add_memory(memories, memory_ids, item["memory_id"], item["category"], item["content"])
+        cases.append(
+            _case(
+                f"balanced_legacy_{item['memory_id']}",
+                item["category"],
+                item["query"],
+                [item["memory_id"]],
+                forbidden=item.get("forbidden_memory_ids", []),
+                difficulty="simple",
+            )
+        )
+
+    start = len(cases)
+    _add_natural_rewrite(memories, cases, memory_ids, "bal_nat", 30)
+    _set_difficulty(cases, start, "medium")
+    start = len(cases)
+    _add_cross_lingual(memories, cases, memory_ids, "bal_xl", 20)
+    _set_difficulty(cases, start, "medium")
+    start = len(cases)
+    _add_semantic_paraphrase(memories, cases, memory_ids, "bal_para", 20)
+    _set_difficulty(cases, start, "medium")
+    start = len(cases)
+    _add_hard_negative_state(memories, cases, memory_ids, "bal_hn", 30)
+    _set_difficulty(cases, start, "hard")
+    start = len(cases)
+    _add_temporal_shift(memories, cases, memory_ids, "bal_ts", 20)
+    _set_difficulty(cases, start, "hard")
+    start = len(cases)
+    _add_near_entity_scope(memories, cases, memory_ids, "bal_scope", 15)
+    _set_difficulty(cases, start, "hard")
+    start = len(cases)
+    _add_no_answer_cases(cases, "bal_none", 15)
+    _set_difficulty(cases, start, "no_answer")
+
+    return _dataset("recall_250_balanced_v1", memories, cases)
+
+
+def _add_natural_rewrite(
+    memories: list[dict[str, Any]],
+    cases: list[dict[str, Any]],
+    memory_ids: set[str],
+    prefix: str,
+    case_count: int,
+) -> None:
+    rows = [
+        ("java_loop", "For Java examples, prefer explicit loops unless a Lambda is clearer.", "When you show Java, should the example default to a for loop?"),
+        ("brief_answer", "The user wants direct answers with minimal setup text.", "Do they like a long preamble before the answer?"),
+        ("audit_source", "MemoryRecord is the current fact source; AuditLog is evidence history.", "Which memory table should retrieval trust as current truth?"),
+        ("dream_review", "Auto Dream should send uncertain semantic conflicts to review.", "What should happen when Dream is not sure two facts conflict?"),
+        ("qdrant_projection", "Qdrant stores vector projections and is not authoritative state.", "Can a vector index replace SQLite as memory truth?"),
+        ("policy_boundary", "MemoryWritePolicy handles schema, access, scope invariants, and risk gates.", "Which component blocks unsafe memory writes?"),
+        ("proposal_retry", "A repeated proposal_id must return the original write result.", "How do repeated memory write retries avoid duplicate records?"),
+        ("version_lock", "MemoryRecord.version protects against silent overwrite during revise.", "What prevents a stale edit from clobbering a newer memory?"),
+        ("outbox_retry", "Embedding outbox keeps pending indexing work after SQLite commits.", "If indexing is down, where is the retry state kept?"),
+        ("acl_topk", "ACL filtering happens before TopK ranking so hidden records never compete.", "Why should permission filtering run before ranking candidates?"),
+        ("rrf_fusion", "FTS5 and vector candidates are fused with Reciprocal Rank Fusion.", "How are lexical and semantic candidate lists merged?"),
+        ("token_density", "Context selection favors relevance density and diversity within the token budget.", "How are memories picked when context space is limited?"),
+        ("session_hook", "Session end schedules an Auto Dream job for that tenant, user, agent, and session.", "What kicks off Dream after a conversation finishes?"),
+        ("worker_lease", "Dream workers claim jobs with leases to avoid duplicate processing.", "How do two workers avoid taking the same Dream job?"),
+        ("checkpoint_scope", "Dream checkpoints are keyed by tenant, user, agent, and session.", "Is Dream progress tracked globally or per identity scope?"),
+        ("review_lock", "Review approval must recheck MemoryRecord.version before applying.", "What happens if a memory changes while waiting for review?"),
+        ("forget_tombstone", "Forget writes a tombstone for delete history and retrieval suppression.", "How does deletion stay auditable?"),
+        ("visible_review", "Expanding visible_to is high risk and requires review.", "Can a model broaden memory sharing by itself?"),
+        ("event_audit", "Legacy Event ingest records audit evidence but does not drive the main write path.", "Does Event still create current memory directly?"),
+        ("validator_scope", "Validator checks proposal fields and deterministic invariants, not semantic meaning.", "Should Validator decide whether two facts mean the same thing?"),
+        ("current_state", "Auto Dream structures current status facts into semantic_state metadata.", "Where should status facts be normalized before retrieval?"),
+        ("hard_negative", "Status opposites are hard negatives because embeddings keep them very close.", "Why is closed versus still open dangerous for vector search?"),
+        ("sqlite_truth", "SQLite MemoryRecord remains authoritative even when Qdrant fails.", "What is still true if Qdrant is temporarily unavailable?"),
+        ("archive_duplicate", "Clear duplicate current memories can be reinforced on the kept record and archived on the duplicate.", "What does Dream do with obvious duplicate memories?"),
+        ("same_key_review", "High-confidence same-key conflicts require review instead of automatic overwrite.", "Can a confident new fact automatically replace another confident fact?"),
+        ("keep_both", "Keep_both is used when similar memories may both be valid in different scopes or times.", "When should Dream avoid merging two close memories?"),
+        ("identity_server", "tenant_id, user_id, agent_id, and session_id come from server-side identity.", "Who supplies identity fields for memory writes?"),
+        ("qdrant_default", "Runtime can default to Qdrant for vector recall while SQLite remains source of truth.", "Does default Qdrant integration change ownership of facts?"),
+        ("outbox_version", "Embedding jobs include record version and content hash to avoid stale index overwrite.", "How do old embedding tasks avoid replacing newer vectors?"),
+        ("audit_replay", "Audit replay is for inspection and reconstruction evidence, not the hot write path.", "What is audit replay used for now?"),
+    ]
+    for index, (name, content, query) in enumerate(rows[:case_count], start=1):
+        memory_id = f"{prefix}_{name}"
+        _add_memory(memories, memory_ids, memory_id, "natural_rewrite", content)
+        cases.append(_case(f"{prefix}_{index:03d}", "natural_rewrite", query, [memory_id]))
 
 
 def _add_hard_negative_state(
@@ -303,8 +394,9 @@ def _case(
     expected: list[str],
     *,
     forbidden: list[str] | None = None,
+    difficulty: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    item = {
         "case_id": case_id,
         "category": category,
         "query": query,
@@ -313,6 +405,14 @@ def _case(
         "session_id": "recall-v1",
         "k": 5,
     }
+    if difficulty:
+        item["difficulty"] = difficulty
+    return item
+
+
+def _set_difficulty(cases: list[dict[str, Any]], start: int, difficulty: str) -> None:
+    for case in cases[start:]:
+        case["difficulty"] = difficulty
 
 
 def _dataset(version: str, memories: list[dict[str, Any]], cases: list[dict[str, Any]]) -> dict[str, Any]:
@@ -322,6 +422,7 @@ def _dataset(version: str, memories: list[dict[str, Any]], cases: list[dict[str,
         "memory_count": len(memories),
         "case_count": len(cases),
         "category_counts": dict(Counter(case["category"] for case in cases)),
+        "difficulty_counts": dict(Counter(case.get("difficulty", "unspecified") for case in cases)),
         "memories": memories,
         "cases": cases,
     }

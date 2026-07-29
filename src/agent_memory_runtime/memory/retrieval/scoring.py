@@ -13,6 +13,7 @@ from agent_memory_runtime.memory.retrieval.lexical import (
     searchable_record_text,
 )
 from agent_memory_runtime.memory.retrieval.planner import requests_archival_recall
+from agent_memory_runtime.memory.semantic_state import text_conflicts_record_state
 
 
 def score_record(
@@ -44,7 +45,8 @@ def score_record(
     source_link = _source_link(record, query) * config.retrieval_weights.source_link
     hard_negative = (
         config.retrieval_weights.hard_negative
-        if has_state_conflict(query.text, record.content)
+        if text_conflicts_record_state(query.text, record)
+        or has_state_conflict(query.text, record.content)
         else 0.0
     )
     return ScoreBreakdown(

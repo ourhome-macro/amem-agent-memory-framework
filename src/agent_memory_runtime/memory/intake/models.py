@@ -133,6 +133,7 @@ class MemoryProposal:
     session_id: str = "default"
     labels: tuple[str, ...] = ("private",)
     tags: tuple[str, ...] = ()
+    metadata: dict[str, Any] = field(default_factory=dict)
     expected_version: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -163,6 +164,7 @@ class MemoryProposal:
             "session_id": self.session_id,
             "labels": list(self.labels),
             "tags": list(self.tags),
+            "metadata": dict(self.metadata),
             "expected_version": self.expected_version,
             # Compatibility keys for the pre-proposal Auto Dream API.
             "kind": self.memory_type,

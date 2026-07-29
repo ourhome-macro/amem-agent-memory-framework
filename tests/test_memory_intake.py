@@ -218,6 +218,43 @@ def test_auto_dream_reports_typed_event_without_derived_memory() -> None:
     assert report.proposals[0].reason == "typed_event_without_derived_memory"
 
 
+def test_auto_dream_structures_current_state_metadata_and_service_persists() -> None:
+    event = Event(
+        event_id="typed-renewal-state",
+        sequence=5,
+        kind="belief.stated",
+        actor_id="user-a",
+        tenant_id="tenant-a",
+        user_id="user-a",
+        agent_id="assistant",
+        payload={
+            "agent_id": "assistant",
+            "subject_id": "user-a",
+            "key": "billing_auto_renewal",
+            "belief": "\u8d26\u5355\u81ea\u52a8\u7eed\u8d39\u5df2\u7ecf\u5173\u95ed\u3002",
+        },
+    )
+
+    proposal = AutoDreamAnalyzer().analyze(events=[event], records=[]).proposals[0]
+
+    assert proposal.action == "create"
+    assert proposal.metadata["semantic_state_schema"] == "current_state.v1"
+    assert proposal.metadata["semantic_state_attribute"] == "enabled"
+    assert proposal.metadata["semantic_state_value"] == "off"
+    assert proposal.metadata["semantic_state_temporal_scope"] == "current"
+
+    runtime = AgentMemoryRuntime()
+    result = runtime.apply_memory_proposal(proposal)
+
+    assert result.status == "succeeded"
+    record = runtime.memory_store.get(result.memory_ids[0])
+    assert record is not None
+    assert record.metadata["semantic_state_value"] == "off"
+    audit_log = runtime.audit_store.list_memory_logs()[0]
+    assert audit_log.after_record is not None
+    assert audit_log.after_record.metadata["semantic_state_attribute"] == "enabled"
+
+
 def test_auto_dream_detects_duplicate_active_memories() -> None:
     records = [
         _record("m1", "Repeated memory", ("e1",)),
@@ -231,6 +268,35 @@ def test_auto_dream_detects_duplicate_active_memories() -> None:
     assert report.proposals[0].target_memory_id == "m1"
     assert report.proposals[0].source_memory_ids == ("m2",)
     assert report.proposals[0].reason == "semantic_duplicate_of:m1"
+
+
+def test_auto_dream_routes_current_state_conflict_to_review_across_keys() -> None:
+    records = [
+        _record(
+            "renewal-off",
+            "\u8d26\u5355\u81ea\u52a8\u7eed\u8d39\u5df2\u7ecf\u5173\u95ed\u3002",
+            ("e1",),
+            key="billing_auto_renewal_closed",
+        ),
+        _record(
+            "renewal-on",
+            "\u8d26\u5355\u81ea\u52a8\u7eed\u8d39\u4ecd\u7136\u5f00\u542f\u3002",
+            ("e2",),
+            key="billing_auto_renewal_enabled",
+        ),
+    ]
+
+    report = AutoDreamAnalyzer().analyze(events=[], records=records)
+
+    reviews = [
+        proposal
+        for proposal in report.proposals
+        if proposal.action == "needs_review"
+        and proposal.reason.startswith("current_state_conflict_with:")
+    ]
+    assert len(reviews) == 1
+    assert reviews[0].target_memory_id in {"renewal-off", "renewal-on"}
+    assert reviews[0].metadata["semantic_state_attribute"] == "enabled"
 
 
 def test_auto_dream_worker_persists_checkpoint_and_applies_proposals(tmp_path) -> None:

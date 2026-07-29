@@ -11,6 +11,11 @@ from agent_memory_runtime.memory.intake.models import (
     DreamCheckpoint,
     MemoryProposal,
 )
+from agent_memory_runtime.memory.semantic_state import (
+    current_state_group_key,
+    state_fact_from_record,
+    state_fact_metadata,
+)
 from agent_memory_runtime.memory.service import memory_type_from_kind
 
 _REMEMBER_RE = re.compile(
@@ -293,6 +298,13 @@ class AutoDreamAnalyzer:
         for record in active:
             key = str(record.metadata.get("key") or _infer_key(record.content))
             by_identity.setdefault(_identity_key(record, key=key), []).append(record)
+        proposals.extend(
+            _current_state_conflict_proposals(
+                active,
+                dream_version=self.dream_version,
+                dream_run_id=dream_run_id,
+            )
+        )
         for grouped in by_identity.values():
             proposals.extend(
                 _merge_group(
@@ -361,6 +373,7 @@ def _proposal(
         session_id=target.session_id if target is not None else event.session_id,
         labels=target.labels if target is not None else tuple(event.labels),
         tags=tuple(dict.fromkeys((*event.tags, "auto_dream"))),
+        metadata=state_fact_metadata(content, source="auto_dream_state_v1"),
         expected_version=None if target is None else target.version,
     )
 
@@ -518,6 +531,57 @@ def _merge_group(
     return proposals
 
 
+def _current_state_conflict_proposals(
+    records: list[MemoryRecord],
+    *,
+    dream_version: str,
+    dream_run_id: str | None,
+) -> list[MemoryProposal]:
+    by_state: dict[
+        tuple[str, str | None, str | None, str, str, str],
+        list[MemoryRecord],
+    ] = {}
+    for record in records:
+        key = current_state_group_key(record)
+        if key is not None:
+            by_state.setdefault(key, []).append(record)
+
+    proposals: list[MemoryProposal] = []
+    for grouped in by_state.values():
+        values = {
+            fact.value
+            for record in grouped
+            if (fact := state_fact_from_record(record)) is not None
+        }
+        if len(values) <= 1:
+            continue
+        ordered = sorted(
+            grouped,
+            key=lambda record: (
+                -record.confidence,
+                -record.salience,
+                record.updated_at,
+                record.memory_id,
+            ),
+        )
+        incumbent = ordered[0]
+        for conflict in ordered[1:]:
+            proposals.append(
+                _record_proposal(
+                    action=MemoryOperation.NEEDS_REVIEW.value,
+                    target=conflict,
+                    source=incumbent,
+                    content=conflict.content,
+                    confidence=min(conflict.confidence, incumbent.confidence),
+                    salience=max(conflict.salience, incumbent.salience),
+                    reason=f"current_state_conflict_with:{incumbent.memory_id}",
+                    dream_version=dream_version,
+                    dream_run_id=dream_run_id,
+                )
+            )
+    return proposals
+
+
 def _record_proposal(
     *,
     action: str,
@@ -557,6 +621,7 @@ def _record_proposal(
         session_id=target.session_id,
         labels=target.labels,
         tags=tuple(dict.fromkeys((*target.tags, "auto_dream"))),
+        metadata=state_fact_metadata(content, source="auto_dream_state_v1"),
         expected_version=target.version,
     )
 
