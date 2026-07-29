@@ -1,0 +1,541 @@
+{
+  "case_count": 40,
+  "passed": 40,
+  "pass_rate": 1.0,
+  "category_counts": {
+    "state": 10,
+    "temporal": 10,
+    "entity": 10,
+    "no_answer": 10
+  },
+  "category_passed": {
+    "state": 10,
+    "temporal": 10,
+    "entity": 10,
+    "no_answer": 10
+  },
+  "results": [
+    {
+      "case_id": "state_01",
+      "category": "state",
+      "query": "自动续费现在关闭了吗",
+      "expected_memory_id": "renewal-good",
+      "selected_memory_ids": [
+        "renewal-good"
+      ],
+      "trace_memory_ids": [
+        "renewal-good"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "state_02",
+      "category": "state",
+      "query": "生产告警会发短信吗",
+      "expected_memory_id": "sms-good",
+      "selected_memory_ids": [
+        "sms-good"
+      ],
+      "trace_memory_ids": [
+        "sms-good"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "state_03",
+      "category": "state",
+      "query": "Is MFA enabled on the admin account?",
+      "expected_memory_id": "mfa-good",
+      "selected_memory_ids": [
+        "mfa-good"
+      ],
+      "trace_memory_ids": [
+        "mfa-good"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "state_04",
+      "category": "state",
+      "query": "INV-42 现在付款了吗",
+      "expected_memory_id": "invoice-good",
+      "selected_memory_ids": [
+        "invoice-good"
+      ],
+      "trace_memory_ids": [
+        "invoice-good"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "state_05",
+      "category": "state",
+      "query": "T-900 现在解决了吗",
+      "expected_memory_id": "ticket-good",
+      "selected_memory_ids": [
+        "ticket-good"
+      ],
+      "trace_memory_ids": [
+        "ticket-good"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "state_06",
+      "category": "state",
+      "query": "Can production deployment proceed?",
+      "expected_memory_id": "deploy-good",
+      "selected_memory_ids": [
+        "deploy-good"
+      ],
+      "trace_memory_ids": [
+        "deploy-good"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "state_07",
+      "category": "state",
+      "query": "Is the Stripe callback webhook on?",
+      "expected_memory_id": "webhook-good",
+      "selected_memory_ids": [
+        "webhook-good"
+      ],
+      "trace_memory_ids": [
+        "webhook-good"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "state_08",
+      "category": "state",
+      "query": "Java 示例不要用 Lambda 吗",
+      "expected_memory_id": "lambda-good",
+      "selected_memory_ids": [
+        "lambda-good"
+      ],
+      "trace_memory_ids": [
+        "lambda-good"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "state_09",
+      "category": "state",
+      "query": "昨晚备份成功了吗",
+      "expected_memory_id": "backup-good",
+      "selected_memory_ids": [
+        "backup-good"
+      ],
+      "trace_memory_ids": [
+        "backup-good"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "state_10",
+      "category": "state",
+      "query": "Is LIC-88 active?",
+      "expected_memory_id": "license-good",
+      "selected_memory_ids": [
+        "license-good"
+      ],
+      "trace_memory_ids": [
+        "license-good"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "temporal_01",
+      "category": "temporal",
+      "query": "订单系统现在用什么数据库",
+      "expected_memory_id": "db-current",
+      "selected_memory_ids": [
+        "db-current"
+      ],
+      "trace_memory_ids": [
+        "db-current"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "temporal_02",
+      "category": "temporal",
+      "query": "现在主线还是 Event Sourcing 吗",
+      "expected_memory_id": "runtime-current",
+      "selected_memory_ids": [
+        "runtime-current"
+      ],
+      "trace_memory_ids": [
+        "runtime-current"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "temporal_03",
+      "category": "temporal",
+      "query": "embedding 现在怎么写入",
+      "expected_memory_id": "queue-current",
+      "selected_memory_ids": [
+        "queue-current"
+      ],
+      "trace_memory_ids": [
+        "queue-current"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "temporal_04",
+      "category": "temporal",
+      "query": "Auto Dream 现在怎么触发",
+      "expected_memory_id": "dream-current",
+      "selected_memory_ids": [
+        "dream-current",
+        "dream-past"
+      ],
+      "trace_memory_ids": [
+        "dream-current",
+        "dream-past"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "temporal_05",
+      "category": "temporal",
+      "query": "LangGraph 现在在核心 runtime 里吗",
+      "expected_memory_id": "langgraph-current",
+      "selected_memory_ids": [
+        "langgraph-current"
+      ],
+      "trace_memory_ids": [
+        "langgraph-current"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "temporal_06",
+      "category": "temporal",
+      "query": "现在模型能直接扩大 visible_to 吗",
+      "expected_memory_id": "visible-current",
+      "selected_memory_ids": [
+        "visible-current"
+      ],
+      "trace_memory_ids": [
+        "visible-current"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "temporal_07",
+      "category": "temporal",
+      "query": "后台现在是什么视觉主题",
+      "expected_memory_id": "ui-current",
+      "selected_memory_ids": [
+        "ui-current"
+      ],
+      "trace_memory_ids": [
+        "ui-current"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "temporal_08",
+      "category": "temporal",
+      "query": "现在 API 错误里有什么字段",
+      "expected_memory_id": "api-current",
+      "selected_memory_ids": [
+        "api-current"
+      ],
+      "trace_memory_ids": [
+        "api-current"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "temporal_09",
+      "category": "temporal",
+      "query": "用户画像现在从哪里读",
+      "expected_memory_id": "cache-current",
+      "selected_memory_ids": [
+        "cache-current"
+      ],
+      "trace_memory_ids": [
+        "cache-current"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "temporal_10",
+      "category": "temporal",
+      "query": "现在周五下午能发布生产吗",
+      "expected_memory_id": "deploy-current",
+      "selected_memory_ids": [
+        "deploy-current"
+      ],
+      "trace_memory_ids": [
+        "deploy-current"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "entity_01",
+      "category": "entity",
+      "query": "支付项目负责人是谁",
+      "expected_memory_id": "pay-good",
+      "selected_memory_ids": [
+        "pay-good",
+        "pay-bad-b",
+        "pay-bad-a"
+      ],
+      "trace_memory_ids": [
+        "pay-good",
+        "pay-bad-b",
+        "pay-bad-a"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "entity_02",
+      "category": "entity",
+      "query": "发票开具找谁",
+      "expected_memory_id": "invoice-good",
+      "selected_memory_ids": [
+        "invoice-good",
+        "invoice-bad-b",
+        "invoice-bad-a"
+      ],
+      "trace_memory_ids": [
+        "invoice-good",
+        "invoice-bad-b",
+        "invoice-bad-a"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "entity_03",
+      "category": "entity",
+      "query": "欧洲团队项目联系人是谁",
+      "expected_memory_id": "eu-good",
+      "selected_memory_ids": [
+        "eu-good",
+        "eu-bad-a",
+        "eu-bad-b"
+      ],
+      "trace_memory_ids": [
+        "eu-good",
+        "eu-bad-a",
+        "eu-bad-b"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "entity_04",
+      "category": "entity",
+      "query": "API 兼容性评审找谁",
+      "expected_memory_id": "api-good",
+      "selected_memory_ids": [
+        "api-good",
+        "api-bad-b",
+        "api-bad-a"
+      ],
+      "trace_memory_ids": [
+        "api-good",
+        "api-bad-b",
+        "api-bad-a"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "entity_05",
+      "category": "entity",
+      "query": "灰度发布窗口谁协调",
+      "expected_memory_id": "release-good",
+      "selected_memory_ids": [
+        "release-good",
+        "release-bad-b",
+        "release-bad-a"
+      ],
+      "trace_memory_ids": [
+        "release-good",
+        "release-bad-b",
+        "release-bad-a"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "entity_06",
+      "category": "entity",
+      "query": "ACL 过滤安全评审找谁",
+      "expected_memory_id": "acl-good",
+      "selected_memory_ids": [
+        "acl-good",
+        "acl-bad-b",
+        "acl-bad-a"
+      ],
+      "trace_memory_ids": [
+        "acl-good",
+        "acl-bad-b",
+        "acl-bad-a"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "entity_07",
+      "category": "entity",
+      "query": "Kubernetes 告警找谁",
+      "expected_memory_id": "k8s-good",
+      "selected_memory_ids": [
+        "k8s-good",
+        "k8s-bad-b",
+        "k8s-bad-a"
+      ],
+      "trace_memory_ids": [
+        "k8s-good",
+        "k8s-bad-b",
+        "k8s-bad-a"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "entity_08",
+      "category": "entity",
+      "query": "移动端回归测试找谁",
+      "expected_memory_id": "mobile-good",
+      "selected_memory_ids": [
+        "mobile-good",
+        "mobile-bad-b",
+        "mobile-bad-a"
+      ],
+      "trace_memory_ids": [
+        "mobile-good",
+        "mobile-bad-b",
+        "mobile-bad-a"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "entity_09",
+      "category": "entity",
+      "query": "订阅计费产品策略找谁",
+      "expected_memory_id": "billing-good",
+      "selected_memory_ids": [
+        "billing-good",
+        "billing-bad-b",
+        "billing-bad-a"
+      ],
+      "trace_memory_ids": [
+        "billing-good",
+        "billing-bad-b",
+        "billing-bad-a"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "entity_10",
+      "category": "entity",
+      "query": "搜索组件库谁维护",
+      "expected_memory_id": "search-good",
+      "selected_memory_ids": [
+        "search-good",
+        "search-bad-b",
+        "search-bad-a"
+      ],
+      "trace_memory_ids": [
+        "search-good",
+        "search-bad-b",
+        "search-bad-a"
+      ],
+      "passed": true
+    },
+    {
+      "case_id": "none_01",
+      "category": "no_answer",
+      "query": "用户护照号码是什么",
+      "expected_memory_id": null,
+      "selected_memory_ids": [],
+      "trace_memory_ids": [],
+      "passed": true
+    },
+    {
+      "case_id": "none_02",
+      "category": "no_answer",
+      "query": "火星基地发布窗口是哪天",
+      "expected_memory_id": null,
+      "selected_memory_ids": [],
+      "trace_memory_ids": [],
+      "passed": true
+    },
+    {
+      "case_id": "none_03",
+      "category": "no_answer",
+      "query": "量子航运许可证由谁审批",
+      "expected_memory_id": null,
+      "selected_memory_ids": [],
+      "trace_memory_ids": [],
+      "passed": true
+    },
+    {
+      "case_id": "none_04",
+      "category": "no_answer",
+      "query": "银行卡 CVV 是多少",
+      "expected_memory_id": null,
+      "selected_memory_ids": [],
+      "trace_memory_ids": [],
+      "passed": true
+    },
+    {
+      "case_id": "none_05",
+      "category": "no_answer",
+      "query": "北京办公室门禁密码是什么",
+      "expected_memory_id": null,
+      "selected_memory_ids": [],
+      "trace_memory_ids": [],
+      "passed": true
+    },
+    {
+      "case_id": "none_06",
+      "category": "no_answer",
+      "query": "项目 Zephyr 的根密钥在哪里",
+      "expected_memory_id": null,
+      "selected_memory_ids": [],
+      "trace_memory_ids": [],
+      "passed": true
+    },
+    {
+      "case_id": "none_07",
+      "category": "no_answer",
+      "query": "无人机巡检合同签署日是哪天",
+      "expected_memory_id": null,
+      "selected_memory_ids": [],
+      "trace_memory_ids": [],
+      "passed": true
+    },
+    {
+      "case_id": "none_08",
+      "category": "no_answer",
+      "query": "CRM 沙箱超级管理员密码是什么",
+      "expected_memory_id": null,
+      "selected_memory_ids": [],
+      "trace_memory_ids": [],
+      "passed": true
+    },
+    {
+      "case_id": "none_09",
+      "category": "no_answer",
+      "query": "月球仓库库存盘点负责人是谁",
+      "expected_memory_id": null,
+      "selected_memory_ids": [],
+      "trace_memory_ids": [],
+      "passed": true
+    },
+    {
+      "case_id": "none_10",
+      "category": "no_answer",
+      "query": "明年春节机票订单号是什么",
+      "expected_memory_id": null,
+      "selected_memory_ids": [],
+      "trace_memory_ids": [],
+      "passed": true
+    }
+  ]
+}

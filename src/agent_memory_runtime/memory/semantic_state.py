@@ -20,6 +20,15 @@ class StateFact:
         return " ".join(self.entity_tokens)
 
 
+@dataclass(frozen=True)
+class QueryStateIntent:
+    entity_tokens: tuple[str, ...]
+    attribute: str | None = None
+    expected_value: str | None = None
+    temporal_scope: str | None = None
+    asks_inverse: bool = False
+
+
 _STATE_MARKERS: dict[str, dict[str, tuple[str, ...]]] = {
     "enabled": {
         "on": (
@@ -45,6 +54,7 @@ _STATE_MARKERS: dict[str, dict[str, tuple[str, ...]]] = {
             "disabled",
             "turned off",
             "inactive",
+            "is inactive",
             "cancelled",
             "canceled",
         ),
@@ -59,6 +69,8 @@ _STATE_MARKERS: dict[str, dict[str, tuple[str, ...]]] = {
             "allowed",
             "permitted",
             "approved",
+            "can",
+            "may",
         ),
         "no": (
             "\u7981\u6b62",
@@ -72,6 +84,8 @@ _STATE_MARKERS: dict[str, dict[str, tuple[str, ...]]] = {
             "blocked",
             "denied",
             "rejected",
+            "cannot",
+            "can't",
         ),
     },
     "success": {
@@ -81,6 +95,8 @@ _STATE_MARKERS: dict[str, dict[str, tuple[str, ...]]] = {
             "\u5df2\u7ecf\u5b8c\u6210",
             "\u901a\u8fc7",
             "\u5b8c\u6210",
+            "\u597d\u4e86",
+            "\u5b8c\u4e86",
             "succeeded",
             "successful",
             "passed",
@@ -120,6 +136,7 @@ _STATE_MARKERS: dict[str, dict[str, tuple[str, ...]]] = {
             "\u5df2\u7ecf\u652f\u4ed8",
             "\u652f\u4ed8\u5b8c\u6210",
             "\u5df2\u4ed8\u6b3e",
+            "\u4ed8\u6b3e\u4e86\u5417",
             "paid",
             "payment completed",
         ),
@@ -154,6 +171,7 @@ _TEMPORAL_MARKERS: dict[str, tuple[str, ...]] = {
         "\u6628\u5929",
         "\u6628\u665a",
         "\u4e0a\u4e2a\u6708",
+        "\u53bb\u5e74",
         "previously",
         "historical",
         "last month",
@@ -164,6 +182,9 @@ _TEMPORAL_MARKERS: dict[str, tuple[str, ...]] = {
         "\u8ba1\u5212",
         "\u660e\u5e74",
         "\u540e\u7eed",
+        "\u4e0b\u4e00\u7248",
+        "\u4e0b\u5b63\u5ea6",
+        "\u4e0b\u4e2a\u7248\u672c",
         "future",
         "planned",
         "will",
@@ -183,6 +204,16 @@ _STOPWORDS = {
     "been",
     "still",
     "now",
+    "what",
+    "which",
+    "who",
+    "when",
+    "where",
+    "how",
+    "should",
+    "can",
+    "does",
+    "did",
     "already",
     "currently",
     "not",
@@ -195,6 +226,14 @@ _STOPWORDS = {
     "\u5f53\u524d",
     "\u662f\u5426",
     "\u4ec0\u4e48",
+    "\u8c01",
+    "\u5417",
+    "\u54ea\u4e2a",
+    "\u54ea\u91cc",
+    "\u600e\u4e48",
+    "\u9879\u76ee",
+    "\u8d1f\u8d23",
+    "\u8d23\u4eba",
 }
 
 
@@ -232,6 +271,37 @@ def state_fact_metadata(text: str, *, source: str) -> dict[str, Any]:
     }
 
 
+def extract_query_state_intent(text: str) -> QueryStateIntent:
+    normalized = _normalize(text)
+    fact = extract_state_fact(text)
+    inferred = _infer_query_signal(normalized)
+    explicit_temporal_scope = _explicit_temporal_scope(normalized)
+    asks_inverse = "\u76f8\u53cd\u72b6\u6001" in normalized or "opposite state" in normalized
+    attribute = (
+        inferred[0]
+        if inferred is not None
+        else (None if fact is None else fact.attribute)
+    )
+    expected_value = (
+        inferred[1]
+        if inferred is not None
+        else (None if fact is None else fact.value)
+    )
+    if asks_inverse and expected_value is not None:
+        expected_value = _opposite_value(expected_value)
+    return QueryStateIntent(
+        entity_tokens=topic_tokens(text),
+        attribute=attribute,
+        expected_value=expected_value,
+        temporal_scope=(
+            explicit_temporal_scope
+            if explicit_temporal_scope is not None
+            else (None if fact is None else fact.temporal_scope)
+        ),
+        asks_inverse=asks_inverse,
+    )
+
+
 def state_fact_from_record(record: MemoryRecord) -> StateFact | None:
     metadata = record.metadata or {}
     tokens = metadata.get("semantic_state_entity_tokens")
@@ -248,6 +318,17 @@ def state_fact_from_record(record: MemoryRecord) -> StateFact | None:
                 temporal_scope=str(temporal_scope),
             )
     return extract_state_fact(record.content)
+
+
+def record_temporal_scope(record: MemoryRecord) -> str:
+    metadata = record.metadata or {}
+    if metadata.get("semantic_state_temporal_scope"):
+        return str(metadata["semantic_state_temporal_scope"])
+    return _temporal_scope(_normalize(record.content))
+
+
+def topic_tokens(text: str) -> tuple[str, ...]:
+    return _topic_tokens(_normalize(text))
 
 
 def current_state_group_key(
@@ -290,15 +371,71 @@ def text_conflicts_record_state(text: str, record: MemoryRecord) -> bool:
     return _jaccard(set(query_fact.entity_tokens), set(record_fact.entity_tokens)) >= 0.25
 
 
+def token_overlap(left: tuple[str, ...], right: tuple[str, ...]) -> float:
+    return _jaccard(set(left), set(right))
+
+
 def _state_signals(text: str) -> list[tuple[str, str, int]]:
-    signals: list[tuple[str, str, int]] = []
+    hits: list[tuple[str, str, tuple[int, int]]] = []
     for family, values in _STATE_MARKERS.items():
         for value, markers in values.items():
             for marker in markers:
-                index = text.find(marker)
-                if index >= 0:
-                    signals.append((family, value, index))
+                for match in re.finditer(re.escape(marker), text):
+                    hits.append((family, value, match.span()))
+    signals: list[tuple[str, str, int]] = []
+    for family, value, span in hits:
+        if any(
+            other_family == family
+            and other_value != value
+            and other_span != span
+            and other_span[0] <= span[0]
+            and span[1] <= other_span[1]
+            for other_family, other_value, other_span in hits
+        ):
+            continue
+        signals.append((family, value, span[0]))
     return signals
+
+
+def _infer_query_signal(text: str) -> tuple[str, str] | None:
+    if any(
+        marker in text
+        for marker in ("\u4f1a\u53d1", "\u5f00\u7740", " on?")
+    ):
+        return ("enabled", "on")
+    if any(marker in text for marker in ("\u81ea\u52a8\u91cd\u8bd5", "\u4f1a\u91cd\u8bd5")):
+        return ("enabled", "on")
+    if any(
+        marker in text
+        for marker in (
+            "\u597d\u4e86\u5417",
+            "\u6210\u529f\u4e86\u5417",
+            "\u7ed3\u679c\u600e\u4e48\u6837",
+        )
+    ):
+        return ("success", "yes")
+    if any(
+        marker in text
+        for marker in ("\u5904\u7406\u5b8c\u4e86\u5417", "\u89e3\u51b3\u4e86\u5417")
+    ):
+        return ("resolved", "yes")
+    if any(marker in text for marker in ("\u4ed8\u6b3e\u4e86\u5417", "\u652f\u4ed8\u4e86\u5417")):
+        return ("paid", "yes")
+    if any(
+        marker in text
+        for marker in ("\u80fd\u7ee7\u7eed", "\u80fd\u7528", "can ")
+    ):
+        return ("allowed", "yes")
+    return None
+
+
+def _opposite_value(value: str) -> str:
+    return {
+        "on": "off",
+        "off": "on",
+        "yes": "no",
+        "no": "yes",
+    }.get(value, value)
 
 
 def _has_internal_conflict(signals: list[tuple[str, str, int]]) -> bool:
@@ -309,14 +446,28 @@ def _has_internal_conflict(signals: list[tuple[str, str, int]]) -> bool:
 
 
 def _temporal_scope(text: str) -> str:
+    explicit = _explicit_temporal_scope(text)
+    if explicit is not None:
+        return explicit
+    return "current"
+
+
+def _explicit_temporal_scope(text: str) -> str | None:
     for scope, markers in _TEMPORAL_MARKERS.items():
         if any(marker in text for marker in markers):
             return scope
-    return "current"
+    return None
 
 
 def _topic_tokens(text: str) -> tuple[str, ...]:
     cleaned = text
+    for marker in (
+        "\u76f8\u53cd\u72b6\u6001",
+        "\u76f8\u53cd",
+        "\u72b6\u6001",
+        "\u662f\u4ec0\u4e48",
+    ):
+        cleaned = cleaned.replace(marker, " ")
     for markers in _TEMPORAL_MARKERS.values():
         for marker in markers:
             cleaned = cleaned.replace(marker, " ")

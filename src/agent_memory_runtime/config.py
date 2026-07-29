@@ -88,6 +88,31 @@ class FinalRetrievalFilterConfig:
 
 
 @dataclass(frozen=True)
+class DeterministicRerankConfig:
+    enabled: bool = True
+    max_candidates: int = 20
+    drop_state_conflicts: bool = True
+    prefer_temporal_scope: bool = True
+    drop_entity_mismatch: bool = True
+    no_answer_enabled: bool = True
+    min_entity_overlap: float = 0.18
+    no_answer_min_score: float = 1.35
+    no_answer_min_entity_overlap: float = 0.12
+
+    def __post_init__(self) -> None:
+        if self.max_candidates <= 0:
+            raise ValueError("deterministic rerank max_candidates must be positive")
+        if not 0.0 <= self.min_entity_overlap <= 1.0:
+            raise ValueError("deterministic rerank min_entity_overlap must be between 0 and 1")
+        if self.no_answer_min_score < 0:
+            raise ValueError("deterministic rerank no_answer_min_score cannot be negative")
+        if not 0.0 <= self.no_answer_min_entity_overlap <= 1.0:
+            raise ValueError(
+                "deterministic rerank no_answer_min_entity_overlap must be between 0 and 1"
+            )
+
+
+@dataclass(frozen=True)
 class FastResponseConfig:
     retrieval_timeout_ms: int = 150
     snapshot_hot_memory_limit: int = 8
@@ -241,6 +266,9 @@ class RuntimeConfig:
     hybrid_retrieval: HybridRetrievalConfig = field(default_factory=HybridRetrievalConfig)
     final_retrieval_filter: FinalRetrievalFilterConfig = field(
         default_factory=FinalRetrievalFilterConfig
+    )
+    deterministic_rerank: DeterministicRerankConfig = field(
+        default_factory=DeterministicRerankConfig
     )
     fast_response: FastResponseConfig = field(default_factory=FastResponseConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)

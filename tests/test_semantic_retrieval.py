@@ -34,6 +34,10 @@ from agent_memory_runtime.memory.embeddings.base import validate_vector
 from agent_memory_runtime.memory.retrieval import SemanticRetriever
 from agent_memory_runtime.memory.retrieval.contradiction import has_state_conflict
 from agent_memory_runtime.memory.retrieval.scoring import score_record
+from agent_memory_runtime.memory.semantic_state import (
+    extract_query_state_intent,
+    extract_state_fact,
+)
 from agent_memory_runtime.memory.stores import SQLiteStoreBundle
 from agent_memory_runtime.memory.stores.sqlite_manager import _MIGRATIONS
 from agent_memory_runtime.runtime import AgentMemoryRuntime
@@ -223,6 +227,90 @@ def test_final_filter_abstains_when_candidates_have_weak_evidence(tmp_path) -> N
     runtime.close()
 
 
+def test_deterministic_rerank_drops_temporal_mismatch(tmp_path) -> None:
+    provider = _provider(
+        model="deterministic-temporal-rerank",
+        vectors={
+            "database status": [1.0, 0.0, 0.0],
+            "mysql": [1.0, 0.0, 0.0],
+            "postgresql": [1.0, 0.0, 0.0],
+        },
+    )
+    stores = _stores_with_provider(tmp_path / "deterministic-temporal.sqlite", provider)
+    stores.memory_store.upsert(_record("db-past", "过去订单系统使用 MySQL。"))
+    stores.memory_store.upsert(_record("db-current", "当前订单系统使用 PostgreSQL。"))
+    stores.memory_store.upsert(_record("db-future", "计划明年评估是否回迁 MySQL。"))
+    stores.embedding_worker().run_until_idle()
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(
+            semantic_candidate_limit=3,
+            min_semantic_similarity=0.0,
+        ),
+    )
+
+    selected, _trace = runtime.retrieve(replace(_query("订单系统现在用什么数据库"), limit=5))
+
+    assert [record.memory_id for record in selected] == ["db-current"]
+    runtime.close()
+
+
+def test_deterministic_rerank_keeps_correct_near_entity(tmp_path) -> None:
+    provider = _provider(
+        model="deterministic-entity-rerank",
+        vectors={
+            "owner lookup": [1.0, 0.0, 0.0],
+            "支付项目": [1.0, 0.0, 0.0],
+            "订单项目": [1.0, 0.0, 0.0],
+        },
+    )
+    stores = _stores_with_provider(tmp_path / "deterministic-entity.sqlite", provider)
+    stores.memory_store.upsert(_record("pay-owner", "支付项目负责人是张敏。"))
+    stores.memory_store.upsert(_record("order-owner", "订单项目负责人是李航。"))
+    stores.memory_store.upsert(_record("pay-qa", "支付项目测试负责人是王琦。"))
+    stores.embedding_worker().run_until_idle()
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(
+            semantic_candidate_limit=3,
+            min_semantic_similarity=0.0,
+        ),
+    )
+
+    selected, _trace = runtime.retrieve(replace(_query("支付项目负责人是谁"), limit=3))
+
+    assert selected
+    assert selected[0].memory_id == "pay-owner"
+    runtime.close()
+
+
+def test_deterministic_rerank_compares_allowed_query_with_success_record(tmp_path) -> None:
+    provider = _provider(
+        model="deterministic-state-attribute-compat",
+        vectors={
+            "contract review": [1.0, 0.0, 0.0],
+            "approved": [1.0, 0.0, 0.0],
+            "rejected": [1.0, 0.0, 0.0],
+        },
+    )
+    stores = _stores_with_provider(tmp_path / "deterministic-state-compat.sqlite", provider)
+    stores.memory_store.upsert(_record("contract-approved", "合同A-17的法务审核已经通过。"))
+    stores.memory_store.upsert(_record("contract-rejected", "合同A-17的法务审核未通过。"))
+    stores.embedding_worker().run_until_idle()
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(
+            semantic_candidate_limit=2,
+            min_semantic_similarity=0.0,
+        ),
+    )
+
+    selected, _trace = runtime.retrieve(replace(_query("A-17合同能继续签吗"), limit=5))
+
+    assert [record.memory_id for record in selected] == ["contract-approved"]
+    runtime.close()
+
+
 def test_state_conflict_guard_handles_allowed_chinese_substrings() -> None:
     assert has_state_conflict(
         "以后Java代码不要用Lambda",
@@ -249,6 +337,26 @@ def test_state_conflict_guard_demotes_current_query_past_record() -> None:
 def test_state_conflict_guard_handles_payment_and_success_markers() -> None:
     assert has_state_conflict("发票INV-42已经支付完成。", "发票INV-42仍然未支付。")
     assert has_state_conflict("昨晚夜间备份任务成功完成。", "昨晚夜间备份任务失败。")
+
+
+def test_semantic_state_ignores_contained_opposite_markers() -> None:
+    inactive = extract_state_fact("License LIC-88 is inactive for the workspace.")
+    unfinished = extract_state_fact("订单服务缓存预热未完成。")
+    rejected = extract_state_fact("合同A-17的法务审核未通过。")
+
+    assert inactive is not None
+    assert (inactive.attribute, inactive.value) == ("enabled", "off")
+    assert unfinished is not None
+    assert (unfinished.attribute, unfinished.value) == ("success", "no")
+    assert rejected is not None
+    assert (rejected.attribute, rejected.value) == ("success", "no")
+
+
+def test_query_state_intent_prefers_question_signal_over_contained_marker() -> None:
+    intent = extract_query_state_intent("T-900现在处理完了吗")
+
+    assert intent.attribute == "resolved"
+    assert intent.expected_value == "yes"
 
 
 def test_sensitive_memory_is_not_copied_into_search_indexes(tmp_path) -> None:

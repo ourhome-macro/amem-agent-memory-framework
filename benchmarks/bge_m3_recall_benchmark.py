@@ -553,6 +553,16 @@ def main() -> None:
     else:
         all_events = _dataset_events(dataset)
         benchmark_cases = _dataset_cases(dataset)
+    category_filter = {
+        item.strip()
+        for item in os.environ.get("AMEM_RECALL_CATEGORY", "").split(",")
+        if item.strip()
+    }
+    if category_filter:
+        benchmark_cases = [
+            case for case in benchmark_cases if case["category"] in category_filter
+        ]
+        print(f"  Category filter: {', '.join(sorted(category_filter))}")
     print(f"  Total events: {len(all_events)}")
     started = perf_counter()
     for ev_dict in all_events:

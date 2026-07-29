@@ -6,7 +6,13 @@ from agent_memory_runtime.domain.query import MemoryQuery, RetrievalResult
 from agent_memory_runtime.memory.retrieval.candidates import CandidateBatch, CandidateHit
 from agent_memory_runtime.memory.retrieval.contradiction import has_state_conflict
 from agent_memory_runtime.memory.retrieval.lexical import lexical_tokens, searchable_record_text
-from agent_memory_runtime.memory.semantic_state import state_values_conflict
+from agent_memory_runtime.memory.semantic_state import (
+    extract_query_state_intent,
+    record_temporal_scope,
+    state_values_conflict,
+    token_overlap,
+    topic_tokens,
+)
 
 
 def apply_final_filter(
@@ -141,6 +147,7 @@ def _has_strong_evidence(
             >= config.final_retrieval_filter.min_semantic_similarity
             or _lexical_coverage(query.text, record)
             >= config.final_retrieval_filter.min_lexical_coverage
+            or _temporal_entity_evidence(query.text, record)
         ):
             return True
     return False
@@ -168,6 +175,15 @@ def _lexical_coverage(query_text: str, record: MemoryRecord) -> float:
         return 0.0
     record_tokens = lexical_tokens(searchable_record_text(record))
     return len(query_tokens & record_tokens) / len(query_tokens)
+
+
+def _temporal_entity_evidence(query_text: str, record: MemoryRecord) -> bool:
+    intent = extract_query_state_intent(query_text)
+    if intent.temporal_scope is None:
+        return False
+    if record_temporal_scope(record) != intent.temporal_scope:
+        return False
+    return token_overlap(intent.entity_tokens, topic_tokens(searchable_record_text(record))) > 0.0
 
 
 def _empty_candidates() -> CandidateBatch:

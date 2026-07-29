@@ -1,0 +1,436 @@
+{
+  "dataset": "E:\\project\\agent-memory-runtime\\benchmarks\\data\\recall_250_balanced_v1.json",
+  "report": "E:\\project\\agent-memory-runtime\\doc\\bge-m3-balanced-rerank-benchmark-results.json",
+  "mode": "hybrid_rrf_t0.0",
+  "failed_or_forbidden_cases": 5,
+  "missing_query_attribute": 1,
+  "missing_query_value": 1,
+  "missing_expected_state": 0,
+  "missing_forbidden_state": 0,
+  "cases": [
+    {
+      "case_id": "bal_hn_001_yes",
+      "query": "现在还会自动续费吗",
+      "passed": false,
+      "forbidden_hits": 1,
+      "selected_ids": [
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_hn_001_no",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:epi_014",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:epi_012",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:pref_024",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_ts_ui_current"
+      ],
+      "query_intent": {
+        "entity_tokens": [
+          "会自",
+          "动续",
+          "续费",
+          "自动",
+          "费吗",
+          "还会"
+        ],
+        "attribute": null,
+        "expected_value": null,
+        "temporal_scope": "current",
+        "asks_inverse": false
+      },
+      "expected": [
+        {
+          "memory_id": "bal_hn_001_yes",
+          "content": "用户的账单自动续费已经关闭。",
+          "state": {
+            "entity": "动续 单自 户的 的账 续费 自动 账单",
+            "attribute": "enabled",
+            "value": "off",
+            "temporal_scope": "current"
+          }
+        }
+      ],
+      "forbidden": [
+        {
+          "memory_id": "bal_hn_001_no",
+          "content": "用户的账单自动续费仍然开启。",
+          "state": {
+            "entity": "动续 单自 户的 的账 续费 自动 账单",
+            "attribute": "enabled",
+            "value": "on",
+            "temporal_scope": "current"
+          }
+        }
+      ],
+      "selected": [
+        {
+          "memory_id": "bal_hn_001_no",
+          "content": "用户的账单自动续费仍然开启。",
+          "state": {
+            "entity": "动续 单自 户的 的账 续费 自动 账单",
+            "attribute": "enabled",
+            "value": "on",
+            "temporal_scope": "current"
+          }
+        },
+        {
+          "memory_id": "epi_014",
+          "content": "用户在hard negative评测中发现自动续费开启和关闭混淆。",
+          "state": null
+        },
+        {
+          "memory_id": "epi_012",
+          "content": "用户在Qdrant测试中补了首次upsert自动建collection。",
+          "state": null
+        },
+        {
+          "memory_id": "pref_024",
+          "content": "对高风险写操作要保守，宁可进入审核也不要自动覆盖。",
+          "state": {
+            "entity": "也自 作要 保守 入审 写操 动覆 可进 宁可 守宁 审核 对高 操作 核也 自动 要保 覆盖 进入 险写 风险 高风",
+            "attribute": "allowed",
+            "value": "no",
+            "temporal_scope": "current"
+          }
+        },
+        {
+          "memory_id": "bal_ts_ui_current",
+          "content": "现在后台UI改为中性色和少量绿色强调。",
+          "state": null
+        }
+      ]
+    },
+    {
+      "case_id": "bal_hn_004_no",
+      "query": "INV-42现在付款了吗 的相反状态是什么",
+      "passed": false,
+      "forbidden_hits": 0,
+      "selected_ids": [
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_para_hard_negative",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_ts_ui_current",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_para_facts_first",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:pref_027",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_ts_deploy_current"
+      ],
+      "query_intent": {
+        "entity_tokens": [
+          "42",
+          "inv"
+        ],
+        "attribute": "paid",
+        "expected_value": "no",
+        "temporal_scope": "current",
+        "asks_inverse": true
+      },
+      "expected": [
+        {
+          "memory_id": "bal_hn_004_no",
+          "content": "发票INV-42仍然未支付。",
+          "state": {
+            "entity": "42 inv 发票",
+            "attribute": "paid",
+            "value": "no",
+            "temporal_scope": "current"
+          }
+        }
+      ],
+      "forbidden": [
+        {
+          "memory_id": "bal_hn_004_yes",
+          "content": "发票INV-42已经支付完成。",
+          "state": {
+            "entity": "42 inv 发票 支付 票支",
+            "attribute": "paid",
+            "value": "yes",
+            "temporal_scope": "current"
+          }
+        }
+      ],
+      "selected": [
+        {
+          "memory_id": "bal_para_hard_negative",
+          "content": "embedding对否定语义有盲区，必须加入相反状态的负例检查。",
+          "state": null
+        },
+        {
+          "memory_id": "bal_ts_ui_current",
+          "content": "现在后台UI改为中性色和少量绿色强调。",
+          "state": null
+        },
+        {
+          "memory_id": "bal_para_facts_first",
+          "content": "回答当前代码状态时只说已接通的模块，不把设计稿当实现。",
+          "state": null
+        },
+        {
+          "memory_id": "pref_027",
+          "content": "检索评测要包含hard negative，尤其是否定和状态翻转。",
+          "state": null
+        },
+        {
+          "memory_id": "bal_ts_deploy_current",
+          "content": "现在周五下午禁止生产发布。",
+          "state": {
+            "entity": "下午 五下 产发 午生 发布 周五 生产",
+            "attribute": "allowed",
+            "value": "no",
+            "temporal_scope": "current"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "bal_hn_007_no",
+      "query": "Can productioff deployment proceed?",
+      "passed": false,
+      "forbidden_hits": 1,
+      "selected_ids": [
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_hn_007_yes",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_ts_deploy_current",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_nat_archive_duplicate",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_hn_002_yes",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_nat_qdrant_default"
+      ],
+      "query_intent": {
+        "entity_tokens": [
+          "deployment",
+          "proceed",
+          "productioff"
+        ],
+        "attribute": "allowed",
+        "expected_value": "yes",
+        "temporal_scope": "current",
+        "asks_inverse": false
+      },
+      "expected": [
+        {
+          "memory_id": "bal_hn_007_no",
+          "content": "Production deployment is blocked by security.",
+          "state": {
+            "entity": "by deployment production security",
+            "attribute": "allowed",
+            "value": "no",
+            "temporal_scope": "current"
+          }
+        }
+      ],
+      "forbidden": [
+        {
+          "memory_id": "bal_hn_007_yes",
+          "content": "Production deployment is approved by security.",
+          "state": {
+            "entity": "by deployment production security",
+            "attribute": "allowed",
+            "value": "yes",
+            "temporal_scope": "current"
+          }
+        }
+      ],
+      "selected": [
+        {
+          "memory_id": "bal_hn_007_yes",
+          "content": "Production deployment is approved by security.",
+          "state": {
+            "entity": "by deployment production security",
+            "attribute": "allowed",
+            "value": "yes",
+            "temporal_scope": "current"
+          }
+        },
+        {
+          "memory_id": "bal_ts_deploy_current",
+          "content": "现在周五下午禁止生产发布。",
+          "state": {
+            "entity": "下午 五下 产发 午生 发布 周五 生产",
+            "attribute": "allowed",
+            "value": "no",
+            "temporal_scope": "current"
+          }
+        },
+        {
+          "memory_id": "bal_nat_archive_duplicate",
+          "content": "Clear duplicate current memories can be reinforced on the kept record and archived on the duplicate.",
+          "state": {
+            "entity": "and archived be clear duplicate kept memories on record reinforced",
+            "attribute": "allowed",
+            "value": "yes",
+            "temporal_scope": "current"
+          }
+        },
+        {
+          "memory_id": "bal_hn_002_yes",
+          "content": "生产告警短信通知已经开启。",
+          "state": {
+            "entity": "产告 信通 告警 生产 短信 警短 通知",
+            "attribute": "enabled",
+            "value": "on",
+            "temporal_scope": "current"
+          }
+        },
+        {
+          "memory_id": "bal_nat_qdrant_default",
+          "content": "Runtime can default to Qdrant for vector recall while SQLite remains source of truth.",
+          "state": {
+            "entity": "default for of qdrant recall remains runtime source sqlite to truth vector while",
+            "attribute": "allowed",
+            "value": "yes",
+            "temporal_scope": "current"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "bal_hn_011_no",
+      "query": "订单服务缓存预热好了吗 的相反状态是什么",
+      "passed": false,
+      "forbidden_hits": 0,
+      "selected_ids": [
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:rel_002",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_ts_db_current",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_para_hard_negative",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:epi_004",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_scope_order_owner"
+      ],
+      "query_intent": {
+        "entity_tokens": [
+          "务缓",
+          "单服",
+          "吗的",
+          "存预",
+          "服务",
+          "热吗",
+          "缓存",
+          "订单",
+          "预热"
+        ],
+        "attribute": "success",
+        "expected_value": "no",
+        "temporal_scope": "current",
+        "asks_inverse": true
+      },
+      "expected": [
+        {
+          "memory_id": "bal_hn_011_no",
+          "content": "订单服务缓存预热未完成。",
+          "state": {
+            "entity": "务缓 单服 存预 服务 热未 缓存 订单 预热",
+            "attribute": "success",
+            "value": "no",
+            "temporal_scope": "current"
+          }
+        }
+      ],
+      "forbidden": [
+        {
+          "memory_id": "bal_hn_011_yes",
+          "content": "订单服务缓存预热已经完成。",
+          "state": {
+            "entity": "务缓 单服 存预 服务 缓存 订单 预热",
+            "attribute": "success",
+            "value": "yes",
+            "temporal_scope": "current"
+          }
+        }
+      ],
+      "selected": [
+        {
+          "memory_id": "rel_002",
+          "content": "李航是用户的后端搭档，主要维护订单服务。",
+          "state": null
+        },
+        {
+          "memory_id": "bal_ts_db_current",
+          "content": "当前订单系统使用PostgreSQL。",
+          "state": null
+        },
+        {
+          "memory_id": "bal_para_hard_negative",
+          "content": "embedding对否定语义有盲区，必须加入相反状态的负例检查。",
+          "state": null
+        },
+        {
+          "memory_id": "epi_004",
+          "content": "上周团队把订单导出任务从同步接口迁到了后台队列。",
+          "state": null
+        },
+        {
+          "memory_id": "bal_scope_order_owner",
+          "content": "李航负责订单项目需求确认。",
+          "state": null
+        }
+      ]
+    },
+    {
+      "case_id": "bal_hn_014_no",
+      "query": "Can RF-18 be refunded? 的相反状态是什么",
+      "passed": false,
+      "forbidden_hits": 0,
+      "selected_ids": [
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:bal_para_hard_negative",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:pref_027",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:epi_013",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:epi_001",
+        "proposal:belief:eval-tenant:recall-v1:alice:companion:epi_014"
+      ],
+      "query_intent": {
+        "entity_tokens": [
+          "18",
+          "be",
+          "refunded",
+          "rf"
+        ],
+        "attribute": "allowed",
+        "expected_value": "no",
+        "temporal_scope": "current",
+        "asks_inverse": true
+      },
+      "expected": [
+        {
+          "memory_id": "bal_hn_014_no",
+          "content": "Refund request RF-18 is rejected.",
+          "state": {
+            "entity": "18 refund request rf",
+            "attribute": "allowed",
+            "value": "no",
+            "temporal_scope": "current"
+          }
+        }
+      ],
+      "forbidden": [
+        {
+          "memory_id": "bal_hn_014_yes",
+          "content": "Refund request RF-18 is approved.",
+          "state": {
+            "entity": "18 refund request rf",
+            "attribute": "allowed",
+            "value": "yes",
+            "temporal_scope": "current"
+          }
+        }
+      ],
+      "selected": [
+        {
+          "memory_id": "bal_para_hard_negative",
+          "content": "embedding对否定语义有盲区，必须加入相反状态的负例检查。",
+          "state": null
+        },
+        {
+          "memory_id": "pref_027",
+          "content": "检索评测要包含hard negative，尤其是否定和状态翻转。",
+          "state": null
+        },
+        {
+          "memory_id": "epi_013",
+          "content": "上次文档评审要求明确SQLite是真实状态库。",
+          "state": null
+        },
+        {
+          "memory_id": "epi_001",
+          "content": "2026年7月18日用户修复了SQLite迁移checksum冲突。",
+          "state": null
+        },
+        {
+          "memory_id": "epi_014",
+          "content": "用户在hard negative评测中发现自动续费开启和关闭混淆。",
+          "state": null
+        }
+      ]
+    }
+  ]
+}

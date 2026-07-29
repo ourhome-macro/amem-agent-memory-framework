@@ -7,6 +7,9 @@ from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery, RetrievalResult, RetrievalTrace
 from agent_memory_runtime.memory.retrieval.candidate_budget import apply_candidate_budget
 from agent_memory_runtime.memory.retrieval.candidates import CandidateBatch
+from agent_memory_runtime.memory.retrieval.deterministic_rerank import (
+    apply_deterministic_rerank,
+)
 from agent_memory_runtime.memory.retrieval.filters import hard_filter
 from agent_memory_runtime.memory.retrieval.final_filter import apply_final_filter
 from agent_memory_runtime.memory.retrieval.planner import normalize_query
@@ -70,8 +73,15 @@ class RetrievalPipeline:
             if score.total > 0:
                 scored.append(RetrievalResult(memory_id=record.memory_id, score=score))
         ranked_results = rerank(scored)
-        filtered_results = apply_final_filter(
+        reranked_results = apply_deterministic_rerank(
             ranked_results,
+            records_by_id=record_by_id,
+            query=planned,
+            config=self.config,
+            candidate_batch=candidate_batch,
+        )
+        filtered_results = apply_final_filter(
+            reranked_results,
             records_by_id=record_by_id,
             query=planned,
             config=self.config,
@@ -87,7 +97,7 @@ class RetrievalPipeline:
             candidate_count=len(filtered),
             blocked_count=blocked_count,
             selected_memory_ids=tuple(item.memory_id for item in selected_results),
-            results=tuple(ranked_results),
+            results=tuple(filtered_results),
             retrieval_legs=(candidate_batch.retrieval_legs if candidate_batch is not None else ()),
             lexical_candidate_count=(
                 candidate_batch.lexical_candidate_count if candidate_batch is not None else 0
