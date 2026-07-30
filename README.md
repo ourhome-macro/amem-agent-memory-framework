@@ -1,404 +1,263 @@
-# Agent Memory Runtime
+# AMEM Agent Memory Runtime
 
-## v0.6：FTS5 + sqlite-vec 混合检索
+AMEM 是一个面向有状态 AI Agent 的长期记忆运行时。它负责显式记忆写入、语义整理、权限隔离、检索召回、上下文投影、审计留痕和后台向量索引。
 
-v0.6 已将默认 SQLite 检索链路升级为真正的 FTS5/BM25 + sqlite-vec cosine：词法与语义分别召回 top-N，按 `memory_id` 合并后使用 weighted RRF，再叠加原有业务精排。tenant、user、session、layer、status、type、scope、tag 和 ACL 均在 SQL top-K 前过滤；semantic 超时、熔断、bulkhead 或 provider 故障时保留已完成的 lexical 结果。
+项目的核心目标不是做普通 RAG 文档问答，而是维护 Agent 在多用户、多 Agent、多会话场景下的当前记忆状态，并把可追溯、可授权、可裁剪的记忆上下文交给模型使用。
+
+## 现在能做什么
+
+- 通过 `save_memory`、`revise_memory`、`forget_memory` 显式修改长期记忆。
+- 将写入统一收敛为 `MemoryProposal`，再经过 `MemoryWritePolicy` 校验后写入 `MemoryRecord`。
+- 支持 `core`、`working`、`archival` 三层记忆，用于区分稳定偏好、当前任务状态和归档历史。
+- 使用 `tenant_id`、`user_id`、`agent_id`、`session_id`、`scope`、`visible_to` 做多租户和多 Agent 隔离。
+- 使用 SQLite 保存真实状态、审计日志、tombstone、Auto Dream job、embedding outbox 和运行时状态。
+- 默认使用 Qdrant 作为语义向量索引投影；SQLite 仍是事实源。
+- 支持 SQLite FTS5 关键词检索、Qdrant 向量检索、RRF 融合、查询路由、确定性 rerank 和 no-answer 过滤。
+- 支持基于 `MemoryAuditLog` 的审计重放，用 before/after 记录重建当前 `MemoryRecord` 状态。
+- 支持 Auto Dream 后台任务，用于生成去重、强化、冲突审核、归档等维护 proposal。
+- 支持 embedding outbox，Qdrant 临时失败不会影响 SQLite 中的真实记忆写入。
+- 支持对话历史压缩和记忆上下文 token 预算，默认记忆注入预算为 `1000` tokens。
+- 支持 OpenAI-compatible 模型网关、流式响应、工具调用、输出契约校验和本地 CLI。
+
+## 主写入链路
+
+```text
+save/revise/forget tools or Auto Dream
+  -> MemoryProposal
+  -> MemoryWritePolicy
+  -> MemoryService
+  -> MemoryRecord
+  -> MemoryAuditLog
+  -> embedding outbox
+  -> Qdrant vector projection
+```
+
+`MemoryRecord` 是当前状态事实源。`MemoryAuditLog` 是变更历史、证据来源和审计重放输入。Qdrant、FTS5 和 SQLite vector 都是可重建的检索投影。
+
+## 主检索链路
 
 ```text
 MemoryQuery
- -> FTS5/BM25 top 64 -------------------+
- -> query embedding -> filtered cosine top 64
-                                        |
-                     weighted RRF -> business rerank -> context budget
+  -> QueryRouter
+  -> FTS5 and/or Qdrant candidates
+  -> RRF fusion
+  -> deterministic rerank
+  -> final filter
+  -> AccessChecker
+  -> ContextBuilder
 ```
 
-CLI 默认数据文件统一为 `.amem/runtime.sqlite`，schema 升级到 v6，并固定 `sqlite-vec==0.1.9`。embedding 使用事务 outbox + 批量 worker，不在记忆写事务内调用模型；向量发布必须通过 content hash、source sequence、lease 和 fencing 校验。首个 generation 和模型升级都必须显式通过 coverage/backlog 门禁，不能用部分索引自动上线。
+查询路由会根据问题特征选择偏关键词、偏向量、混合、状态感知、时间感知或严格无答案模式。精确编号、负责人、字段类问题更偏 FTS5；自然语言改写、抽象语义和跨语言问题更偏 Qdrant；状态和时间问题会进入确定性 rerank。
 
-```powershell
-py -3.12 -m pip install -e ".[dev]"
-amem init
+## 核心模块
 
-$env:AMEM_EMBEDDING_MODEL = "your-multilingual-embedding-model"
-$env:AMEM_EMBEDDING_MODEL_REVISION = "pinned-revision"
-$env:AMEM_EMBEDDING_DIMENSIONS = "1024"
-$env:AMEM_EMBEDDING_BASE_URL = "https://embedding.example.com/v1"
-$env:AMEM_EMBEDDING_API_KEY_ENV = "EMBEDDING_API_KEY"
-$env:EMBEDDING_API_KEY = "<secret>"
-$env:AMEM_EMBEDDING_MIN_SIMILARITY = "<model-calibrated-threshold>"
-
-amem embedding backfill
-amem embedding worker
-amem embedding status
-amem embedding activate
-```
-
-`AMEM_EMBEDDING_MIN_SIMILARITY` 没有通用默认值，必须用最终模型和目标数据校准；在线 semantic 未配置阈值时会拒绝启动。评测支持四种模式：
-
-```powershell
-amem eval examples/evals/semantic_retrieval_cases.yml --mode lexical-only
-amem eval examples/evals/semantic_retrieval_cases.yml --mode semantic-only
-amem eval examples/evals/semantic_retrieval_cases.yml --mode hybrid-rrf
-amem eval examples/evals/semantic_retrieval_cases.yml --mode hybrid-business
-```
-
-本机 Windows 11 / Python 3.12.5 合成基准中，5K 可见记录、1024 维的 hybrid P95 为 38.25ms 且 30/30 完成 semantic；10K/1024 的 hybrid P95 为 108.16ms，出现 2/30 次 100ms timeout；100K/32 的 exact vector P95 为 422.83ms，hybrid 主要通过 bulkhead 快速退化为 lexical-only。因此不能按全库总条数写死迁移阈值，必须按真实 ACL 过滤后的可见分区、维度与并发压测；vector leg P95 超预算或需要多实例共享/高 QPS 时进入 Qdrant 评审，不把 FAISS 文件索引作为在线事实源。
-
-完整 schema、迁移、一致性、模型升级/回滚、评测、基准和发布门禁见 [`doc/fts5-sqlite-vec-implementation-v0.6.0.md`](doc/fts5-sqlite-vec-implementation-v0.6.0.md)；选型依据见 [`doc/semantic-retrieval-design-v0.6.0.md`](doc/semantic-retrieval-design-v0.6.0.md)。
-
-## v0.5：跨会话记忆与上下文生产强化
-
-v0.5 完成 P0/P1 生产缺口：Core/Archival 记忆可按显式会话策略跨会话召回，长期偏好与策略使用不含 session 的稳定 ID；Working 记忆仍保持会话隔离，tenant/user/agent 权限边界不会被跨会话策略绕过。中文检索使用 CJK 二元词，SQLite schema v5 提供结构化候选列、词项/标签索引和分页读取。
-
-`BusinessAgentRuntime` 现在会在每次模型调用前计算完整 messages、tool schema、预留输出和可选美元成本；超过软阈值时先持久化压缩后的 Checkpoint，超过硬预算则在请求供应商之前失败。`OutputContract` 提供 Draft 2020-12 JSON Schema 校验、受控修复和可选 provider-native JSON Schema 请求，未通过校验的流式正文不会暴露给适配层。
-
-```python
-from agent_memory_runtime import AgentRequest, OutputContract
-from agent_memory_runtime.domain.enums import MemorySessionPolicy
-from agent_memory_runtime.domain.query import MemoryQuery
-
-query = MemoryQuery(
-    agent_id="assistant",
-    text="按我的偏好回答",
-    tenant_id="tenant-1",
-    user_id="user-1",
-    session_id="current-session",
-    session_policy=MemorySessionPolicy.PROFILE.value,
-)
-
-request = AgentRequest(
-    agent_id="assistant",
-    message="给出处理结果",
-    output_contract=OutputContract(
-        name="result",
-        schema={
-            "type": "object",
-            "properties": {"answer": {"type": "string"}},
-            "required": ["answer"],
-            "additionalProperties": False,
-        },
-    ),
-)
-```
-
-Retention 删除会先写入持久化 Tombstone；读取和 replay 都遵守删除水位。后台 Worker 使用常量内存汇总周期结果，Snapshot 数量有界。检索评测输出 Recall@K、Precision@K、MRR、nDCG 和越权负样本结果，失败时 CLI 返回非零退出码。完整设计与升级说明见 [`doc/p0-p1-memory-production-hardening-v0.5.0.md`](doc/p0-p1-memory-production-hardening-v0.5.0.md)。
-
-用于简历的 STAR 拆解、牛客公开写法调研、真实指标口径和面试追问清单见
-[`doc/resume-project-star-v0.5.0.md`](doc/resume-project-star-v0.5.0.md)；可用
-`py -3.12 benchmarks\validate_runtime.py --records 10000 --iterations 100` 复现规模数据。
-
-## v0.4：受控多 Agent 编排与交互式 CLI
-
-本版本在 `BusinessAgentRuntime` 之上增加可选的 `AgentOrchestrator`：使用静态注册表和有界 DAG 完成父子委派、依赖并行、审批暂停/恢复、取消传播、租约 fencing、全局预算结算与 SQLite 持久化。它不是允许 Agent 自由拉起 Agent 的开放式 swarm；图、白名单、深度、节点数、扇出和并发度都由宿主应用显式控制。
-
-```python
-from agent_memory_runtime import (
-    AgentDefinition,
-    AgentDefinitionRegistry,
-    AgentGraph,
-    AgentOrchestrator,
-    DelegatedTask,
-    OrchestrationRequest,
-)
-
-registry = AgentDefinitionRegistry()
-registry.register(AgentDefinition("research", research_runtime))
-registry.register(AgentDefinition("writer", writer_runtime))
-
-orchestrator = AgentOrchestrator(registry=registry)
-request = OrchestrationRequest(
-    graph=AgentGraph(
-        tasks=(
-            DelegatedTask("facts", "research", "收集事实"),
-            DelegatedTask("answer", "writer", "形成答复", depends_on=("facts",)),
-        ),
-        output_task_ids=("answer",),
-    ),
-    tenant_id="tenant-1",
-    request_id="request-1",
-)
-```
-
-CLI 新增了受 Pi 极简 harness 交互启发的 `chat` 命令，但保留本项目的持久状态、身份隔离和人工审批语义：
-
-```powershell
-amem chat --agent assistant --session demo
-amem chat -p "总结今天的事项" --mode text
-amem chat -p "总结今天的事项" --mode jsonl --no-remember
-```
-
-交互模式支持 `/status`、`/providers`、`/model`、`/provider`、`/session`、`/new`、`/history` 和 `/exit`。完整设计、事件协议、恢复语义、SQLite schema v4 与生产边界见 [`doc/controlled-orchestration-cli-v0.4.0.md`](doc/controlled-orchestration-cli-v0.4.0.md)。
-
-## v0.3：通用业务 Agent 框架
-
-项目现在同时提供两个边界清晰的运行时：
-
-- `AgentMemoryRuntime`：事件溯源记忆、检索、访问控制和治理；
-- `BusinessAgentRuntime`：异步 Agent 循环、原生流式模型、工具调用、Run/Checkpoint、审批、取消、恢复、策略预算和指标。
-
-产品或传输适配层只负责把外部输入转换为 `AgentRequest` 并消费 `AgentRunEvent`；播放器、HTTP、WebSocket、语音和 UI 协议不进入通用框架。
-
-```python
-import asyncio
-
-from agent_memory_runtime import (
-    AgentRequest,
-    BusinessAgentRuntime,
-    LLMConfig,
-    OpenAICompatibleModelGateway,
-)
-
-
-async def main() -> None:
-    runtime = BusinessAgentRuntime(
-        model_gateway=OpenAICompatibleModelGateway(
-            LLMConfig.for_provider("openai")
-        )
-    )
-    async for event in runtime.run(
-        AgentRequest(
-            tenant_id="tenant-1",
-            user_id="user-1",
-            agent_id="assistant",
-            request_id="request-1",
-            message="帮我完成这个业务任务",
-        )
-    ):
-        print(event.to_dict())
-
-
-asyncio.run(main())
-```
-
-完整状态机、工具可靠性语义、SQLite schema v3、加密 codec 边界和部署检查见 [`doc/business-agent-runtime-v0.3.0.md`](doc/business-agent-runtime-v0.3.0.md)。
-
-Agent Memory Runtime 是一个面向有状态 Agent 的事件源记忆运行时框架。
-普通 RAG 用于检索外部知识；本运行时维护 Agent 的长期交互状态，追溯每条记忆的来源，
-治理其生命周期，并将经过安全筛选的记忆投影为 Agent 上下文。
-
-核心记忆链路不依赖 LLM 或向量数据库。可选的 OpenAI 兼容模型层消费已经完成访问校验的上下文，
-并生成 Agent 回答；它不会直接写入记忆。
-
-## 核心链路
-
-```text
-Event
- -> SensitiveDataSanitizer
- -> EventStore
- -> Derivation
- -> Lifecycle
- -> MemoryStore
-```
-
-```text
-Query
- -> Retrieval
- -> Access
- -> Compression
- -> Context
-```
-
-```text
-EventStore
- -> Replay
- -> RuntimeSnapshot
- -> Consistency Check
-```
+| 模块 | 作用 |
+| --- | --- |
+| `agent` | 执行 Agent 请求、模型调用、工具循环、checkpoint 和对话压缩。 |
+| `tools` | 注册和执行显式工具，包括记忆保存、修订、删除和搜索。 |
+| `memory.intake` | 把工具输入和 Auto Dream 输出转换为 `MemoryProposal`。 |
+| `memory.write_policy` | 做字段校验、权限校验、乐观锁和风险拦截。 |
+| `memory.service` | 事务内应用 proposal，写 `MemoryRecord`、tombstone 和 audit log。 |
+| `memory.intake.dream` | 生成去重、强化、冲突审核、归档等语义维护 proposal。 |
+| `memory.intake.worker` | 调度、租约、执行、重试和 checkpoint Auto Dream job。 |
+| `memory.retrieval` | 查询路由、候选召回、RRF 融合、rerank、过滤和排序。 |
+| `memory.embeddings` | 管理 embedding provider、generation、outbox worker、SQLite vector 和 Qdrant。 |
+| `memory.stores` | 提供 SQLite、JSONL 和 in-memory 存储实现。 |
+| `audit` | 记录审计 envelope、LLM trace、memory audit log 和审计重放输入。 |
+| `access` | 做 principal-based 访问控制和敏感载荷清理。 |
+| `context` | 构建模型可见的记忆上下文、结构化投影和个性化摘要。 |
+| `llm` | 适配 OpenAI-compatible chat、streaming、tool call 和 usage 元数据。 |
 
 ## 安装
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -e .[dev]
+pip install -e ".[dev,qdrant]"
 ```
 
-## 快速上手
+只跑本地单元测试时不需要真实 Qdrant 服务。需要语义向量检索时，启动 Qdrant 并配置 embedding provider。
 
-最小演示只需要本地 JSONL Store，不依赖真实 LLM：
+## 环境配置
+
+`.env.example` 包含可用配置项。常用配置如下：
+
+```dotenv
+AMEM_VECTOR_BACKEND=qdrant
+AMEM_QDRANT_URL=http://localhost:6333
+AMEM_QDRANT_COLLECTION=agent_memory
+
+AMEM_EMBEDDING_PROVIDER=openai-compatible
+AMEM_EMBEDDING_MODEL=your-embedding-model
+AMEM_EMBEDDING_DIMENSIONS=1024
+AMEM_EMBEDDING_BASE_URL=https://api.openai.com/v1
+AMEM_EMBEDDING_API_KEY_ENV=EMBEDDING_API_KEY
+EMBEDDING_API_KEY=your-key
+```
+
+没有 Qdrant 时可以显式回退：
+
+```dotenv
+AMEM_VECTOR_BACKEND=sqlite
+```
+
+## CLI 快速使用
+
+初始化本地运行目录：
 
 ```powershell
 amem init
+```
+
+写入示例事件并检索：
+
+```powershell
 amem ingest examples/data/customer_support_events.jsonl
 amem retrieve --agent support_agent --query "refund status"
 amem project --agent support_agent --query "refund status"
-amem replay
 ```
 
-如果要演示低延迟写入路径，可以让事件先进入派生队列，再由 worker 后台生成记忆：
+生成模型回答：
 
 ```powershell
-amem init
-amem retrieve --agent support_agent --query "refund status"
-```
-
-如果要调用真实 OpenAI 兼容模型，先在 `.env` 中配置对应供应商密钥，再执行：
-
-```powershell
-amem respond --agent support_agent --query "退款进度怎么样" --stream --fast
-```
-
-## 命令行工具
-
-```powershell
-amem init
-amem ingest examples/data/customer_support_events.jsonl
-amem retention plan
-amem retention apply
-amem retention worker --forever --interval-seconds 300
-amem retrieve --agent support_agent --query "refund status" --session support-001
-amem retrieve --agent assistant --query "按我的偏好回答" --tenant tenant-1 --user user-1 --session current --session-policy profile
-amem project --agent support_agent --query "refund status"
 amem respond --agent support_agent --query "refund status"
 amem respond --agent support_agent --query "refund status" --stream --fast
-amem providers
+```
+
+查看审计：
+
+```powershell
 amem audit
 amem audit --type access
 amem audit-dashboard --out .amem/audit.html
-amem replay
+```
+
+管理 embedding outbox：
+
+```powershell
+amem embedding status
+amem embedding backfill
+amem embedding worker
+amem embedding activate
+```
+
+运行检索评测：
+
+```powershell
 amem eval examples/evals/retrieval_cases.yml
-amem demo customer-support
-amem demo personal-assistant
-amem demo mock-interviewer
+amem eval examples/evals/semantic_retrieval_cases.yml --mode hybrid-rrf
 ```
-
-CLI 追踪输出包含已选记忆 ID、评分明细、被阻止的记忆数量，以及
-`rule_version`、`config_hash`、`last_event_sequence` 和 `state_hash`。流式和快路径响应还会输出
-`context_source`、`retrieval_timed_out` 和 `first_token_ms`。
-每次执行 `amem` 子命令都会先输出 AMEM 启动横幅和运行时定位说明。
-
-## 审计面板与监控
-
-CLI 会把审计记录写入 `.amem/audit.jsonl`。执行一些写入、检索、工具调用或模型调用后，可以生成静态 HTML 审计面板：
-
-```powershell
-amem audit-dashboard --out .amem/audit.html
-```
-
-在 Windows 上直接打开：
-
-```powershell
-Invoke-Item .amem/audit.html
-```
-
-或者使用默认浏览器打开绝对路径：
-
-```powershell
-Start-Process (Resolve-Path .amem/audit.html)
-```
-
-面板会展示审计类型、执行结果、决策分布和脱敏后的审计 JSON。它适合本地调试和面试演示；当前不是常驻 Web 服务。如果要刷新监控内容，重新执行 `amem audit-dashboard --out .amem/audit.html` 即可。
-
-## 数据安全与审计
-
-事件带有 `sensitive` 标签，或检测到银行卡号、凭据等敏感字段时，运行时会在写入
-`EventStore` 前自动标注并最小化其载荷。除路由所需的结构化标识外，文本和未知字段会被替换为
-`[redacted]`；敏感记忆不得使用 `global` 作用域。读取链路仍会执行标签、可见范围和作用域校验。
-
-运行时将 PII 检测、访问控制和 LLM 调用写入统一 `AuditEnvelope`。审计仅保留类型、决策、记忆
-ID、阻止原因、用量、快照定位字段及请求/上下文/回答哈希，不保存提示词、查询、投影上下文、模型
-回答或异常消息。CLI 默认将这些记录保存在 `.amem/audit.jsonl`，可使用 `amem audit`、
-`amem audit --type pii`、`amem audit --type access` 或 `amem audit --type llm_call` 查看。
-
-生产部署使用 `SQLiteStoreBundle` 时，单次写入会将事件、派生记忆和运行时快照放入同一 SQLite
-事务；JSONL Store 适合本地演示和调试，不提供跨文件原子提交。
-
-## OpenAI 兼容模型
-
-项目使用 OpenAI Python SDK 的 Chat Completions 接口，提供 DeepSeek、OpenAI、Gemini、Qwen、
-Z.AI/GLM 和 Kimi 的预设，并支持任意 OpenAI 兼容服务的 `custom` 配置。将相应密钥写入仓库根目录的
-`.env`（该文件已经被 Git 忽略）：
-
-```dotenv
-DEEPSEEK_API_KEY=你的_DeepSeek_API_密钥
-OPENAI_API_KEY=你的_OpenAI_API_密钥
-GEMINI_API_KEY=你的_Gemini_API_密钥
-DASHSCOPE_API_KEY=你的_Qwen_API_密钥
-ZAI_API_KEY=你的_ZAI_API_密钥
-MOONSHOT_API_KEY=你的_Kimi_API_密钥
-```
-
-准备演示数据后即可发起真实调用：
-
-```powershell
-amem init
-amem ingest examples/data/customer_support_events.jsonl
-amem respond --agent support_agent --query "退款进度怎么样"
-amem respond --agent support_agent --query "退款进度怎么样" --stream --fast
-amem respond --agent support_agent --query "退款进度怎么样" --provider kimi
-amem respond --agent support_agent --query "退款进度怎么样" --provider custom --model example-chat --base-url https://models.example.com/v1 --api-key-env EXAMPLE_API_KEY
-```
-
-`respond` 只读取经过检索、授权和压缩后的上下文。若需要长期保留模型输出，应用必须先将输出
-转换为 `Event`，然后显式调用 `runtime.ingest(event)`。
 
 ## Python 用法
 
 ```python
 from agent_memory_runtime import AgentMemoryRuntime
-from agent_memory_runtime.domain.event import Event
+from agent_memory_runtime.memory.intake import MemoryIntakeService, MemoryToolIdentity
 from agent_memory_runtime.domain.query import MemoryQuery
 
 runtime = AgentMemoryRuntime()
-runtime.ingest(Event(
-    event_id="evt-1",
-    kind="message.created",
-    actor_id="user",
-    session_id="s1",
-    labels=("private",),
-    payload={
-        "agent_id": "assistant",
-        "subject_id": "user",
-        "text": "User prefers concise status updates.",
-    },
-))
+intake = MemoryIntakeService(runtime)
 
-context = runtime.project(MemoryQuery(agent_id="assistant", text="status updates"))
+identity = MemoryToolIdentity(
+    actor_id="user-1",
+    tenant_id="tenant-1",
+    user_id="user-1",
+    agent_id="assistant",
+    session_id="session-1",
+)
+
+result = intake.save_memory(
+    {
+        "kind": "preference.updated",
+        "key": "reply_style",
+        "content": "Use concise status updates.",
+        "layer": "core",
+    },
+    identity=identity,
+    idempotency_key="reply-style",
+)
+
+records, trace = runtime.retrieve(
+    MemoryQuery(
+        agent_id="assistant",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        session_id="session-1",
+        session_policy="profile",
+        text="How should replies be written?",
+        limit=5,
+    )
+)
+
+context = runtime.project(
+    MemoryQuery(
+        agent_id="assistant",
+        tenant_id="tenant-1",
+        user_id="user-1",
+        session_id="session-1",
+        session_policy="profile",
+        text="How should replies be written?",
+    )
+)
+
+print(result.memory_ids)
+print([record.memory_id for record in records])
 print(context.projected_context)
 ```
 
-## 仓库结构
+## 审计重放
 
-```text
-src/agent_memory_runtime/
-  runtime.py
-  config.py
-  agent/
-    runtime.py
-    model_gateway.py
-    tool_runtime.py
-    policy.py
-    modules.py
-    stores/
-  domain/
-  memory/
-    derivation/
-    lifecycle/
-    retrieval/
-    compression/
-    stores/
-  access/
-  context/
-  audit/
-  governance/
-  tools/
-  llm/
-  evals/
-  cli/
+显式写入会生成 `MemoryAuditLog`。每条日志保存 `before_record` 和 `after_record`：
+
+- `after_record` 存在：重放时 upsert 该记忆。
+- `after_record` 为空：重放时删除该记忆，并重建 tombstone。
+
+Python 调用：
+
+```python
+report = runtime.replay_memory_audit()
+print(report.final_memory_ids)
 ```
 
-## 记忆治理
+这条链路用于从审计日志恢复当前 memory store。legacy `runtime.replay(Event)` 仍保留为兼容入口，但新记忆主线以 `MemoryRecord + MemoryAuditLog` 为准。
 
-治理模块保留确定性保留策略、人工审核和 PII Vault。长期记忆写入主链路是 `MemoryProposal -> MemoryWritePolicy -> MemoryService -> MemoryAuditLog`；`amem ingest` 和 Python 的 `runtime.ingest(event)` 只记录兼容事件审计，不再派生或归并 `MemoryRecord`。
+## Auto Dream
 
-Retention 可按事件序列年龄归档低价值 working memory，或删除过期 sensitive memory。Human Review 会把高风险 `MemoryCandidate` 先放进审核队列，批准后才进入 `MemoryStore`。PII Vault 负责把可逆敏感值换成 `${PII_...}` 令牌；runtime 的 `sanitize_event` 仍会作为兜底，阻止原文敏感载荷进入事件、记忆和审计。
+Auto Dream 是后台语义维护链路。它不会直接绕过写策略改库，而是输出 `MemoryProposal`：
 
-## 工具调用
+- 重复记忆：生成 reinforce/archive proposal。
+- 同 key 冲突：生成 needs_review proposal。
+- 明确修订：生成 revise proposal。
+- 缺失派生：生成 create proposal。
 
-`tools/` 模块提供基础 Tool Runtime：`ToolRegistry` 注册工具，`ToolPolicy` 执行授权，`ToolExecutor` 负责调用和 `tool_call` 审计，`ToolResult` 会被规范化为 `tool.result` 事件。内置工具包括 function calling、根目录沙箱内的文件读写，以及 provider 驱动的 `web.search`。
+SQLite `DreamStore` 保存 job、lease、checkpoint 和 review 状态。多 worker 通过租约领取任务；失败任务按 retry 策略回到队列。
 
-工具结果不会直接写 `MemoryStore`。如果要进入长期记忆，应把 `ToolExecutor.execute(...).event` 交给 `runtime.ingest_async()` 或 `runtime.ingest()`。
+## 上下文控制
 
-## 设计来源
+`ContextBuilder` 只把当前查询相关、当前身份可访问、且落在 token 预算内的记忆注入模型上下文。默认记忆注入预算是 `1000` tokens。
 
-本项目从相邻的悬疑 Agent 系统中提炼出可复用的生产级边界：LLM 可以生成表达或意图，
-但持久状态变化必须由规则派生、关联来源、支持回放，并在进入上下文前完成访问校验。
+对话历史压缩由 Agent checkpoint 负责，保留系统规则、原始任务、重要约束和近期对话，再把较早消息压缩成结构化摘要。
+
+## 测试
+
+```powershell
+py -3.12 -m ruff check src tests benchmarks
+py -3.12 -m pytest -q
+```
+
+## 文档
+
+模块职责文档在 `doc/`：
+
+- `doc/modules.md`
+- `doc/architecture.md`
+- `doc/api-contract.md`
+- `doc/retrieval.md`
+- `doc/storage.md`
+- `doc/audit.md`
+- `doc/governance.md`
+- `doc/context.md`
+- `doc/security.md`
+- `doc/tools.md`
+- `doc/operations.md`
+- `doc/world-state.md`
