@@ -1,6 +1,10 @@
 """Deterministic governance primitives for retention, review, and PII vaults."""
 
-from agent_memory_runtime.governance.pii import PiiProtector, SimpleEncryptedPiiVault
+from agent_memory_runtime.governance.pii import (
+    PiiProtector,
+    SaltedHashPiiVault,
+    SimpleEncryptedPiiVault,
+)
 from agent_memory_runtime.governance.retention import (
     RetentionExecutor,
     RetentionPlanner,
@@ -15,5 +19,6 @@ __all__ = [
     "RetentionPlanner",
     "RetentionPolicy",
     "ReviewGuard",
+    "SaltedHashPiiVault",
     "SimpleEncryptedPiiVault",
 ]

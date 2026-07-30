@@ -11,5 +11,9 @@ policy, sanitization, and audit records.
   tag, and ACL filters in SQLite queries.
 - `QdrantVectorIndex`: applies equivalent payload filters before vector top-k.
 - `sanitize_event`: removes sensitive payload fields from legacy event audit.
+- `PiiProtector`: replaces detected PII with `${PII_xxx}` tokens before the
+  payload shape spreads into memory, indexes, or model context.
+- `SaltedHashPiiVault`: keeps a random salt and SHA-256 hash per token for
+  equality matching without retaining recoverable PII plaintext.
 - `sanitize_context`: removes forged memory-context fence markers.
 - `RiskGuard`: routes sensitive or high-risk writes to review.

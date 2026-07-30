@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_memory_runtime.governance.pii.token import PiiToken
-from agent_memory_runtime.governance.pii.vault import SimpleEncryptedPiiVault
+from agent_memory_runtime.governance.pii.vault import SaltedHashPiiVault
 
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _CARD_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
@@ -19,7 +19,7 @@ class ProtectedPayload:
 
 
 class PiiProtector:
-    def __init__(self, *, vault: SimpleEncryptedPiiVault) -> None:
+    def __init__(self, *, vault: SaltedHashPiiVault) -> None:
         self.vault = vault
 
     def protect_payload(self, payload: dict[str, Any], *, owner_id: str) -> ProtectedPayload:

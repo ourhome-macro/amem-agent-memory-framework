@@ -10,6 +10,11 @@ Governance is the deterministic write boundary for memory changes.
   cross-subject writes; enforces optimistic version checks.
 - `RiskGuard`: routes deletion, sensitive content, sensitive labels, and
   visibility expansion into review.
+- `PiiProtector`: tokenizes email, payment-card, and sensitive-path values so
+  memory payloads keep `${PII_xxx}` placeholders instead of raw PII.
+- `SaltedHashPiiVault`: stores only per-token salted hashes for local
+  irreversible PII matching; `SimpleEncryptedPiiVault` remains as a
+  compatibility alias and no longer decrypts raw values.
 - `MemoryWritePolicy`: runs validator, access policy, and risk guard in order.
 - `MemoryService`: applies only allowed proposals and writes audit records.
 
