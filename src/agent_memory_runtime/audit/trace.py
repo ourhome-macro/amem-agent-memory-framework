@@ -25,6 +25,7 @@ class RuntimeTrace:
     semantic_timed_out: bool = False
     semantic_error_type: str | None = None
     embedding_coverage: float | None = None
+    query_route: dict[str, object] = field(default_factory=dict)
     candidate_details: dict[str, dict[str, object]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
@@ -49,5 +50,6 @@ class RuntimeTrace:
             "semantic_timed_out": self.semantic_timed_out,
             "semantic_error_type": self.semantic_error_type,
             "embedding_coverage": self.embedding_coverage,
+            "query_route": self.query_route,
             "candidate_details": self.candidate_details,
         }

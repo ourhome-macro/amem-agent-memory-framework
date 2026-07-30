@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from sentence_transformers import SentenceTransformer
 
-from agent_memory_runtime.config import HybridRetrievalConfig, RuntimeConfig
+from agent_memory_runtime.config import HybridRetrievalConfig, QueryRouterConfig, RuntimeConfig
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.evals import evaluate_retrieval
@@ -69,7 +69,10 @@ RECALL_DATASET_PATH = Path(
     )
 )
 BENCHMARK_REPORT_PATH = Path(
-    os.environ.get("AMEM_BENCHMARK_REPORT", ROOT / "doc" / "bge-m3-benchmark-results.json")
+    os.environ.get(
+        "AMEM_BENCHMARK_REPORT",
+        ROOT / "benchmarks" / "results" / "bge-m3-benchmark-results.json",
+    )
 )
 
 # ══════════════════════════════════════════════════════════════
@@ -434,8 +437,9 @@ def run_mode(
         query = build_query(case)
         k = k_override or case.get("k", 8)
         started = perf_counter()
+        trace = None
         try:
-            selected_records, _trace = runtime.retrieve(query)
+            selected_records, trace = runtime.retrieve(query)
             selected_ids = [r.memory_id for r in selected_records][:max(k, 8)]
         except Exception:
             selected_ids = []
@@ -448,19 +452,20 @@ def run_mode(
             k=k,
         )
         results.append({
-            "case_id": case["id"],
-            "category": case["category"],
-            "passed": eval_result.passed,
-            "recall_at_k": eval_result.recall_at_k,
-            "precision_at_k": eval_result.precision_at_k,
-            "mrr": eval_result.reciprocal_rank,
-            "ndcg_at_k": eval_result.ndcg_at_k,
+                "case_id": case["id"],
+                "category": case["category"],
+                "passed": eval_result.passed,
+                "recall_at_k": eval_result.recall_at_k,
+                "precision_at_k": eval_result.precision_at_k,
+                "mrr": eval_result.reciprocal_rank,
+                "ndcg_at_k": eval_result.ndcg_at_k,
                 "forbidden_hits": eval_result.forbidden_hit_count,
                 "no_result_case": eval_result.no_result_case,
                 "no_result_correct": eval_result.no_result_correct,
                 "selected_ids": selected_ids[:5],
                 "expected_ids": case["expected_memory_ids"],
                 "elapsed_ms": round(elapsed_ms, 1),
+                "query_route": trace.query_route if trace is not None else {},
         })
     return results
 
@@ -681,6 +686,40 @@ def main() -> None:
         all_results[f"hybrid_rrf_t{threshold}"] = {"summary": hy_summary, "details": hy_results}
         _print_summary(f"Hybrid-RRF (t={threshold})", hy_summary)
 
+        # --- Router-Hybrid ---
+        router_config = QueryRouterConfig(enabled=True)
+        router_retriever = HybridCandidateRetriever(
+            lexical=StoreLexicalRetriever(bundle.memory_store),
+            semantic=sem_retriever,
+            config=sem_config,
+            router_config=router_config,
+        )
+        runtime_router = AgentMemoryRuntime(
+            config=RuntimeConfig(
+                hybrid_retrieval=sem_config,
+                query_router=router_config,
+            ),
+            event_store=bundle.event_store,
+            memory_store=bundle.memory_store,
+            snapshot_store=bundle.snapshot_store,
+            tombstone_store=bundle.tombstone_store,
+            transaction_manager=bundle._manager,
+            audit_store=bundle.audit_store,
+            candidate_retriever=router_retriever,
+        )
+        router_results = run_mode(
+            f"router_hybrid_{threshold}",
+            cases,
+            runtime_router,
+            pipeline=runtime_router.retrieval,
+        )
+        router_summary = summarize(router_results)
+        all_results[f"router_hybrid_t{threshold}"] = {
+            "summary": router_summary,
+            "details": router_results,
+        }
+        _print_summary(f"Router-Hybrid (t={threshold})", router_summary)
+
     # ── 7. Per-category breakdown for best modes ──
     print("\n[5/5] Per-category breakdown (FTS5 vs best vector vs best hybrid)")
     best_vo_key = max(
@@ -691,12 +730,18 @@ def main() -> None:
         (k for k in all_results if k.startswith("hybrid")),
         key=lambda k: all_results[k]["summary"]["mean_recall"],
     )
+    best_router_key = max(
+        (k for k in all_results if k.startswith("router_hybrid")),
+        key=lambda k: all_results[k]["summary"]["mean_recall"],
+    )
     print(f"  Best vector-only: {best_vo_key}")
     print(f"  Best hybrid: {best_hy_key}")
+    print(f"  Best router-hybrid: {best_router_key}")
 
     _print_category_breakdown("FTS5-only", all_results["fts5_only"]["details"])
     _print_category_breakdown(best_vo_key, all_results[best_vo_key]["details"])
     _print_category_breakdown(best_hy_key, all_results[best_hy_key]["details"])
+    _print_category_breakdown(best_router_key, all_results[best_router_key]["details"])
 
     # ── 8. Write JSON report ──
     report_path = BENCHMARK_REPORT_PATH

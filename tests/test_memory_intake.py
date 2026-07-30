@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 
 from agent_memory_runtime.agent import AgentRequest, ToolExecutionContext
 from agent_memory_runtime.config import HybridRetrievalConfig, RuntimeConfig
@@ -510,6 +511,117 @@ def test_sqlite_write_succeeds_and_embedding_outbox_is_retained(tmp_path) -> Non
     report = stores.embedding_worker(provider).run_until_idle()
     assert report.failed == 1
     assert stores.memory_store.get(result.memory_ids[0]) is not None
+
+
+def test_memory_audit_replay_rebuilds_current_records_and_tombstones() -> None:
+    runtime = AgentMemoryRuntime()
+    service = MemoryIntakeService(runtime)
+    java = service.save_memory(
+        {
+            "kind": "preference.updated",
+            "key": "java_style",
+            "content": "Use explicit loops in Java examples.",
+            "layer": "core",
+        },
+        identity=_identity(),
+        idempotency_key="replay-java",
+    )
+    database = service.save_memory(
+        {
+            "kind": "belief.stated",
+            "key": "database",
+            "content": "The user uses MySQL.",
+            "layer": "core",
+        },
+        identity=_identity(),
+        idempotency_key="replay-db",
+    )
+    service.revise_memory(
+        {
+            "kind": "belief.stated",
+            "key": "database",
+            "content": "The user uses PostgreSQL.",
+            "target_memory_id": database.memory_ids[0],
+        },
+        identity=_identity(),
+        idempotency_key="replay-db-revise",
+    )
+    service.forget_memory(
+        {
+            "memory_id": java.memory_ids[0],
+            "mode": "delete",
+            "reason": "user_requested_delete",
+        },
+        identity=_identity(),
+        idempotency_key="replay-java-delete",
+    )
+
+    rebuilt = AgentMemoryRuntime()
+    for log in runtime.audit_store.list_memory_logs():
+        rebuilt.audit_store.append_memory_log(log)
+
+    report = rebuilt.replay_memory_audit()
+
+    assert report.applied_logs == 4
+    assert report.final_memory_ids == (database.memory_ids[0],)
+    assert report.deleted_memory_ids == java.memory_ids
+    assert report.tombstoned_memory_ids == java.memory_ids
+    assert rebuilt.memory_store.get(java.memory_ids[0]) is None
+    rebuilt_database = rebuilt.memory_store.get(database.memory_ids[0])
+    assert rebuilt_database is not None
+    assert rebuilt_database.content == "The user uses PostgreSQL."
+    assert rebuilt_database.version == 2
+    assert rebuilt.tombstone_store.get(java.memory_ids[0]) is not None
+
+
+def test_sqlite_audit_replay_clears_stale_acl_and_tag_projection(tmp_path) -> None:
+    path = tmp_path / "audit-replay.sqlite"
+    stores = SQLiteStoreBundle(path)
+    runtime = _runtime_from_stores(stores)
+    service = MemoryIntakeService(runtime)
+    kept = service.save_memory(
+        {
+            "kind": "belief.stated",
+            "key": "database",
+            "content": "The user uses PostgreSQL.",
+            "layer": "core",
+        },
+        identity=_identity(),
+        idempotency_key="sqlite-replay-kept",
+    )
+    deleted = service.save_memory(
+        {
+            "kind": "preference.updated",
+            "key": "java_style",
+            "content": "Use explicit loops in Java examples.",
+            "layer": "core",
+        },
+        identity=_identity(),
+        idempotency_key="sqlite-replay-deleted",
+    )
+    service.forget_memory(
+        {
+            "memory_id": deleted.memory_ids[0],
+            "mode": "delete",
+        },
+        identity=_identity(),
+        idempotency_key="sqlite-replay-delete",
+    )
+
+    report = runtime.replay_memory_audit()
+
+    assert report.final_memory_ids == kept.memory_ids
+    with sqlite3.connect(path) as connection:
+        stale_acl = connection.execute(
+            "SELECT COUNT(*) FROM memory_acl WHERE memory_id = ?",
+            (deleted.memory_ids[0],),
+        ).fetchone()[0]
+        stale_tags = connection.execute(
+            "SELECT COUNT(*) FROM memory_tags WHERE memory_id = ?",
+            (deleted.memory_ids[0],),
+        ).fetchone()[0]
+    assert stale_acl == 0
+    assert stale_tags == 0
 
 
 def test_default_event_ingest_is_audit_only_not_memory_derivation() -> None:

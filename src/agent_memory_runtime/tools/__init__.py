@@ -7,6 +7,7 @@ from agent_memory_runtime.tools.builtin import (
     FileReadTool,
     FileWriteTool,
     FunctionTool,
+    MemorySearchTool,
     StaticWebSearchProvider,
     WebSearchTool,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "FileReadTool",
     "FileWriteTool",
     "FunctionTool",
+    "MemorySearchTool",
     "StaticWebSearchProvider",
     "ToolExecution",
     "ToolExecutor",

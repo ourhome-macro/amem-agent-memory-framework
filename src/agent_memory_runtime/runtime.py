@@ -34,6 +34,10 @@ from agent_memory_runtime.llm import (
     LLMStreamEvent,
     OpenAICompatibleChatClient,
 )
+from agent_memory_runtime.memory.audit_replay import (
+    MemoryAuditReplayReport,
+    replay_memory_audit_logs,
+)
 from agent_memory_runtime.memory.intake.models import MemoryProposal, MemoryProposalResult
 from agent_memory_runtime.memory.retrieval import (
     CandidateBatch,
@@ -134,7 +138,10 @@ class AgentMemoryRuntime:
         if self.candidate_retriever is None:
             candidate_factory = getattr(self.memory_store, "build_candidate_retriever", None)
             if callable(candidate_factory):
-                self.candidate_retriever = candidate_factory(self.config.hybrid_retrieval)
+                try:
+                    self.candidate_retriever = candidate_factory(self.config)
+                except TypeError:
+                    self.candidate_retriever = candidate_factory(self.config.hybrid_retrieval)
         self.token_estimator = token_estimator or AdaptiveTokenEstimator()
         self.context_builder = context_builder or ContextBuilder(
             self.config,
@@ -523,6 +530,17 @@ class AgentMemoryRuntime:
                 self.ingest(event)
             return self._save_snapshot()
 
+    def replay_memory_audit(self, *, clear_existing: bool = True) -> MemoryAuditReplayReport:
+        with self._transaction():
+            report = replay_memory_audit_logs(
+                audit_store=self.audit_store,
+                memory_store=self.memory_store,
+                tombstone_store=self.tombstone_store,
+                clear_existing=clear_existing,
+            )
+            self._save_snapshot()
+            return report
+
     def snapshot(self) -> RuntimeSnapshot:
         return build_snapshot(
             config=self.config,
@@ -688,6 +706,7 @@ class AgentMemoryRuntime:
             semantic_timed_out=trace.semantic_timed_out,
             semantic_error_type=trace.semantic_error_type,
             embedding_coverage=trace.embedding_coverage,
+            query_route=trace.query_route,
             candidate_details=trace.candidate_details,
         )
         if audit_access:

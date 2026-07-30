@@ -102,15 +102,23 @@ class SQLiteMemoryStore(SQLiteStore):
         self._backfill_search_index()
 
     def build_candidate_retriever(self, config: object) -> object:
-        from agent_memory_runtime.config import HybridRetrievalConfig
+        from agent_memory_runtime.config import (
+            HybridRetrievalConfig,
+            QueryRouterConfig,
+            RuntimeConfig,
+        )
         from agent_memory_runtime.memory.retrieval import (
             HybridCandidateRetriever,
             SemanticRetriever,
             StoreLexicalRetriever,
         )
 
+        router_config = QueryRouterConfig(enabled=False)
+        if isinstance(config, RuntimeConfig):
+            router_config = config.query_router
+            config = config.hybrid_retrieval
         if not isinstance(config, HybridRetrievalConfig):
-            raise TypeError("config must be HybridRetrievalConfig")
+            raise TypeError("config must be RuntimeConfig or HybridRetrievalConfig")
         semantic = None
         if (
             config.enable_semantic
@@ -132,6 +140,7 @@ class SQLiteMemoryStore(SQLiteStore):
             lexical=(StoreLexicalRetriever(self) if config.enable_lexical else None),
             semantic=semantic,
             config=config,
+            router_config=router_config,
         )
 
     def upsert(self, record: MemoryRecord) -> None:
@@ -290,6 +299,8 @@ class SQLiteMemoryStore(SQLiteStore):
     def replace_all(self, records: list[MemoryRecord]) -> None:
         with self._manager.connection() as connection:
             connection.execute("DELETE FROM memory_fts")
+            connection.execute("DELETE FROM memory_tags")
+            connection.execute("DELETE FROM memory_acl")
             connection.execute("DELETE FROM memories")
             connection.executemany(
                 """
@@ -354,6 +365,8 @@ class SQLiteMemoryStore(SQLiteStore):
     def clear(self) -> None:
         with self._manager.connection() as connection:
             connection.execute("DELETE FROM memory_fts")
+            connection.execute("DELETE FROM memory_tags")
+            connection.execute("DELETE FROM memory_acl")
             connection.execute("DELETE FROM memories")
 
     def _backfill_search_index(self) -> None:

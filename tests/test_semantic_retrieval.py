@@ -33,6 +33,7 @@ from agent_memory_runtime.memory.embeddings import (
 from agent_memory_runtime.memory.embeddings.base import validate_vector
 from agent_memory_runtime.memory.retrieval import SemanticRetriever
 from agent_memory_runtime.memory.retrieval.contradiction import has_state_conflict
+from agent_memory_runtime.memory.retrieval.query_router import route_query
 from agent_memory_runtime.memory.retrieval.scoring import score_record
 from agent_memory_runtime.memory.semantic_state import (
     extract_query_state_intent,
@@ -109,6 +110,42 @@ def test_vector_acl_filter_runs_before_semantic_top_k(tmp_path) -> None:
     assert [record.memory_id for record in selected] == ["allowed"]
     assert trace.semantic_candidate_count == 1
     assert "forbidden" not in trace.score_breakdown
+    runtime.close()
+
+
+def test_query_router_classifies_exact_state_and_vector_queries() -> None:
+    assert route_query(_query("INV-42 现在付款了吗")).mode == "state_aware"
+    assert route_query(_query("Kubernetes 告警找谁")).mode == "lexical_heavy"
+    assert route_query(_query("what protects memory writes from unsafe changes")).mode == (
+        "vector_heavy"
+    )
+    assert route_query(_query("火星基地根密钥在哪")).mode == "strict_no_answer"
+
+
+def test_default_sqlite_runtime_exposes_query_route_in_trace(tmp_path) -> None:
+    provider = _provider(
+        model="query-router-trace",
+        vectors={
+            "memory writes": [1.0, 0.0, 0.0],
+            "safe policy": [1.0, 0.0, 0.0],
+        },
+    )
+    stores = _stores_with_provider(tmp_path / "query-router-trace.sqlite", provider)
+    stores.memory_store.upsert(_record("policy", "MemoryWritePolicy guards unsafe writes."))
+    stores.embedding_worker().run_until_idle()
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(
+            min_semantic_similarity=0.0,
+            allow_uncalibrated_semantic=True,
+        ),
+    )
+
+    selected, trace = runtime.retrieve(_query("what protects memory writes from unsafe changes"))
+
+    assert [record.memory_id for record in selected] == ["policy"]
+    assert trace.query_route["mode"] == "vector_heavy"
+    assert trace.candidate_details["__query_route"]["mode"] == "vector_heavy"
     runtime.close()
 
 
@@ -760,6 +797,44 @@ def test_embedding_environment_requires_dimensions_and_online_threshold(monkeypa
     assert environment.provider is not None
     assert environment.provider.spec.dimensions == 1024
     assert environment.min_similarity == 0.42
+
+
+def test_embedding_environment_defaults_to_qdrant(monkeypatch) -> None:
+    monkeypatch.delenv("AMEM_EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("AMEM_VECTOR_BACKEND", raising=False)
+    monkeypatch.delenv("AMEM_QDRANT_URL", raising=False)
+    monkeypatch.delenv("AMEM_QDRANT_API_KEY", raising=False)
+    monkeypatch.delenv("AMEM_QDRANT_COLLECTION", raising=False)
+
+    environment = load_embedding_environment()
+
+    assert environment.provider is None
+    assert environment.vector_backend == "qdrant"
+    assert environment.qdrant_url == "http://localhost:6333"
+    assert environment.qdrant_api_key is None
+    assert environment.qdrant_collection == "agent_memory"
+
+
+def test_embedding_environment_allows_sqlite_vector_backend_override(monkeypatch) -> None:
+    monkeypatch.delenv("AMEM_EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("AMEM_QDRANT_URL", raising=False)
+    monkeypatch.setenv("AMEM_VECTOR_BACKEND", "sqlite")
+
+    environment = load_embedding_environment()
+
+    assert environment.vector_backend == "sqlite"
+    assert environment.qdrant_url is None
+
+
+def test_embedding_environment_uses_configured_qdrant_url(monkeypatch) -> None:
+    monkeypatch.delenv("AMEM_EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("AMEM_VECTOR_BACKEND", raising=False)
+    monkeypatch.setenv("AMEM_QDRANT_URL", "http://qdrant.internal:6333")
+
+    environment = load_embedding_environment()
+
+    assert environment.vector_backend == "qdrant"
+    assert environment.qdrant_url == "http://qdrant.internal:6333"
 
 
 def _stores_with_provider(

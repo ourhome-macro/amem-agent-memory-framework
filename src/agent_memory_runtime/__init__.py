@@ -41,6 +41,10 @@ from agent_memory_runtime.config import (
     WorkerConfig,
     provider_presets,
 )
+from agent_memory_runtime.memory.audit_replay import (
+    MemoryAuditReplayReport,
+    replay_memory_audit_logs,
+)
 from agent_memory_runtime.runtime import (
     AgentMemoryRuntime,
     AgentResponse,
@@ -52,7 +56,13 @@ from agent_memory_runtime.tokens import (
     CallableTokenEstimator,
     TokenEstimator,
 )
-from agent_memory_runtime.tools import ToolExecutor, ToolRegistry, ToolRequest, ToolResult
+from agent_memory_runtime.tools import (
+    MemorySearchTool,
+    ToolExecutor,
+    ToolRegistry,
+    ToolRequest,
+    ToolResult,
+)
 
 __all__ = [
     "AgentMemoryRuntime",
@@ -82,6 +92,8 @@ __all__ = [
     "ModelResponse",
     "ModelGatewayStreamEvent",
     "ModelToolCall",
+    "MemorySearchTool",
+    "MemoryAuditReplayReport",
     "OpenAICompatibleModelGateway",
     "OutputContract",
     "OrchestrationEvent",
@@ -102,6 +114,7 @@ __all__ = [
     "SQLiteOrchestrationStore",
     "StateCodec",
     "provider_presets",
+    "replay_memory_audit_logs",
     "AdaptiveTokenEstimator",
     "CallableTokenEstimator",
     "TokenEstimator",

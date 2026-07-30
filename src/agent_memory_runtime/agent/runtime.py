@@ -11,8 +11,10 @@ from uuid import uuid4
 
 from agent_memory_runtime.agent.cancellation import CancellationToken
 from agent_memory_runtime.agent.context_window import (
+    ConversationSummarizer,
     ModelCallEstimate,
     compact_checkpoint,
+    compact_tool_output_for_model,
     estimate_cost,
     estimate_model_call,
 )
@@ -101,6 +103,7 @@ class BusinessAgentRuntime:
         lease_seconds: float = 30.0,
         token_estimator: TokenEstimator | None = None,
         model_name: str | None = None,
+        conversation_summarizer: ConversationSummarizer | None = None,
     ) -> None:
         if lease_seconds <= 0:
             raise ValueError("agent run lease_seconds must be positive")
@@ -123,6 +126,7 @@ class BusinessAgentRuntime:
         )
         gateway_config = getattr(model_gateway, "config", None)
         self.model_name = model_name or getattr(gateway_config, "model", None)
+        self.conversation_summarizer = conversation_summarizer
         self._active_tokens: dict[str, CancellationToken] = {}
 
     async def run(
@@ -555,6 +559,7 @@ class BusinessAgentRuntime:
                 estimator=self.token_estimator,
                 policy=policy,
                 model=self.model_name,
+                summarizer=self.conversation_summarizer,
             )
             if compaction is not None:
                 checkpoint = await asyncio.to_thread(
@@ -884,7 +889,7 @@ class BusinessAgentRuntime:
                     ),
                     expected_version=record.version,
                 )
-            checkpoint = await self._append_tool_result(checkpoint, record)
+            checkpoint = await self._append_tool_result(checkpoint, record, policy=policy)
             blocked_event = factory.create(
                 "tool.blocked",
                 {
@@ -964,7 +969,11 @@ class BusinessAgentRuntime:
                         ),
                         expected_version=record.version,
                     )
-                checkpoint = await self._append_tool_result(checkpoint, record)
+                checkpoint = await self._append_tool_result(
+                    checkpoint,
+                    record,
+                    policy=policy,
+                )
                 rejected_event = factory.create(
                     "tool.rejected",
                     {
@@ -1027,7 +1036,7 @@ class BusinessAgentRuntime:
             yield reconcile_event
             return
 
-        checkpoint = await self._append_tool_result(checkpoint, record)
+        checkpoint = await self._append_tool_result(checkpoint, record, policy=policy)
         completed_event = factory.create(
             "tool.completed",
             {
@@ -1090,10 +1099,20 @@ class BusinessAgentRuntime:
         self,
         checkpoint: AgentCheckpoint,
         record: ToolCallRecord,
+        *,
+        policy: AgentPolicy,
     ) -> AgentCheckpoint:
+        output = compact_tool_output_for_model(
+            record.output,
+            estimator=self.token_estimator,
+            model=self.model_name,
+            max_tokens=policy.tool_output_max_tokens,
+            head_lines=policy.tool_output_head_lines,
+            tail_lines=policy.tool_output_tail_lines,
+        )
         content = {
             "status": record.status.value,
-            "output": dict(record.output),
+            "output": output,
             "error_type": record.error_type,
         }
         message = ModelMessage(

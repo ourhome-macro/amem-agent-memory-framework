@@ -101,4 +101,5 @@ class RetrievalTrace:
     semantic_timed_out: bool = False
     semantic_error_type: str | None = None
     embedding_coverage: float | None = None
+    query_route: dict[str, object] = field(default_factory=dict)
     candidate_details: dict[str, dict[str, object]] = field(default_factory=dict)

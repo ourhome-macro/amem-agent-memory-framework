@@ -11,15 +11,19 @@ from agent_memory_runtime.memory.embeddings.openai_compatible import (
     OpenAICompatibleEmbeddingProvider,
 )
 
+DEFAULT_VECTOR_BACKEND = "qdrant"
+DEFAULT_QDRANT_URL = "http://localhost:6333"
+DEFAULT_QDRANT_COLLECTION = "agent_memory"
+
 
 @dataclass(frozen=True)
 class EmbeddingEnvironment:
     provider: OpenAICompatibleEmbeddingProvider | None
     min_similarity: float | None
-    vector_backend: str = "sqlite"
+    vector_backend: str = DEFAULT_VECTOR_BACKEND
     qdrant_url: str | None = None
     qdrant_api_key: str | None = None
-    qdrant_collection: str = "agent_memory"
+    qdrant_collection: str = DEFAULT_QDRANT_COLLECTION
 
 
 def load_embedding_environment(
@@ -32,9 +36,9 @@ def load_embedding_environment(
     load_dotenv(override=False)
     model_id = (os.environ.get("AMEM_EMBEDDING_MODEL") or "").strip()
     vector_backend = _vector_backend()
-    qdrant_url = _optional_env("AMEM_QDRANT_URL")
+    qdrant_url = _qdrant_url(vector_backend)
     qdrant_api_key = _optional_env("AMEM_QDRANT_API_KEY")
-    qdrant_collection = _optional_env("AMEM_QDRANT_COLLECTION") or "agent_memory"
+    qdrant_collection = _optional_env("AMEM_QDRANT_COLLECTION") or DEFAULT_QDRANT_COLLECTION
     if not model_id:
         if required_provider:
             raise EmbeddingConfigurationError("AMEM_EMBEDDING_MODEL is required")
@@ -153,7 +157,14 @@ def _optional_env(name: str) -> str | None:
 def _vector_backend() -> str:
     raw = (os.environ.get("AMEM_VECTOR_BACKEND") or "").strip().casefold()
     if not raw:
-        return "qdrant" if _optional_env("AMEM_QDRANT_URL") else "sqlite"
+        return DEFAULT_VECTOR_BACKEND
     if raw not in {"sqlite", "sqlite-vec", "qdrant"}:
         raise EmbeddingConfigurationError("AMEM_VECTOR_BACKEND must be sqlite or qdrant")
     return "sqlite" if raw == "sqlite-vec" else raw
+
+
+def _qdrant_url(vector_backend: str) -> str | None:
+    configured_url = _optional_env("AMEM_QDRANT_URL")
+    if configured_url or vector_backend != "qdrant":
+        return configured_url
+    return DEFAULT_QDRANT_URL

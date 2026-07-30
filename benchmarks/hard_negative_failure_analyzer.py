@@ -21,13 +21,13 @@ DATASET_PATH = Path(
 REPORT_PATH = Path(
     os.environ.get(
         "AMEM_BENCHMARK_REPORT",
-        ROOT / "doc" / "bge-m3-balanced-rerank-benchmark-results.json",
+        ROOT / "benchmarks" / "results" / "bge-m3-balanced-rerank-benchmark-results.json",
     )
 )
 ANALYSIS_PATH = Path(
     os.environ.get(
         "AMEM_HARD_NEGATIVE_ANALYSIS",
-        ROOT / "doc" / "hard-negative-state-analysis.json",
+        ROOT / "benchmarks" / "results" / "hard-negative-state-analysis.json",
     )
 )
 MODE = os.environ.get("AMEM_ANALYZE_MODE", "hybrid_rrf_t0.0")

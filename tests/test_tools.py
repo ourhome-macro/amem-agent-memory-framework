@@ -4,10 +4,13 @@ from pathlib import Path
 
 from agent_memory_runtime.audit.dashboard import generate_audit_dashboard_html
 from agent_memory_runtime.audit.stores import InMemoryAuditStore
+from agent_memory_runtime.domain.memory import MemoryRecord
+from agent_memory_runtime.runtime import AgentMemoryRuntime
 from agent_memory_runtime.tools import (
     FileReadTool,
     FileWriteTool,
     FunctionTool,
+    MemorySearchTool,
     StaticWebSearchProvider,
     ToolExecutor,
     ToolPolicy,
@@ -137,6 +140,55 @@ def test_web_search_tool_uses_provider_and_never_audits_raw_query() -> None:
     assert "input_hash" in audit_text
 
 
+def test_memory_search_tool_projects_authorized_memories() -> None:
+    memory_runtime = AgentMemoryRuntime()
+    memory_runtime.memory_store.upsert(
+        _memory_record(
+            "memory-db",
+            "The user prefers PostgreSQL for analytics workloads.",
+        )
+    )
+    memory_runtime.memory_store.upsert(
+        _memory_record(
+            "other-tenant",
+            "Other tenant private memory.",
+            tenant_id="tenant-b",
+        )
+    )
+    audit_store = InMemoryAuditStore()
+    registry = ToolRegistry()
+    registry.register(
+        MemorySearchTool(
+            runtime=memory_runtime,
+            default_agent_id="assistant",
+            default_tenant_id="tenant-a",
+            default_user_id="user-a",
+            default_session_id="s1",
+        )
+    )
+    executor = ToolExecutor(registry=registry, audit_store=audit_store)
+
+    execution = executor.execute(
+        ToolRequest(
+            tool_name="memory.search",
+            arguments={"text": "PostgreSQL analytics", "limit": 5},
+            actor_id="user",
+            agent_id="assistant",
+            session_id="s1",
+            tenant_id="tenant-a",
+            user_id="user-a",
+        )
+    )
+
+    assert execution.result.status == "succeeded"
+    assert execution.result.output["selected_memory_ids"] == ["memory-db"]
+    assert execution.result.output["memories"][0]["content"].startswith("The user prefers")
+    assert execution.result.output["trace"]["candidate_count"] == 1
+    audit_text = str(audit_store.list_envelopes()[0].to_dict())
+    assert "PostgreSQL analytics" not in audit_text
+    assert "PostgreSQL" not in audit_text
+
+
 def test_tool_policy_blocks_unregistered_or_disallowed_tool_without_raw_arguments() -> None:
     audit_store = InMemoryAuditStore()
     registry = ToolRegistry()
@@ -185,3 +237,30 @@ def test_audit_dashboard_renders_counts_and_excludes_raw_sensitive_payload() -> 
     assert "tool_call" in html
     assert "raw prompt" not in html
     assert '"secret": "raw"' not in html
+
+
+def _memory_record(
+    memory_id: str,
+    content: str,
+    *,
+    tenant_id: str = "tenant-a",
+    user_id: str | None = "user-a",
+) -> MemoryRecord:
+    return MemoryRecord(
+        memory_id=memory_id,
+        memory_type="belief",
+        scope="private",
+        layer="core",
+        session_id="s1",
+        subject_id="user-a",
+        content=content,
+        source_event_ids=("event-1",),
+        rule_id="test",
+        owner_id="assistant",
+        visible_to=("assistant",),
+        tenant_id=tenant_id,
+        user_id=user_id,
+        agent_id="assistant",
+        created_at="2026-07-29T00:00:00+00:00",
+        updated_at="2026-07-29T00:00:00+00:00",
+    )

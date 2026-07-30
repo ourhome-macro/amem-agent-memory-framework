@@ -9,11 +9,13 @@ import pytest
 
 from agent_memory_runtime import (
     AgentFunctionTool,
+    AgentMemoryRuntime,
     AgentModuleRegistry,
     AgentPolicy,
     AgentRequest,
     BusinessAgentRuntime,
     InMemoryAgentStateStore,
+    MemorySearchTool,
     ModelResponse,
     ModelToolCall,
 )
@@ -25,6 +27,7 @@ from agent_memory_runtime.agent.models import RunStatus, ToolCallStatus
 from agent_memory_runtime.agent.modules import StaticAgentModule
 from agent_memory_runtime.agent.policy import StaticAgentPolicyResolver
 from agent_memory_runtime.agent.stores import SQLiteAgentStateStore
+from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.tools import ToolRegistry
 
 
@@ -163,6 +166,113 @@ def test_tool_loop_validates_schema_retries_and_records_tenant_event() -> None:
         assert tool_event.agent_id == "assistant"
         assert "output" not in tool_event.payload
         assert "sum" not in tool_event.payload.values()
+
+    asyncio.run(scenario())
+
+
+def test_large_tool_output_is_compacted_before_returning_to_model() -> None:
+    async def scenario() -> None:
+        output_lines = [f"match {index}: repetitive grep output" for index in range(300)]
+        output_lines[150] = "match 150: ERROR important middle line"
+        registry = ToolRegistry()
+        registry.register(
+            AgentFunctionTool(
+                name="logs.search",
+                handler=lambda arguments, context: {"stdout": "\n".join(output_lines)},
+            )
+        )
+        gateway = ScriptedGateway(
+            ModelResponse(
+                tool_calls=(ModelToolCall("logs-call", "logs.search", {"query": "match"}),),
+                model="scripted",
+            ),
+            ModelResponse(content="Reviewed compacted logs.", model="scripted"),
+        )
+        state_store = InMemoryAgentStateStore()
+        runtime = BusinessAgentRuntime(
+            model_gateway=gateway,
+            state_store=state_store,
+            tool_registry=registry,
+            policy_resolver=StaticAgentPolicyResolver(
+                AgentPolicy(
+                    approval_risk_threshold=None,
+                    tool_output_max_tokens=120,
+                    tool_output_head_lines=5,
+                    tool_output_tail_lines=5,
+                )
+            ),
+        )
+
+        events = [
+            event
+            async for event in runtime.run(
+                AgentRequest(agent_id="assistant", message="search logs")
+            )
+        ]
+
+        stored_call = state_store.get_tool_call("logs-call")
+        assert stored_call is not None
+        assert "match 149: repetitive grep output" in stored_call.output["stdout"]
+        tool_message = gateway.calls[1]["messages"][-1].content
+        assert '"compacted_tool_output": true' in tool_message
+        assert "raw_output_hash" in tool_message
+        assert "match 150: ERROR important middle line" in tool_message
+        assert "match 149: repetitive grep output" not in tool_message
+        assert events[-1].type == "run.completed"
+
+    asyncio.run(scenario())
+
+
+def test_agent_can_query_memory_through_registered_tool() -> None:
+    async def scenario() -> None:
+        memory_runtime = AgentMemoryRuntime()
+        memory_runtime.memory_store.upsert(
+            _memory_record(
+                "memory-db",
+                "The user prefers PostgreSQL for analytics workloads.",
+            )
+        )
+        registry = ToolRegistry()
+        registry.register(MemorySearchTool(runtime=memory_runtime))
+        gateway = ScriptedGateway(
+            ModelResponse(
+                tool_calls=(
+                    ModelToolCall(
+                        "memory-call",
+                        "memory.search",
+                        {"text": "PostgreSQL analytics", "limit": 1},
+                    ),
+                ),
+                model="scripted",
+            ),
+            ModelResponse(content="Use PostgreSQL.", model="scripted"),
+        )
+        runtime = BusinessAgentRuntime(
+            model_gateway=gateway,
+            memory_runtime=memory_runtime,
+            tool_registry=registry,
+        )
+
+        events = [
+            event
+            async for event in runtime.run(
+                AgentRequest(
+                    agent_id="assistant",
+                    message="Which database should I use?",
+                    tenant_id="tenant-a",
+                    user_id="user-a",
+                    session_id="s1",
+                    request_id="memory-tool-request",
+                )
+            )
+        ]
+
+        completed = next(event for event in events if event.type == "tool.completed")
+        assert completed.data["tool_name"] == "memory.search"
+        assert completed.data["output"]["selected_memory_ids"] == ["memory-db"]
+        assert "PostgreSQL" in gateway.calls[1]["messages"][-1].content
+        assert gateway.calls[0]["tools"][0].name == "memory.search"
+        assert events[-1].type == "run.completed"
 
     asyncio.run(scenario())
 
@@ -584,3 +694,24 @@ def test_module_and_tool_registration_collisions_are_rejected() -> None:
     tools.register(tool)
     with pytest.raises(ValueError):
         tools.register(tool)
+
+
+def _memory_record(memory_id: str, content: str) -> MemoryRecord:
+    return MemoryRecord(
+        memory_id=memory_id,
+        memory_type="belief",
+        scope="private",
+        layer="core",
+        session_id="s1",
+        subject_id="user-a",
+        content=content,
+        source_event_ids=("event-1",),
+        rule_id="test",
+        owner_id="assistant",
+        visible_to=("assistant",),
+        tenant_id="tenant-a",
+        user_id="user-a",
+        agent_id="assistant",
+        created_at="2026-07-29T00:00:00+00:00",
+        updated_at="2026-07-29T00:00:00+00:00",
+    )

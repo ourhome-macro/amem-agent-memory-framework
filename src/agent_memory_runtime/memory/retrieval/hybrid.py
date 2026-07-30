@@ -8,7 +8,7 @@ from hashlib import sha256
 from time import monotonic, perf_counter
 from typing import Any
 
-from agent_memory_runtime.config import HybridRetrievalConfig
+from agent_memory_runtime.config import HybridRetrievalConfig, QueryRouterConfig
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.exceptions import (
     EmbeddingConfigurationError,
@@ -20,6 +20,7 @@ from agent_memory_runtime.memory.embeddings import (
     validate_vector,
 )
 from agent_memory_runtime.memory.retrieval.candidates import CandidateBatch, CandidateHit
+from agent_memory_runtime.memory.retrieval.query_router import route_hybrid_config, route_query
 
 
 class StoreLexicalRetriever:
@@ -161,10 +162,12 @@ class HybridCandidateRetriever:
         lexical: StoreLexicalRetriever | None,
         config: HybridRetrievalConfig,
         semantic: SemanticRetriever | None = None,
+        router_config: QueryRouterConfig | None = None,
     ) -> None:
         self.lexical = lexical
         self.semantic = semantic
         self.config = config
+        self.router_config = router_config or QueryRouterConfig(enabled=False)
         self._semantic_executor = ThreadPoolExecutor(
             max_workers=config.semantic_max_concurrency,
             thread_name_prefix="amem-semantic",
@@ -173,11 +176,13 @@ class HybridCandidateRetriever:
 
     def retrieve(self, query: MemoryQuery, *, limit: int) -> CandidateBatch:
         submitted_at = perf_counter()
-        lexical_limit = min(limit, self.config.lexical_candidate_limit)
-        semantic_limit = min(limit, self.config.semantic_candidate_limit)
+        route = route_query(query, self.router_config)
+        retrieval_config = route_hybrid_config(self.config, route, self.router_config)
+        lexical_limit = min(limit, retrieval_config.lexical_candidate_limit)
+        semantic_limit = min(limit, retrieval_config.semantic_candidate_limit)
         semantic_future = None
         semantic_error_type = None
-        if self.semantic is not None and self.config.enable_semantic and query.text.strip():
+        if self.semantic is not None and retrieval_config.enable_semantic and query.text.strip():
             if self._semantic_slots.acquire(blocking=False):
                 try:
                     semantic_future = self._semantic_executor.submit(
@@ -191,7 +196,7 @@ class HybridCandidateRetriever:
             else:
                 semantic_error_type = "SemanticBulkheadRejected"
 
-        lexical_enabled = self.lexical is not None and self.config.enable_lexical
+        lexical_enabled = self.lexical is not None and retrieval_config.enable_lexical
         lexical_hits = (
             () if not lexical_enabled else self.lexical.retrieve(query, limit=lexical_limit)
         )
@@ -203,7 +208,7 @@ class HybridCandidateRetriever:
         semantic_completed = False
         if semantic_future is not None:
             try:
-                deadline_seconds = max(0, self.config.semantic_timeout_ms) / 1000
+                deadline_seconds = max(0, retrieval_config.semantic_timeout_ms) / 1000
                 remaining_seconds = max(
                     0.0,
                     deadline_seconds - (perf_counter() - submitted_at),
@@ -220,7 +225,12 @@ class HybridCandidateRetriever:
                 semantic_error_type = type(error).__name__
 
         started = perf_counter()
-        fused = _rrf_fuse(lexical_hits, semantic_hits, config=self.config)
+        fused = _rrf_fuse(
+            lexical_hits,
+            semantic_hits,
+            config=retrieval_config,
+            drop_lexical_only=route.mode == "vector_heavy" and bool(semantic_hits),
+        )
         return CandidateBatch(
             hits=tuple(fused[:limit]),
             retrieval_legs=(
@@ -238,6 +248,7 @@ class HybridCandidateRetriever:
             semantic_timed_out=semantic_timed_out,
             semantic_error_type=semantic_error_type,
             embedding_coverage=embedding_coverage,
+            query_route=route.to_metadata(),
         )
 
     def close(self, *, wait: bool = False) -> None:
@@ -262,6 +273,7 @@ def _rrf_fuse(
     semantic_hits: tuple[CandidateHit, ...],
     *,
     config: HybridRetrievalConfig,
+    drop_lexical_only: bool = False,
 ) -> list[CandidateHit]:
     values: dict[str, dict[str, object]] = {}
     for hit in lexical_hits:
@@ -298,6 +310,8 @@ def _rrf_fuse(
     for memory_id, value in values.items():
         lexical_rank = _optional_int(value["lexical_rank"])
         semantic_rank = _optional_int(value["semantic_rank"])
+        if drop_lexical_only and semantic_rank is None:
+            continue
         lexical_component = (
             config.lexical_weight / (config.rrf_k + lexical_rank)
             if lexical_rank is not None

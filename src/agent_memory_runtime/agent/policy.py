@@ -39,6 +39,9 @@ class AgentPolicy:
     context_compaction_ratio: float = 0.8
     context_keep_recent_messages: int = 6
     context_summary_max_tokens: int = 2_048
+    tool_output_max_tokens: int = 800
+    tool_output_head_lines: int = 40
+    tool_output_tail_lines: int = 20
     input_cost_per_million_usd: float | None = None
     output_cost_per_million_usd: float | None = None
     max_run_cost_usd: float | None = None
@@ -67,6 +70,9 @@ class AgentPolicy:
             self.reserved_output_tokens,
             self.context_keep_recent_messages,
             self.context_summary_max_tokens,
+            self.tool_output_max_tokens,
+            self.tool_output_head_lines,
+            self.tool_output_tail_lines,
         )
         if any(value <= 0 for value in integer_limits):
             raise ValueError("agent policy limits must be positive")

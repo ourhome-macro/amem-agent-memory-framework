@@ -12,7 +12,7 @@ from agent_memory_runtime.memory.retrieval.candidates import CandidateBatch, Can
 from agent_memory_runtime.memory.retrieval.pipeline import RetrievalPipeline
 
 ROOT = Path(__file__).resolve().parents[1]
-REPORT_PATH = ROOT / "doc" / "deterministic-rerank-smoke-results.json"
+REPORT_PATH = ROOT / "benchmarks" / "results" / "deterministic-rerank-smoke-results.json"
 
 
 @dataclass(frozen=True)
@@ -67,6 +67,7 @@ def main() -> None:
         "category_passed": _category_passed(results),
         "results": results,
     }
+    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",

@@ -44,6 +44,7 @@ class CandidateBatch:
     semantic_timed_out: bool = False
     semantic_error_type: str | None = None
     embedding_coverage: float | None = None
+    query_route: dict[str, object] = field(default_factory=dict)
     _by_id: dict[str, CandidateHit] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
