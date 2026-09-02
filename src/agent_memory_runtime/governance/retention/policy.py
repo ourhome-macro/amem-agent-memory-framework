@@ -43,7 +43,11 @@ class RetentionPlan:
         if len(memory_ids) != len(set(memory_ids)):
             raise ValueError("retention plan cannot contain duplicate memory IDs")
         unsupported = sorted(
-            {action.action for action in self.actions if action.action not in {"archive", "delete"}}
+            {
+                action.action
+                for action in self.actions
+                if action.action not in {"mark_archived", "delete"}
+            }
         )
         if unsupported:
             raise ValueError(f"unsupported retention actions: {', '.join(unsupported)}")

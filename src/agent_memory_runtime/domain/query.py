@@ -10,9 +10,7 @@ class MemoryQuery:
     agent_id: str
     text: str
     session_id: str | None = None
-    scopes: tuple[str, ...] = ()
     memory_types: tuple[str, ...] = ()
-    layers: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
     source_memory_ids: tuple[str, ...] = ()
     limit: int | None = None
@@ -20,6 +18,10 @@ class MemoryQuery:
     tenant_id: str = "default"
     user_id: str | None = None
     session_policy: str = MemorySessionPolicy.EXACT.value
+    retrieval_mode: str | None = None
+    levels: tuple[str, ...] = ()
+    statuses: tuple[str, ...] = ()
+    visibilities: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         try:

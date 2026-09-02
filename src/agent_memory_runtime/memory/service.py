@@ -9,11 +9,11 @@ from urllib.parse import quote
 from agent_memory_runtime.audit.stores.base import AuditStore
 from agent_memory_runtime.domain.enums import (
     MemoryLabel,
-    MemoryLayer,
+    MemoryLevel,
     MemoryOperation,
-    MemoryScope,
     MemoryStatus,
     MemoryType,
+    MemoryVisibility,
 )
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.tombstone import MemoryTombstone
@@ -75,17 +75,27 @@ class MemoryService:
         *,
         current: MemoryRecord | None,
     ) -> MemoryProposalResult:
+        action = _canonical_action(proposal.action)
         before = current
         now = datetime.now(UTC).isoformat()
         after: MemoryRecord | None
         archived: tuple[str, ...] = ()
         tombstoned: tuple[str, ...] = ()
 
-        if proposal.action == MemoryOperation.DELETE.value:
+        if action == MemoryOperation.IGNORE.value:
+            return MemoryProposalResult(
+                status="ignored",
+                action=action,
+                proposal=proposal,
+                before_record=current,
+                reason=proposal.reason or "ignored_by_policy",
+            )
+
+        if action == MemoryOperation.DELETE.value:
             if current is None:
                 return MemoryProposalResult(
                     status="not_found",
-                    action=proposal.action,
+                    action=action,
                     proposal=proposal,
                     reason="target_memory_not_found",
                 )
@@ -106,39 +116,39 @@ class MemoryService:
             self.memory_store.delete(current.memory_id)
             after = None
             tombstoned = (current.memory_id,)
-        elif proposal.action == MemoryOperation.ARCHIVE.value:
+        elif action == MemoryOperation.SUPERSEDE.value:
             if current is None:
                 return MemoryProposalResult(
                     status="not_found",
-                    action=proposal.action,
+                    action=action,
                     proposal=proposal,
                     reason="target_memory_not_found",
                 )
             after = replace(
                 current,
-                layer=MemoryLayer.ARCHIVAL.value,
-                status=MemoryStatus.ARCHIVED.value,
+                status=MemoryStatus.SUPERSEDED.value,
                 source_memory_ids=_dedupe(
                     (*current.source_memory_ids, *proposal.source_memory_ids)
                 ),
                 updated_at=now,
-                last_operation=MemoryOperation.ARCHIVE.value,
+                last_operation=action,
                 version=current.version + 1,
             )
             self.memory_store.upsert(after)
-            archived = (after.memory_id,)
         elif current is None:
             after = self._new_record(proposal, now=now)
             self.memory_store.upsert(after)
         else:
             after = self._updated_record(current, proposal, now=now)
             self.memory_store.upsert(after)
+            if after.status == MemoryStatus.ARCHIVED.value:
+                archived = (after.memory_id,)
 
         audit_log = MemoryAuditLog(
             audit_id=f"memory-audit:{proposal.proposal_id}",
             memory_id=_audit_memory_id(current=current, after=after),
             proposal_id=proposal.proposal_id,
-            action=proposal.action,
+            action=action,
             actor_id=proposal.actor_id,
             agent_id=proposal.agent_id,
             tenant_id=proposal.tenant_id,
@@ -155,7 +165,7 @@ class MemoryService:
         self.audit_store.append_memory_log(audit_log)
         return MemoryProposalResult(
             status="succeeded",
-            action=proposal.action,
+            action=action,
             proposal=proposal,
             memory=after,
             before_record=before,
@@ -173,8 +183,6 @@ class MemoryService:
         return MemoryRecord(
             memory_id=_memory_id_for_proposal(proposal),
             memory_type=proposal.memory_type,
-            scope=proposal.scope,
-            layer=proposal.layer,
             session_id=proposal.session_id,
             subject_id=proposal.subject_id,
             content=proposal.content,
@@ -188,7 +196,7 @@ class MemoryService:
             salience=_clamp(proposal.salience),
             confidence=_clamp(proposal.confidence),
             metadata=_metadata(proposal),
-            status=MemoryStatus.ACTIVE.value,
+            status=proposal.status,
             reinforcement_count=1,
             created_at=now,
             updated_at=now,
@@ -198,6 +206,9 @@ class MemoryService:
             user_id=proposal.user_id,
             agent_id=proposal.agent_id,
             version=1,
+            level=_proposal_level(proposal),
+            visibility=_proposal_visibility(proposal),
+            priority=_clamp(proposal.priority),
         )
 
     def _updated_record(
@@ -207,31 +218,32 @@ class MemoryService:
         *,
         now: str,
     ) -> MemoryRecord:
-        action = proposal.action
-        if action == MemoryOperation.CREATE.value and proposal.content == current.content:
-            action = MemoryOperation.REINFORCE.value
-        elif action == MemoryOperation.CREATE.value:
-            action = MemoryOperation.REVISE.value
-        content = current.content if action == MemoryOperation.REINFORCE.value else proposal.content
+        action = _canonical_action(proposal.action)
+        if action == MemoryOperation.CREATE.value:
+            action = MemoryOperation.MERGE.value
+        content = current.content if proposal.content == current.content else proposal.content
         reinforcement_count = current.reinforcement_count + (
-            1 if action == MemoryOperation.REINFORCE.value else 0
+            1 if proposal.content == current.content else 0
         )
         return replace(
             current,
             content=content,
             salience=max(current.salience, _clamp(proposal.salience)),
             confidence=max(current.confidence, _clamp(proposal.confidence)),
+            priority=max(current.priority, _clamp(proposal.priority)),
             source_event_ids=_dedupe((*current.source_event_ids, *proposal.source_message_ids)),
             source_memory_ids=_dedupe((*current.source_memory_ids, *proposal.source_memory_ids)),
             visible_to=proposal.visible_to or current.visible_to,
             labels=_dedupe((*current.labels, *proposal.labels)),
             tags=_dedupe((*current.tags, *proposal.tags, "proposal", proposal.source)),
             metadata={**current.metadata, **_metadata(proposal)},
-            status=MemoryStatus.ACTIVE.value,
+            status=proposal.status,
             reinforcement_count=reinforcement_count,
             updated_at=now,
             last_operation=action,
             version=current.version + 1,
+            level=_proposal_level(proposal),
+            visibility=_proposal_visibility(proposal),
         )
 
     def _existing_result(self, proposal: MemoryProposal) -> MemoryProposalResult | None:
@@ -248,7 +260,7 @@ class MemoryService:
                     before_record=log.before_record,
                     audit_log=log,
                     tombstoned_memory_ids=_memory_id_tuple(log, MemoryOperation.DELETE.value),
-                    archived_memory_ids=_memory_id_tuple(log, MemoryOperation.ARCHIVE.value),
+                    archived_memory_ids=_archived_id_tuple(log),
                 )
         return None
 
@@ -263,7 +275,7 @@ def _memory_id_for_proposal(proposal: MemoryProposal) -> str:
     tenant = quote(proposal.tenant_id or "default", safe="")
     owner = quote(str(proposal.agent_id or proposal.actor_id), safe="")
     identity = quote(str(proposal.user_id or proposal.subject_id or proposal.actor_id), safe="")
-    if proposal.layer == MemoryLayer.CORE.value:
+    if _proposal_level(proposal) == MemoryLevel.PROFILE.value:
         return f"v3:{proposal.memory_type}:{tenant}:{identity}:{owner}:{key}"
     session = quote(proposal.session_id or "default", safe="")
     return f"proposal:{proposal.memory_type}:{tenant}:{session}:{identity}:{owner}:{key}"
@@ -287,11 +299,22 @@ def _memory_id_tuple(log: MemoryAuditLog, action: str) -> tuple[str, ...]:
     return (log.memory_id,)
 
 
+def _archived_id_tuple(log: MemoryAuditLog) -> tuple[str, ...]:
+    if log.memory_id is None or log.after_record is None:
+        return ()
+    if log.after_record.status != MemoryStatus.ARCHIVED.value:
+        return ()
+    return (log.memory_id,)
+
+
 def _metadata(proposal: MemoryProposal) -> dict[str, Any]:
     metadata = dict(proposal.metadata)
     metadata.update(
         {
         "key": proposal.key,
+        "level": _proposal_level(proposal),
+        "visibility": _proposal_visibility(proposal),
+        "priority": _clamp(proposal.priority),
         "profile_key": "|".join(
             (
                 proposal.tenant_id or "default",
@@ -314,7 +337,7 @@ def _metadata(proposal: MemoryProposal) -> dict[str, Any]:
 def _default_visible_to(proposal: MemoryProposal) -> tuple[str, ...]:
     if MemoryLabel.PRIVATE.value in set(proposal.labels) and proposal.agent_id:
         return (proposal.agent_id,)
-    if proposal.scope == MemoryScope.GLOBAL.value:
+    if proposal.visibility == MemoryVisibility.PUBLIC.value:
         return ("*",)
     return ()
 
@@ -330,6 +353,30 @@ def _dedupe(values: tuple[str, ...]) -> tuple[str, ...]:
 
 def _clamp(value: float) -> float:
     return round(min(max(float(value), 0.0), 1.0), 4)
+
+
+def _canonical_action(action: str) -> str:
+    if action in {"reinforce", "revise"}:
+        return MemoryOperation.MERGE.value
+    if action == "keep_both":
+        return MemoryOperation.CREATE.value
+    if action == "archive":
+        return MemoryOperation.MERGE.value
+    if action in {"needs_review", "move_layer"}:
+        return MemoryOperation.IGNORE.value
+    return action
+
+
+def _proposal_level(proposal: MemoryProposal) -> str:
+    if proposal.level:
+        return proposal.level
+    return MemoryLevel.ATOM.value
+
+
+def _proposal_visibility(proposal: MemoryProposal) -> str:
+    if proposal.visibility:
+        return proposal.visibility
+    return MemoryVisibility.PRIVATE.value
 
 
 def memory_type_from_kind(kind: str | None) -> str:

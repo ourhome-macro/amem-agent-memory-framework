@@ -9,11 +9,11 @@ from agent_memory_runtime.audit.hashing import stable_hash
 @dataclass(frozen=True)
 class RetrievalWeights:
     keyword: float = 1.0
-    recency: float = 0.2
-    salience: float = 0.8
-    confidence: float = 0.3
-    type_boost: float = 0.4
-    source_link: float = 0.6
+    recency: float = 0.05
+    salience: float = 0.1
+    confidence: float = 0.0
+    type_boost: float = 0.0
+    source_link: float = 0.0
     semantic: float = 1.0
     fusion: float = 2.0
     hard_negative: float = -4.0
@@ -73,7 +73,7 @@ class FinalRetrievalFilterConfig:
     abstain_enabled: bool = True
     min_semantic_similarity: float = 0.48
     min_lexical_coverage: float = 0.28
-    min_rank_score: float = 1.45
+    min_rank_score: float = 1.0
     max_filter_candidates: int = 32
 
     def __post_init__(self) -> None:
@@ -96,7 +96,7 @@ class DeterministicRerankConfig:
     drop_entity_mismatch: bool = True
     no_answer_enabled: bool = True
     min_entity_overlap: float = 0.18
-    no_answer_min_score: float = 1.35
+    no_answer_min_score: float = 1.0
     no_answer_min_entity_overlap: float = 0.12
 
     def __post_init__(self) -> None:
@@ -110,49 +110,6 @@ class DeterministicRerankConfig:
             raise ValueError(
                 "deterministic rerank no_answer_min_entity_overlap must be between 0 and 1"
             )
-
-
-@dataclass(frozen=True)
-class QueryRouterConfig:
-    enabled: bool = True
-    lexical_heavy_lexical_weight: float = 1.8
-    lexical_heavy_semantic_weight: float = 0.35
-    vector_heavy_lexical_weight: float = 0.0
-    vector_heavy_semantic_weight: float = 1.8
-    hybrid_lexical_weight: float = 1.0
-    hybrid_semantic_weight: float = 1.0
-    state_lexical_weight: float = 0.85
-    state_semantic_weight: float = 1.2
-    temporal_lexical_weight: float = 0.8
-    temporal_semantic_weight: float = 1.2
-    lexical_heavy_semantic_limit_factor: float = 0.5
-    vector_heavy_lexical_limit_factor: float = 0.35
-    semantic_strong_match_threshold: float = 0.55
-    semantic_strong_match_rank: int = 3
-
-    def __post_init__(self) -> None:
-        weights = (
-            self.lexical_heavy_lexical_weight,
-            self.lexical_heavy_semantic_weight,
-            self.vector_heavy_lexical_weight,
-            self.vector_heavy_semantic_weight,
-            self.hybrid_lexical_weight,
-            self.hybrid_semantic_weight,
-            self.state_lexical_weight,
-            self.state_semantic_weight,
-            self.temporal_lexical_weight,
-            self.temporal_semantic_weight,
-        )
-        if any(weight < 0 for weight in weights):
-            raise ValueError("query router weights cannot be negative")
-        if not 0.0 <= self.lexical_heavy_semantic_limit_factor <= 1.0:
-            raise ValueError("lexical-heavy semantic limit factor must be between 0 and 1")
-        if not 0.0 <= self.vector_heavy_lexical_limit_factor <= 1.0:
-            raise ValueError("vector-heavy lexical limit factor must be between 0 and 1")
-        if not -1.0 <= self.semantic_strong_match_threshold <= 1.0:
-            raise ValueError("semantic strong-match threshold must be between -1 and 1")
-        if self.semantic_strong_match_rank <= 0:
-            raise ValueError("semantic strong-match rank must be positive")
 
 
 @dataclass(frozen=True)
@@ -313,7 +270,6 @@ class RuntimeConfig:
     deterministic_rerank: DeterministicRerankConfig = field(
         default_factory=DeterministicRerankConfig
     )
-    query_router: QueryRouterConfig = field(default_factory=QueryRouterConfig)
     fast_response: FastResponseConfig = field(default_factory=FastResponseConfig)
     worker: WorkerConfig = field(default_factory=WorkerConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)

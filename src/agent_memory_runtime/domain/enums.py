@@ -21,16 +21,17 @@ class MemoryType(StrEnum):
     STRATEGY = "strategy"
 
 
-class MemoryScope(StrEnum):
+class MemoryLevel(StrEnum):
+    RAW = "L0"
+    ATOM = "L1"
+    SCENARIO = "L2"
+    PROFILE = "L3"
+
+
+class MemoryVisibility(StrEnum):
     PRIVATE = "private"
     SHARED = "shared"
-    GLOBAL = "global"
-
-
-class MemoryLayer(StrEnum):
-    CORE = "core"
-    WORKING = "working"
-    ARCHIVAL = "archival"
+    PUBLIC = "public"
 
 
 class MemorySessionPolicy(StrEnum):
@@ -41,13 +42,10 @@ class MemorySessionPolicy(StrEnum):
 
 class MemoryOperation(StrEnum):
     CREATE = "create"
-    REINFORCE = "reinforce"
-    REVISE = "revise"
+    MERGE = "merge"
     SUPERSEDE = "supersede"
-    ARCHIVE = "archive"
+    IGNORE = "ignore"
     DELETE = "delete"
-    KEEP_BOTH = "keep_both"
-    NEEDS_REVIEW = "needs_review"
 
 
 class MemoryLabel(StrEnum):
@@ -58,5 +56,7 @@ class MemoryLabel(StrEnum):
 
 class MemoryStatus(StrEnum):
     ACTIVE = "active"
+    SUPERSEDED = "superseded"
     ARCHIVED = "archived"
+    DELETED = "deleted"
     CONFLICTED = "conflicted"

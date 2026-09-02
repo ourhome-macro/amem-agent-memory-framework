@@ -7,8 +7,9 @@ def project_record(record: MemoryRecord) -> dict[str, object]:
     return {
         "memory_id": record.memory_id,
         "memory_type": record.memory_type,
-        "scope": record.scope,
-        "layer": record.layer,
+        "level": record.level,
+        "visibility": record.visibility,
+        "status": record.status,
         "subject_id": record.subject_id,
         "content": record.content,
         "source_event_ids": list(record.source_event_ids),
@@ -17,6 +18,6 @@ def project_record(record: MemoryRecord) -> dict[str, object]:
         "tags": list(record.tags),
         "salience": record.salience,
         "confidence": record.confidence,
+        "priority": record.priority,
         "reinforcement_count": record.reinforcement_count,
     }
-

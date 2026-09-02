@@ -148,28 +148,4 @@ class RetrievalPipeline:
         *,
         candidate_batch: CandidateBatch | None,
     ) -> list[RetrievalResult]:
-        if candidate_batch is None or not candidate_batch.query_route:
-            return results
-        mode = str(candidate_batch.query_route.get("mode") or "")
-        if mode not in {"vector_heavy", "hybrid", "state_aware", "temporal_aware"}:
-            return results
-        threshold = self.config.query_router.semantic_strong_match_threshold
-        max_rank = self.config.query_router.semantic_strong_match_rank
-
-        def key(result: RetrievalResult) -> tuple[float, float, float, str]:
-            candidate = candidate_batch.get(result.memory_id)
-            if candidate is None or result.blocked:
-                return (0.0, 0.0, result.score.total, result.memory_id)
-            semantic_rank = candidate.semantic_rank or 10**9
-            semantic_similarity = float(candidate.semantic_similarity or 0.0)
-            strong = (
-                1.0
-                if semantic_rank <= max_rank and semantic_similarity >= threshold
-                else 0.0
-            )
-            semantic_relevance = (
-                candidate.semantic_relevance if mode == "vector_heavy" else strong
-            )
-            return (strong, semantic_relevance, result.score.total, result.memory_id)
-
-        return sorted(results, key=key, reverse=True)
+        return results

@@ -6,7 +6,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent_memory_runtime.audit.stores.sqlite import SQLiteAuditStore
-from agent_memory_runtime.domain.enums import MemoryLabel, MemoryScope
+from agent_memory_runtime.domain.enums import (
+    MemoryLabel,
+    MemoryLevel,
+    MemoryStatus,
+    MemoryVisibility,
+)
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery
@@ -104,7 +109,6 @@ class SQLiteMemoryStore(SQLiteStore):
     def build_candidate_retriever(self, config: object) -> object:
         from agent_memory_runtime.config import (
             HybridRetrievalConfig,
-            QueryRouterConfig,
             RuntimeConfig,
         )
         from agent_memory_runtime.memory.retrieval import (
@@ -113,9 +117,7 @@ class SQLiteMemoryStore(SQLiteStore):
             StoreLexicalRetriever,
         )
 
-        router_config = QueryRouterConfig(enabled=False)
         if isinstance(config, RuntimeConfig):
-            router_config = config.query_router
             config = config.hybrid_retrieval
         if not isinstance(config, HybridRetrievalConfig):
             raise TypeError("config must be RuntimeConfig or HybridRetrievalConfig")
@@ -140,7 +142,6 @@ class SQLiteMemoryStore(SQLiteStore):
             lexical=(StoreLexicalRetriever(self) if config.enable_lexical else None),
             semantic=semantic,
             config=config,
-            router_config=router_config,
         )
 
     def upsert(self, record: MemoryRecord) -> None:
@@ -149,21 +150,23 @@ class SQLiteMemoryStore(SQLiteStore):
                 """
                 INSERT INTO memories(
                     memory_id, payload, tenant_id, user_id, agent_id, session_id,
-                    layer, status, memory_type, scope, updated_at, salience,
+                    status, memory_type, updated_at, salience,
+                    level, visibility, priority,
                     search_indexed, retrieval_v6_indexed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
                 ON CONFLICT(memory_id) DO UPDATE SET
                     payload = excluded.payload,
                     tenant_id = excluded.tenant_id,
                     user_id = excluded.user_id,
                     agent_id = excluded.agent_id,
                     session_id = excluded.session_id,
-                    layer = excluded.layer,
                     status = excluded.status,
                     memory_type = excluded.memory_type,
-                    scope = excluded.scope,
                     updated_at = excluded.updated_at,
                     salience = excluded.salience,
+                    level = excluded.level,
+                    visibility = excluded.visibility,
+                    priority = excluded.priority,
                     search_indexed = 1,
                     retrieval_v6_indexed = 1
                 """,
@@ -229,7 +232,7 @@ class SQLiteMemoryStore(SQLiteStore):
                 JOIN memories ON memories.memory_id = memory_fts.memory_id
                 WHERE memory_fts MATCH ? AND {" AND ".join(where)}
                 ORDER BY bm25(memory_fts) ASC,
-                         memories.salience DESC,
+                         memories.priority DESC,
                          memories.updated_at DESC,
                          memories.memory_id ASC
                 LIMIT ? OFFSET ?
@@ -240,7 +243,7 @@ class SQLiteMemoryStore(SQLiteStore):
                 SELECT memories.payload
                 FROM memories
                 WHERE {" AND ".join(where)}
-                ORDER BY memories.salience DESC,
+                ORDER BY memories.priority DESC,
                          memories.updated_at DESC,
                          memories.memory_id ASC
                 LIMIT ? OFFSET ?
@@ -267,7 +270,7 @@ class SQLiteMemoryStore(SQLiteStore):
                 JOIN memories ON memories.memory_id = memory_fts.memory_id
                 WHERE memory_fts MATCH ? AND {" AND ".join(where)}
                 ORDER BY lexical_score ASC,
-                         memories.salience DESC,
+                         memories.priority DESC,
                          memories.updated_at DESC,
                          memories.memory_id ASC
                 LIMIT ?
@@ -278,7 +281,7 @@ class SQLiteMemoryStore(SQLiteStore):
                 SELECT memories.memory_id, NULL AS lexical_score
                 FROM memories
                 WHERE {" AND ".join(where)}
-                ORDER BY memories.salience DESC,
+                ORDER BY memories.priority DESC,
                          memories.updated_at DESC,
                          memories.memory_id ASC
                 LIMIT ?
@@ -306,9 +309,10 @@ class SQLiteMemoryStore(SQLiteStore):
                 """
                 INSERT INTO memories(
                     memory_id, payload, tenant_id, user_id, agent_id, session_id,
-                    layer, status, memory_type, scope, updated_at, salience,
+                    status, memory_type, updated_at, salience,
+                    level, visibility, priority,
                     search_indexed, retrieval_v6_indexed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
                 """,
                 [_memory_row(record) for record in records],
             )
@@ -316,7 +320,7 @@ class SQLiteMemoryStore(SQLiteStore):
             if self.embedding_scheduler is not None:
                 self.embedding_scheduler.schedule_many(
                     [
-                        (record, bool(_acl_principals(record)))
+                        (record, _should_embed(record))
                         for record in records
                     ]
                 )
@@ -416,7 +420,7 @@ class SQLiteMemoryStore(SQLiteStore):
         return len(
             self.embedding_scheduler.schedule_many(
                 [
-                    (record, bool(_acl_principals(record)))
+                    (record, _should_embed(record))
                     for record in records
                 ]
             )
@@ -428,7 +432,7 @@ class SQLiteMemoryStore(SQLiteStore):
             return
         self.embedding_scheduler.schedule(
             record,
-            retrievable=bool(_acl_principals(record)),
+            retrievable=_should_embed(record),
         )
 
 
@@ -727,12 +731,13 @@ def _memory_row(record: MemoryRecord) -> tuple[object, ...]:
         record.user_id,
         record.agent_id or record.owner_id,
         record.session_id,
-        record.layer,
         record.status,
         record.memory_type,
-        record.scope,
         record.updated_at,
         record.salience,
+        record.level,
+        record.visibility,
+        record.priority,
     )
 
 
@@ -745,8 +750,20 @@ def _acl_principals(record: MemoryRecord) -> tuple[str, ...]:
     if owner_agent_id is not None:
         principals.add(owner_agent_id)
     if MemoryLabel.PRIVATE.value not in labels:
-        if record.scope == MemoryScope.GLOBAL.value:
+        if record.visibility == MemoryVisibility.PUBLIC.value:
             principals.add("*")
-        elif record.scope == MemoryScope.SHARED.value and not record.visible_to:
+        elif record.visibility == MemoryVisibility.SHARED.value and not record.visible_to:
             principals.add("*")
     return tuple(sorted(principals))
+
+
+def _should_embed(record: MemoryRecord) -> bool:
+    if record.status != MemoryStatus.ACTIVE.value:
+        return False
+    if not _acl_principals(record):
+        return False
+    if record.level == MemoryLevel.ATOM.value:
+        return True
+    if record.level == MemoryLevel.RAW.value:
+        return bool(record.metadata.get("embedding_index"))
+    return False

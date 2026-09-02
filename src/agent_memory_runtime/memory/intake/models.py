@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from agent_memory_runtime.domain.enums import MemoryLevel, MemoryStatus, MemoryVisibility
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 
@@ -115,8 +116,6 @@ class MemoryProposal:
     key: str | None
     content: str
     memory_type: str
-    layer: str
-    scope: str
     visible_to: tuple[str, ...]
     confidence: float
     salience: float
@@ -135,6 +134,11 @@ class MemoryProposal:
     tags: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
     expected_version: int | None = None
+    level: str = MemoryLevel.ATOM.value
+    visibility: str = MemoryVisibility.PRIVATE.value
+    priority: float = 0.5
+    status: str = MemoryStatus.ACTIVE.value
+    decision_status: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -146,8 +150,6 @@ class MemoryProposal:
             "key": self.key,
             "content": self.content,
             "memory_type": self.memory_type,
-            "layer": self.layer,
-            "scope": self.scope,
             "visible_to": list(self.visible_to),
             "confidence": self.confidence,
             "salience": self.salience,
@@ -166,12 +168,17 @@ class MemoryProposal:
             "tags": list(self.tags),
             "metadata": dict(self.metadata),
             "expected_version": self.expected_version,
+            "level": self.level,
+            "visibility": self.visibility,
+            "priority": self.priority,
+            "status": self.status,
+            "decision_status": self.decision_status,
             # Compatibility keys for the pre-proposal Auto Dream API.
             "kind": self.memory_type,
             "evidence_event_ids": list(self.source_message_ids),
             "recommended_action": (
                 "auto_apply"
-                if self.action in {"create", "reinforce", "revise", "archive"}
+                if self.action in {"create", "merge", "supersede"}
                 else "review"
             ),
         }

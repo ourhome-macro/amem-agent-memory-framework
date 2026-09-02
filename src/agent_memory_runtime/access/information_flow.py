@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from agent_memory_runtime.domain.enums import MemoryScope
+from agent_memory_runtime.domain.enums import MemoryVisibility
 from agent_memory_runtime.domain.memory import MemoryRecord
 
 
-def can_flow_to_scope(record: MemoryRecord, target_scope: str) -> bool:
-    if record.scope == MemoryScope.PRIVATE.value:
-        return target_scope == MemoryScope.PRIVATE.value
-    if record.scope == MemoryScope.SHARED.value:
-        return target_scope in {MemoryScope.SHARED.value, MemoryScope.PRIVATE.value}
+def can_flow_to_visibility(record: MemoryRecord, target_visibility: str) -> bool:
+    if record.visibility == MemoryVisibility.PRIVATE.value:
+        return target_visibility == MemoryVisibility.PRIVATE.value
+    if record.visibility == MemoryVisibility.SHARED.value:
+        return target_visibility in {
+            MemoryVisibility.SHARED.value,
+            MemoryVisibility.PRIVATE.value,
+        }
     return True
-

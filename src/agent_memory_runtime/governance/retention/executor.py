@@ -9,7 +9,7 @@ from agent_memory_runtime.audit.envelope import AuditEnvelope
 from agent_memory_runtime.audit.snapshot import RuntimeSnapshot
 from agent_memory_runtime.audit.stores.base import AuditStore
 from agent_memory_runtime.audit.subject import AuditSubject
-from agent_memory_runtime.domain.enums import MemoryLayer, MemoryOperation, MemoryStatus
+from agent_memory_runtime.domain.enums import MemoryOperation, MemoryStatus
 from agent_memory_runtime.domain.tombstone import MemoryTombstone
 from agent_memory_runtime.governance.retention.policy import RetentionPlan, RetentionReport
 from agent_memory_runtime.memory.stores.base import (
@@ -65,14 +65,13 @@ class RetentionExecutor:
                         )
                     )
                     continue
-                if action.action == "archive":
+                if action.action == "mark_archived":
                     archived.append(record.memory_id)
                     records.append(
                         replace(
                             record,
-                            layer=MemoryLayer.ARCHIVAL.value,
                             status=MemoryStatus.ARCHIVED.value,
-                            last_operation=MemoryOperation.ARCHIVE.value,
+                            last_operation=MemoryOperation.MERGE.value,
                         )
                     )
                     continue

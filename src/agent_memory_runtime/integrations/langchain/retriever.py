@@ -49,9 +49,10 @@ if Document is not None:
                         "user_id": record.user_id,
                         "agent_id": record.agent_id,
                         "session_id": record.session_id,
-                        "layer": record.layer,
+                        "level": record.level,
                         "memory_type": record.memory_type,
-                        "scope": record.scope,
+                        "visibility": record.visibility,
+                        "status": record.status,
                         "tags": list(record.tags),
                     },
                 )

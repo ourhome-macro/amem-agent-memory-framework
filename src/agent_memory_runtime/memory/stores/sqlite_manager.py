@@ -460,6 +460,73 @@ _MIGRATIONS = (
             """,
         ),
     ),
+    _Migration(
+        version=8,
+        name="memory_level_visibility_priority",
+        statements=(
+            "ALTER TABLE memories ADD COLUMN level TEXT NOT NULL DEFAULT 'L1'",
+            "ALTER TABLE memories ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'",
+            "ALTER TABLE memories ADD COLUMN priority REAL NOT NULL DEFAULT 0.5",
+            """
+            UPDATE memories
+            SET level = COALESCE(
+                    json_extract(payload, '$.level'),
+                    CASE json_extract(payload, '$.layer')
+                        WHEN 'core' THEN 'L3'
+                        ELSE 'L1'
+                    END
+                ),
+                visibility = COALESCE(
+                    json_extract(payload, '$.visibility'),
+                    CASE json_extract(payload, '$.scope')
+                        WHEN 'global' THEN 'public'
+                        WHEN 'shared' THEN 'shared'
+                        ELSE 'private'
+                    END
+                ),
+                priority = COALESCE(
+                    json_extract(payload, '$.priority'),
+                    json_extract(payload, '$.salience'),
+                    0.5
+                )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_level_status
+            ON memories(tenant_id, level, status)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_visibility
+            ON memories(tenant_id, visibility)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_priority_recency
+            ON memories(tenant_id, priority, updated_at)
+            """,
+        ),
+    ),
+    _Migration(
+        version=9,
+        name="drop_memory_layer_scope_projection",
+        statements=(
+            "DROP INDEX IF EXISTS idx_memories_identity_layer_status",
+            "DROP INDEX IF EXISTS idx_memories_session_layer_status",
+            "DROP INDEX IF EXISTS idx_memories_type_scope",
+            "ALTER TABLE memories DROP COLUMN layer",
+            "ALTER TABLE memories DROP COLUMN scope",
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_identity_status_level
+            ON memories(tenant_id, user_id, status, level)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_session_status_level
+            ON memories(tenant_id, session_id, status, level)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_type_visibility
+            ON memories(tenant_id, memory_type, visibility)
+            """,
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = _MIGRATIONS[-1].version

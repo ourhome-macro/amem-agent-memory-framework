@@ -22,6 +22,7 @@ def select_candidates(
         overlap = len(query_terms & lexical_tokens(searchable_record_text(record)))
         return (
             overlap,
+            record.priority,
             record.salience,
             record.confidence,
             record.reinforcement_count,

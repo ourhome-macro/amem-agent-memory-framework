@@ -1,12 +1,12 @@
 from agent_memory_runtime.domain.enums import (
     EventKind,
     MemoryLabel,
-    MemoryLayer,
+    MemoryLevel,
     MemoryOperation,
-    MemoryScope,
     MemorySessionPolicy,
     MemoryStatus,
     MemoryType,
+    MemoryVisibility,
 )
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryCandidate, MemoryRecord
@@ -17,14 +17,14 @@ __all__ = [
     "EventKind",
     "MemoryCandidate",
     "MemoryLabel",
-    "MemoryLayer",
+    "MemoryLevel",
     "MemoryOperation",
     "MemoryQuery",
     "MemoryRecord",
-    "MemoryScope",
     "MemorySessionPolicy",
     "MemoryStatus",
     "MemoryType",
+    "MemoryVisibility",
     "RetrievalTrace",
     "ScoreBreakdown",
 ]

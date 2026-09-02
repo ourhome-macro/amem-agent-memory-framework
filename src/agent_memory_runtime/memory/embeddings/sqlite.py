@@ -684,15 +684,38 @@ class SQLiteVectorIndex:
     def coverage(self, *, generation: str) -> float:
         with self._manager.read_connection() as connection:
             total = int(
-                connection.execute("SELECT COUNT(DISTINCT memory_id) FROM memory_acl").fetchone()[0]
+                connection.execute(
+                    """
+                    SELECT COUNT(DISTINCT m.memory_id)
+                    FROM memories AS m
+                    JOIN memory_acl AS a ON a.memory_id = m.memory_id
+                    WHERE m.status = 'active'
+                      AND (
+                          m.level = 'L1'
+                          OR (
+                              m.level = 'L0'
+                              AND json_extract(m.payload, '$.metadata.embedding_index') = 1
+                          )
+                      )
+                    """
+                ).fetchone()[0]
             )
             ready = int(
                 connection.execute(
                     """
                     SELECT COUNT(DISTINCT e.memory_id)
                     FROM memory_embeddings AS e
+                    JOIN memories AS m ON m.memory_id = e.memory_id
                     JOIN memory_acl AS a ON a.memory_id = e.memory_id
                     WHERE e.generation = ? AND e.status = 'ready'
+                      AND m.status = 'active'
+                      AND (
+                          m.level = 'L1'
+                          OR (
+                              m.level = 'L0'
+                              AND json_extract(m.payload, '$.metadata.embedding_index') = 1
+                          )
+                      )
                     """,
                     (generation,),
                 ).fetchone()[0]

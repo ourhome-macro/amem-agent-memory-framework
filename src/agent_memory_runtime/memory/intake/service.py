@@ -5,9 +5,10 @@ from uuid import uuid4
 
 from agent_memory_runtime.domain.enums import (
     EventKind,
-    MemoryLayer,
+    MemoryLevel,
     MemoryOperation,
-    MemoryScope,
+    MemoryStatus,
+    MemoryVisibility,
 )
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.memory.intake.models import (
@@ -74,7 +75,7 @@ class MemoryIntakeService:
     ) -> MemoryToolResult:
         target_memory_id = _optional_str(arguments.get("target_memory_id"))
         values = dict(arguments)
-        values["operation"] = str(values.get("operation") or MemoryOperation.REVISE.value)
+        values["operation"] = str(values.get("operation") or MemoryOperation.MERGE.value)
         if target_memory_id:
             source_memory_ids = list(values.get("source_memory_ids") or [])
             if target_memory_id not in source_memory_ids:
@@ -125,15 +126,13 @@ class MemoryIntakeService:
             action=(
                 MemoryOperation.DELETE.value
                 if mode == "delete"
-                else MemoryOperation.ARCHIVE.value
+                else MemoryOperation.MERGE.value
             ),
             target_memory_id=record.memory_id,
             subject_id=record.subject_id,
             key=str(record.metadata.get("key") or record.memory_id),
             content=record.content,
             memory_type=record.memory_type,
-            layer=record.layer,
-            scope=record.scope,
             visible_to=record.visible_to,
             confidence=record.confidence,
             salience=record.salience,
@@ -149,6 +148,14 @@ class MemoryIntakeService:
             labels=identity.labels,
             tags=_dedupe((*identity.tags, "memory-intake", "forget-memory")),
             expected_version=record.version,
+            level=record.level,
+            visibility=record.visibility,
+            priority=record.priority,
+            status=(
+                MemoryStatus.DELETED.value
+                if mode == "delete"
+                else MemoryStatus.ARCHIVED.value
+            ),
         )
         result = self.memory_service.apply_proposal(proposal)
         _refresh_snapshot(self.runtime)
@@ -183,11 +190,16 @@ class MemoryIntakeService:
         if not key:
             raise MemoryIntakeError("memory key cannot be empty")
         subject_id = str(arguments.get("subject_id") or identity.user_id or identity.actor_id)
-        action = str(arguments.get("operation") or _default_operation(kind, default_action))
-        if action == MemoryOperation.SUPERSEDE.value:
-            action = MemoryOperation.REVISE.value
+        action = _canonical_operation(
+            str(arguments.get("operation") or _default_operation(kind, default_action))
+        )
         target_memory_id = _optional_str(arguments.get("target_memory_id"))
         content_value = _content_for_kind(kind, key=key, content=content, arguments=arguments)
+        level = str(arguments.get("level") or _default_level(kind, arguments))
+        visibility = str(
+            arguments.get("visibility")
+            or _visibility_from_legacy_scope(str(arguments.get("scope") or "private"))
+        )
         return MemoryProposal(
             proposal_id=_proposal_id(default_action, idempotency_key),
             source=source,
@@ -197,8 +209,6 @@ class MemoryIntakeService:
             key=key,
             content=content_value,
             memory_type=memory_type_from_kind(kind),
-            layer=str(arguments.get("layer") or _default_layer(kind)),
-            scope=str(arguments.get("scope") or MemoryScope.PRIVATE.value),
             visible_to=_tuple_str(arguments.get("visible_to")) or (identity.agent_id,),
             confidence=_clamp_float(arguments.get("confidence"), default=0.9),
             salience=_clamp_float(arguments.get("salience"), default=0.9),
@@ -222,6 +232,10 @@ class MemoryIntakeService:
                 if arguments.get("expected_version") is not None
                 else None
             ),
+            level=level,
+            visibility=visibility,
+            priority=_clamp_float(arguments.get("priority"), default=0.5),
+            status=str(arguments.get("status") or MemoryStatus.ACTIVE.value),
         )
 
     def _resolve_forget_target(
@@ -259,14 +273,40 @@ class MemoryIntakeService:
 
 def _default_operation(kind: str, action: str) -> str:
     if action == "revise_memory":
-        return MemoryOperation.REVISE.value
+        return MemoryOperation.MERGE.value
     return MemoryOperation.CREATE.value
 
 
-def _default_layer(kind: str) -> str:
+def _default_level(kind: str, arguments: dict[str, Any]) -> str:
+    legacy_layer = str(arguments.get("layer") or "")
+    if legacy_layer == "core":
+        return MemoryLevel.PROFILE.value
+    if legacy_layer == "archival":
+        return MemoryLevel.ATOM.value
     if kind in {EventKind.PREFERENCE.value, EventKind.TASK_OUTCOME.value}:
-        return MemoryLayer.CORE.value
-    return MemoryLayer.WORKING.value
+        return MemoryLevel.PROFILE.value
+    return MemoryLevel.ATOM.value
+
+
+def _visibility_from_legacy_scope(scope: str) -> str:
+    if scope == "global":
+        return MemoryVisibility.PUBLIC.value
+    if scope == "shared":
+        return MemoryVisibility.SHARED.value
+    return MemoryVisibility.PRIVATE.value
+
+
+def _canonical_operation(action: str) -> str:
+    normalized = action.strip().casefold()
+    if normalized in {"reinforce", "revise"}:
+        return MemoryOperation.MERGE.value
+    if normalized == "keep_both":
+        return MemoryOperation.CREATE.value
+    if normalized in {"needs_review", "move_layer"}:
+        return MemoryOperation.IGNORE.value
+    if normalized == "archive":
+        return MemoryOperation.MERGE.value
+    return normalized
 
 
 def _proposal_id(action: str, idempotency_key: str | None) -> str:

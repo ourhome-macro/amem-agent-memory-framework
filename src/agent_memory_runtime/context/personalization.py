@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from agent_memory_runtime.domain.enums import MemoryLayer, MemoryStatus, MemoryType
+from agent_memory_runtime.domain.enums import MemoryLevel, MemoryStatus, MemoryType
 from agent_memory_runtime.domain.memory import MemoryRecord
 
 _LANGUAGE_RE = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*")
@@ -52,7 +52,7 @@ def build_personalization_profile(
     for record in records:
         if (
             record.memory_type != MemoryType.BELIEF.value
-            or record.layer != MemoryLayer.CORE.value
+            or record.level != MemoryLevel.PROFILE.value
             or record.status != MemoryStatus.ACTIVE.value
             or record.confidence < minimum_confidence
         ):

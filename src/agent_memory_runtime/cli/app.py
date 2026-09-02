@@ -959,15 +959,15 @@ def _load_events(path: Path) -> list[Event]:
 
 
 def _print_records(records: list[Any]) -> None:
-    table = Table("memory_id", "type", "scope", "layer", "salience", "confidence")
+    table = Table("memory_id", "type", "level", "visibility", "status", "priority")
     for record in records:
         table.add_row(
             record.memory_id,
             record.memory_type,
-            record.scope,
-            record.layer,
-            f"{record.salience:.2f}",
-            f"{record.confidence:.2f}",
+            record.level,
+            record.visibility,
+            record.status,
+            f"{record.priority:.2f}",
         )
     console.print(table)
 

@@ -1,22 +1,21 @@
-# Context
+# 上下文
 
-The context module builds model-facing memory input from selected records.
+context 模块把选中的记忆转换成模型可见输入。
 
-## Module Roles
+## 模块职责
 
-- `ContextBuilder`: selects records under `context_token_budget`, sanitizes
-  projections, and builds `AgentContext`.
-- `select_under_budget`: keeps selected memory within the configured token
-  budget.
-- `project_record`: converts `MemoryRecord` into structured model-facing fields.
-- `sanitize_context`: removes forged memory fence markers from recalled text.
-- `build_personalization_profile`: derives compact preference/profile snippets
-  from selected records.
-- `compact_checkpoint`: compresses older agent messages while preserving system
-  rules, pinned facts, original task, and recent turns.
-- `AdaptiveTokenEstimator`: estimates text, message, and tool-schema token usage.
+- `ContextBuilder`：在 `context_token_budget` 下选择记录、清理投影并构建 `AgentContext`。
+- `select_under_budget`：保证注入记忆不超过配置预算。
+- `project_record`：把 `MemoryRecord` 转换成结构化模型可见字段。
+- `sanitize_context`：移除召回文本中的伪造 memory fence marker。
+- `build_personalization_profile`：从选中记录里派生紧凑偏好和画像片段。
+- `compact_checkpoint`：压缩较早 agent 消息，同时保留系统规则、固定事实、原始任务和近期轮次。
+- `AdaptiveTokenEstimator`：估算文本、消息和工具 schema 的 token 使用量。
 
-## Budget
+## 预算
 
-`RuntimeConfig.context_token_budget` defaults to `1000` for memory injection.
-Conversation compaction uses separate `AgentPolicy` settings.
+`RuntimeConfig.context_token_budget` 默认给记忆注入 `1000` tokens。对话压缩使用独立的 `AgentPolicy` 设置。
+
+## 安全边界
+
+模型看到的是投影后的记忆上下文，不是原始存储记录。进入 prompt 前必须完成权限校验、预算裁剪和内容清理。

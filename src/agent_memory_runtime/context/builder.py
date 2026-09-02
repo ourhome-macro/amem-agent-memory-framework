@@ -82,9 +82,10 @@ def format_context(records: list[MemoryRecord]) -> str:
     lines: list[str] = []
     for record in records:
         lines.append(
-            f"[{record.memory_id}] type={record.memory_type} scope={record.scope} "
-            f"layer={record.layer} salience={record.salience:.2f} "
-            f"confidence={record.confidence:.2f} :: {record.content}"
+            f"[{record.memory_id}] type={record.memory_type} level={record.level} "
+            f"visibility={record.visibility} status={record.status} "
+            f"priority={record.priority:.2f} confidence={record.confidence:.2f} "
+            f":: {record.content}"
         )
     return sanitize_context("\n".join(lines))
 
