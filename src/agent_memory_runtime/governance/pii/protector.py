@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from agent_memory_runtime.governance.pii.token import PiiToken
-from agent_memory_runtime.governance.pii.vault import SimpleEncryptedPiiVault
+from agent_memory_runtime.governance.pii.vault import HmacPiiVault
 
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _CARD_RE = re.compile(r"\b(?:\d[ -]?){13,19}\b")
@@ -19,18 +19,31 @@ class ProtectedPayload:
 
 
 class PiiProtector:
-    def __init__(self, *, vault: SimpleEncryptedPiiVault) -> None:
+    def __init__(self, *, vault: HmacPiiVault) -> None:
         self.vault = vault
 
-    def protect_payload(self, payload: dict[str, Any], *, owner_id: str) -> ProtectedPayload:
+    def protect_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        owner_id: str,
+        tenant_id: str = "default",
+    ) -> ProtectedPayload:
         tokens: list[PiiToken] = []
-        protected = self._protect_value(payload, owner_id=owner_id, path="$", tokens=tokens)
+        protected = self._protect_value(
+            payload,
+            tenant_id=tenant_id,
+            owner_id=owner_id,
+            path="$",
+            tokens=tokens,
+        )
         return ProtectedPayload(payload=dict(protected), tokens=tuple(tokens))
 
     def _protect_value(
         self,
         value: Any,
         *,
+        tenant_id: str,
         owner_id: str,
         path: str,
         tokens: list[PiiToken],
@@ -39,6 +52,7 @@ class PiiProtector:
             return {
                 str(key): self._protect_value(
                     item,
+                    tenant_id=tenant_id,
                     owner_id=owner_id,
                     path=f"{path}.{key}",
                     tokens=tokens,
@@ -47,7 +61,13 @@ class PiiProtector:
             }
         if isinstance(value, list):
             return [
-                self._protect_value(item, owner_id=owner_id, path=f"{path}[{index}]", tokens=tokens)
+                self._protect_value(
+                    item,
+                    tenant_id=tenant_id,
+                    owner_id=owner_id,
+                    path=f"{path}[{index}]",
+                    tokens=tokens,
+                )
                 for index, item in enumerate(value)
             ]
         if isinstance(value, str):
@@ -55,17 +75,25 @@ class PiiProtector:
                 return self._tokenize(
                     value,
                     pii_type=_pii_type_from_path(path),
+                    tenant_id=tenant_id,
                     owner_id=owner_id,
                     path=path,
                     tokens=tokens,
                 )
-            return self._protect_text(value, owner_id=owner_id, path=path, tokens=tokens)
+            return self._protect_text(
+                value,
+                tenant_id=tenant_id,
+                owner_id=owner_id,
+                path=path,
+                tokens=tokens,
+            )
         return value
 
     def _protect_text(
         self,
         text: str,
         *,
+        tenant_id: str,
         owner_id: str,
         path: str,
         tokens: list[PiiToken],
@@ -74,6 +102,7 @@ class PiiProtector:
             lambda match: self._tokenize(
                 match.group(0),
                 pii_type="email",
+                tenant_id=tenant_id,
                 owner_id=owner_id,
                 path=path,
                 tokens=tokens,
@@ -89,6 +118,7 @@ class PiiProtector:
             return self._tokenize(
                 candidate,
                 pii_type="payment_card",
+                tenant_id=tenant_id,
                 owner_id=owner_id,
                 path=path,
                 tokens=tokens,
@@ -101,6 +131,7 @@ class PiiProtector:
         raw_value: str,
         *,
         pii_type: str,
+        tenant_id: str,
         owner_id: str,
         path: str,
         tokens: list[PiiToken],
@@ -108,6 +139,7 @@ class PiiProtector:
         token = self.vault.store(
             raw_value=raw_value,
             pii_type=pii_type,
+            tenant_id=tenant_id,
             owner_id=owner_id,
             field_path=path,
         )

@@ -5,11 +5,27 @@ from hashlib import sha256
 from typing import Any
 from uuid import UUID
 
-from agent_memory_runtime.domain.enums import MemoryLayer, MemorySessionPolicy, MemoryStatus
+from agent_memory_runtime.domain.enums import MemoryLevel, MemorySessionPolicy, MemoryStatus
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.memory.embeddings.base import validate_vector
 from agent_memory_runtime.memory.embeddings.models import EmbeddingSpec, VectorHit, VectorRecord
+
+_KEYWORD_PAYLOAD_INDEX_FIELDS = (
+    "memory_id",
+    "generation",
+    "status",
+    "tenant_id",
+    "user_id",
+    "agent_id",
+    "session_id",
+    "level",
+    "memory_status",
+    "memory_type",
+    "visibility",
+    "tags",
+    "acl_principals",
+)
 
 
 class QdrantVectorIndex:
@@ -40,6 +56,7 @@ class QdrantVectorIndex:
         self.client = client
         self.collection_name = collection_name
         self.expected_count = expected_count
+        self._payload_indexes_ensured = False
 
     def upsert(self, record: VectorRecord, *, memory: MemoryRecord | None = None) -> None:
         from qdrant_client import models
@@ -164,15 +181,35 @@ class QdrantVectorIndex:
             "create_collection",
         ):
             return
-        if self.client.collection_exists(collection_name=self.collection_name):
-            return
         from qdrant_client import models
 
-        distance = models.Distance.COSINE if spec.normalized else models.Distance.DOT
-        self.client.create_collection(
-            collection_name=self.collection_name,
-            vectors_config=models.VectorParams(size=spec.dimensions, distance=distance),
-        )
+        if not self.client.collection_exists(collection_name=self.collection_name):
+            distance = models.Distance.COSINE if spec.normalized else models.Distance.DOT
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=models.VectorParams(size=spec.dimensions, distance=distance),
+            )
+        self._ensure_payload_indexes(models)
+
+    def _ensure_payload_indexes(self, models: object) -> None:
+        if self._payload_indexes_ensured:
+            return
+        create_payload_index = getattr(self.client, "create_payload_index", None)
+        if not callable(create_payload_index):
+            return
+        schema_type = getattr(models, "PayloadSchemaType", None)
+        schema = getattr(schema_type, "KEYWORD", "keyword")
+        for field_name in _KEYWORD_PAYLOAD_INDEX_FIELDS:
+            try:
+                create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name=field_name,
+                    field_schema=schema,
+                )
+            except Exception as error:
+                if not _payload_index_already_exists(error):
+                    raise
+        self._payload_indexes_ensured = True
 
 
 def _query_filter(query: MemoryQuery, *, generation: str) -> dict[str, object]:
@@ -180,8 +217,9 @@ def _query_filter(query: MemoryQuery, *, generation: str) -> dict[str, object]:
         _match("generation", generation),
         _match("status", "ready"),
         _match("tenant_id", query.tenant_id),
-        _match("memory_status", MemoryStatus.ACTIVE.value),
     ]
+    if not query.statuses:
+        must.append(_match("memory_status", MemoryStatus.ACTIVE.value))
     should: list[dict[str, object]] = []
     if query.user_id is None:
         must.append(_missing("user_id"))
@@ -197,15 +235,16 @@ def _query_filter(query: MemoryQuery, *, generation: str) -> dict[str, object]:
                 {
                     "should": [
                         _match("session_id", query.session_id),
-                        {"must_not": [_match("layer", MemoryLayer.WORKING.value)]},
+                        _match("level", MemoryLevel.PROFILE.value),
                     ]
                 }
             )
 
     for key, values in (
-        ("scope", query.scopes),
         ("memory_type", query.memory_types),
-        ("layer", query.layers),
+        ("level", query.levels),
+        ("memory_status", query.statuses),
+        ("visibility", query.visibilities),
     ):
         if values:
             must.append(_any(key, values))
@@ -222,10 +261,11 @@ def qdrant_payload_for_memory(
     user_id: str | None,
     agent_id: str | None,
     session_id: str,
-    layer: str,
+    level: str,
     status: str,
     memory_type: str,
-    scope: str,
+    visibility: str,
+    priority: float,
     tags: tuple[str, ...],
     acl_principals: tuple[str, ...],
 ) -> dict[str, object]:
@@ -234,10 +274,11 @@ def qdrant_payload_for_memory(
         "user_id": user_id,
         "agent_id": agent_id,
         "session_id": session_id,
-        "layer": layer,
+        "level": level,
         "memory_status": status,
         "memory_type": memory_type,
-        "scope": scope,
+        "visibility": visibility,
+        "priority": priority,
         "tags": list(tags),
         "acl_principals": list(acl_principals),
     }
@@ -249,10 +290,11 @@ def qdrant_payload_from_memory(record: MemoryRecord) -> dict[str, object]:
         user_id=record.user_id,
         agent_id=record.agent_id,
         session_id=record.session_id,
-        layer=record.layer,
+        level=record.level,
         status=record.status,
         memory_type=record.memory_type,
-        scope=record.scope,
+        visibility=record.visibility,
+        priority=record.priority,
         tags=tuple(record.tags),
         acl_principals=_acl_principals(record),
     )
@@ -261,13 +303,13 @@ def qdrant_payload_from_memory(record: MemoryRecord) -> dict[str, object]:
 def _acl_principals(record: MemoryRecord) -> tuple[str, ...]:
     if "sensitive" in set(record.labels):
         return ()
-    if record.scope == "global":
-        return ("*",)
     principals = set(record.visible_to)
     if record.agent_id:
         principals.add(record.agent_id)
     if record.owner_id:
         principals.add(record.owner_id)
+    if record.visibility == "public" or (record.visibility == "shared" and not record.visible_to):
+        principals.add("*")
     return tuple(sorted(principals))
 
 
@@ -284,6 +326,11 @@ def _payload(row: object) -> dict[str, object]:
         value = row.get("payload")
         return value if isinstance(value, dict) else {}
     return {}
+
+
+def _payload_index_already_exists(error: Exception) -> bool:
+    message = str(error).casefold()
+    return "already exists" in message or "already exist" in message
 
 
 def _match(key: str, value: object) -> dict[str, object]:

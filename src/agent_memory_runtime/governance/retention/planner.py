@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_memory_runtime.domain.enums import MemoryLabel, MemoryLayer, MemoryStatus
+from agent_memory_runtime.domain.enums import MemoryLabel, MemoryLevel, MemoryStatus
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.governance.retention.policy import (
     RetentionAction,
@@ -32,7 +32,7 @@ class RetentionPlanner:
                 actions.append(
                     RetentionAction(
                         memory_id=record.memory_id,
-                        action="archive",
+                        action="mark_archived",
                         reason="working_memory_retention_expired",
                     )
                 )
@@ -47,7 +47,7 @@ class RetentionPlanner:
         )
 
     def _should_archive_working(self, record: MemoryRecord, age: int) -> bool:
-        if record.layer != MemoryLayer.WORKING.value:
+        if record.level == MemoryLevel.PROFILE.value:
             return False
         if age < self.policy.archive_working_after_sequences:
             return False

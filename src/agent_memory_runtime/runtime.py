@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import perf_counter
 
 from agent_memory_runtime.access.sanitizer import sanitize_event
@@ -21,6 +21,7 @@ from agent_memory_runtime.audit.subject import AuditSubject
 from agent_memory_runtime.audit.trace import RuntimeTrace
 from agent_memory_runtime.config import RuntimeConfig
 from agent_memory_runtime.context import AgentContext, ContextBuilder, build_memory_context_block
+from agent_memory_runtime.domain.enums import MemoryLevel, MemorySessionPolicy, MemoryStatus
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery, RetrievalTrace
@@ -44,7 +45,7 @@ from agent_memory_runtime.memory.retrieval import (
     CandidateRetriever,
     RetrievalPipeline,
 )
-from agent_memory_runtime.memory.retrieval.planner import normalize_query
+from agent_memory_runtime.memory.retrieval.planner import plan_query
 from agent_memory_runtime.memory.service import MemoryService
 from agent_memory_runtime.memory.stores import (
     InMemoryEventStore,
@@ -256,10 +257,12 @@ class AgentMemoryRuntime:
         query: MemoryQuery | dict[str, object],
     ) -> tuple[list[MemoryRecord], RuntimeTrace]:
         memory_query = _query_from_dict(query) if isinstance(query, dict) else query
-        records, candidate_batch = self._records_and_candidates_for_query(memory_query)
+        records, candidate_batch, planned_query = self._records_and_candidates_for_query(
+            memory_query
+        )
         selected, trace = self.retrieval.retrieve(
             records,
-            memory_query,
+            planned_query,
             candidate_batch=candidate_batch,
         )
         self._set_last_trace(trace, action="retrieve_memory", context_source="retrieval")
@@ -596,10 +599,12 @@ class AgentMemoryRuntime:
     ) -> AgentContext:
         candidate_batch = None
         if records is None:
-            records, candidate_batch = self._records_and_candidates_for_query(query)
+            records, candidate_batch, planned_query = self._records_and_candidates_for_query(
+                query
+            )
         selected, trace = self.retrieval.retrieve(
             records,
-            query,
+            planned_query,
             candidate_batch=candidate_batch,
         )
         return self.context_builder.build(
@@ -626,8 +631,7 @@ class AgentMemoryRuntime:
             metadata={"context_source": "snapshot", "retrieval_timed_out": True},
         )
 
-    def _records_for_query(self, query: MemoryQuery) -> list[MemoryRecord]:
-        planned = normalize_query(query)
+    def _records_for_query(self, planned: MemoryQuery) -> list[MemoryRecord]:
         query_records = getattr(self.memory_store, "query_records", None)
         if callable(query_records):
             records = query_records(
@@ -645,18 +649,58 @@ class AgentMemoryRuntime:
     def _records_and_candidates_for_query(
         self,
         query: MemoryQuery,
-    ) -> tuple[list[MemoryRecord], CandidateBatch | None]:
+    ) -> tuple[list[MemoryRecord], CandidateBatch | None, MemoryQuery]:
+        planned, routing_metadata = plan_query(
+            query,
+        )
         if self.candidate_retriever is None:
-            return self._records_for_query(query), None
-        planned = normalize_query(query)
+            return self._records_for_query(planned), None, planned
         candidates = self.candidate_retriever.retrieve(
             planned,
             limit=self.config.max_retrieval_candidates,
         )
+        candidates = replace(
+            candidates,
+            query_route={
+                **candidates.query_route,
+                "memory_routing": routing_metadata,
+            },
+        )
         memory_ids = [hit.memory_id for hit in candidates.hits]
         records = self.memory_store.get_many(memory_ids)
         records = [record for record in records if not self._record_is_tombstoned(record)]
-        return records, candidates
+        records = _merge_records(records, self._profile_records_for_query(planned))
+        return records, candidates, planned
+
+    def _profile_records_for_query(self, query: MemoryQuery) -> list[MemoryRecord]:
+        if query.levels and MemoryLevel.PROFILE.value not in set(query.levels):
+            return []
+        if query.statuses and MemoryStatus.ACTIVE.value not in set(query.statuses):
+            return []
+        policy = MemorySessionPolicy(query.session_policy)
+        if policy is MemorySessionPolicy.EXACT:
+            return []
+        profile_query = replace(
+            query,
+            text="",
+            session_id=None if policy is MemorySessionPolicy.ALL else query.session_id,
+            levels=(MemoryLevel.PROFILE.value,),
+            statuses=(MemoryStatus.ACTIVE.value,),
+        )
+        query_records = getattr(self.memory_store, "query_records", None)
+        if callable(query_records):
+            return [
+                record
+                for record in query_records(profile_query, limit=self.config.max_retrieval_results)
+                if not self._record_is_tombstoned(record)
+            ]
+        return [
+            record
+            for record in self.memory_store.list_records()
+            if record.level == MemoryLevel.PROFILE.value
+            and record.status == MemoryStatus.ACTIVE.value
+            and not self._record_is_tombstoned(record)
+        ]
 
     def _record_is_tombstoned(self, record: MemoryRecord) -> bool:
         tombstone = self.tombstone_store.get(record.memory_id)
@@ -840,20 +884,69 @@ class AgentMemoryRuntime:
 
 
 def _query_from_dict(value: dict[str, object]) -> MemoryQuery:
+    legacy_layers = tuple(str(item) for item in value.get("layers", ()))
+    legacy_scopes = tuple(str(item) for item in value.get("scopes", ()))
+    levels = tuple(str(item) for item in value.get("levels", ())) or _levels_from_layers(
+        legacy_layers
+    )
+    statuses = tuple(str(item) for item in value.get("statuses", ())) or _statuses_from_layers(
+        legacy_layers
+    )
+    visibilities = tuple(str(item) for item in value.get("visibilities", ())) or (
+        _visibilities_from_scopes(legacy_scopes)
+    )
     return MemoryQuery(
         agent_id=str(value.get("agent_id") or value.get("agent") or "agent"),
         text=str(value.get("text") or value.get("query") or ""),
         tenant_id=str(value.get("tenant_id") or "default"),
         user_id=_optional_str(value.get("user_id")),
         session_id=_optional_str(value.get("session_id")),
-        scopes=tuple(str(item) for item in value.get("scopes", ())),
         memory_types=tuple(str(item) for item in value.get("memory_types", ())),
-        layers=tuple(str(item) for item in value.get("layers", ())),
+        levels=levels,
+        statuses=statuses,
+        visibilities=visibilities,
         tags=tuple(str(item) for item in value.get("tags", ())),
         source_memory_ids=tuple(str(item) for item in value.get("source_memory_ids", ())),
         limit=int(value["limit"]) if value.get("limit") is not None else None,
         session_policy=str(value.get("session_policy") or "exact"),
+        retrieval_mode=_optional_str(value.get("retrieval_mode")),
     )
+
+
+def _merge_records(
+    first: list[MemoryRecord],
+    second: list[MemoryRecord],
+) -> list[MemoryRecord]:
+    records: dict[str, MemoryRecord] = {}
+    for record in (*first, *second):
+        records.setdefault(record.memory_id, record)
+    return list(records.values())
+
+
+def _levels_from_layers(layers: tuple[str, ...]) -> tuple[str, ...]:
+    values = []
+    for layer in layers:
+        if layer == "core":
+            values.append("L3")
+        elif layer in {"working", "archival"}:
+            values.append("L1")
+    return tuple(dict.fromkeys(values))
+
+
+def _statuses_from_layers(layers: tuple[str, ...]) -> tuple[str, ...]:
+    if "archival" in layers:
+        return ("active", "archived")
+    return ()
+
+
+def _visibilities_from_scopes(scopes: tuple[str, ...]) -> tuple[str, ...]:
+    values = []
+    for scope in scopes:
+        if scope == "global":
+            values.append("public")
+        elif scope in {"private", "shared"}:
+            values.append(scope)
+    return tuple(dict.fromkeys(values))
 
 
 def _optional_str(value: object) -> str | None:

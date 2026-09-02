@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_memory_runtime.domain.enums import MemoryLayer
+from agent_memory_runtime.domain.enums import MemoryStatus
 from agent_memory_runtime.domain.query import MemoryQuery
 
 _ARCHIVAL_QUERY_MARKERS = (
@@ -16,31 +16,42 @@ _ARCHIVAL_QUERY_MARKERS = (
 
 
 def normalize_query(query: MemoryQuery) -> MemoryQuery:
-    layers = query.layers or _default_layers(query.text)
+    statuses = query.statuses or _default_statuses(query.text)
     return MemoryQuery(
         agent_id=query.agent_id,
         text=query.text,
         tenant_id=query.tenant_id,
         user_id=query.user_id,
         session_id=query.session_id,
-        scopes=query.scopes,
         memory_types=query.memory_types,
-        layers=layers,
+        levels=query.levels,
+        statuses=statuses,
+        visibilities=query.visibilities,
         tags=query.tags,
         source_memory_ids=query.source_memory_ids,
         limit=query.limit,
         session_policy=query.session_policy,
+        retrieval_mode=query.retrieval_mode,
     )
 
 
-def _default_layers(text: str) -> tuple[str, ...]:
+def plan_query(query: MemoryQuery) -> tuple[MemoryQuery, dict[str, object]]:
+    planned = normalize_query(query)
+    metadata: dict[str, object] = {
+        "source": "query_normalizer",
+        "tool_called": False,
+    }
+    return planned, metadata
+
+
+def _default_statuses(text: str) -> tuple[str, ...]:
     if requests_archival_recall(text):
         return (
-            MemoryLayer.CORE.value,
-            MemoryLayer.WORKING.value,
-            MemoryLayer.ARCHIVAL.value,
+            MemoryStatus.ACTIVE.value,
+            MemoryStatus.ARCHIVED.value,
+            MemoryStatus.SUPERSEDED.value,
         )
-    return (MemoryLayer.CORE.value, MemoryLayer.WORKING.value)
+    return (MemoryStatus.ACTIVE.value,)
 
 
 def requests_archival_recall(text: str) -> bool:

@@ -393,6 +393,14 @@ class AutoDreamWorker:
             )
             applied = review = rejected = conflicts = failed = 0
             for proposal in report.proposals:
+                if proposal.decision_status == "pending_review":
+                    review += 1
+                    self.store.append_review(
+                        proposal,
+                        status="pending_review",
+                        reason=proposal.reason,
+                    )
+                    continue
                 result = self.runtime.apply_memory_proposal(proposal)
                 if result.status == "succeeded":
                     applied += 1

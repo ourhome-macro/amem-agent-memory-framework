@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from agent_memory_runtime.audit.hashing import stable_hash
 from agent_memory_runtime.config import RuntimeConfig
-from agent_memory_runtime.domain.enums import MemoryLayer, MemoryStatus
+from agent_memory_runtime.domain.enums import MemoryLevel, MemoryStatus
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 
@@ -58,14 +58,15 @@ def build_snapshot(
 def _hot_memory_ids(records: list[MemoryRecord], *, limit: int) -> tuple[str, ...]:
     if limit <= 0:
         return ()
-    allowed_layers = {MemoryLayer.CORE.value, MemoryLayer.WORKING.value}
+    allowed_levels = {MemoryLevel.ATOM.value, MemoryLevel.SCENARIO.value, MemoryLevel.PROFILE.value}
     hot_records = [
         record
         for record in records
-        if record.status == MemoryStatus.ACTIVE.value and record.layer in allowed_layers
+        if record.status == MemoryStatus.ACTIVE.value and record.level in allowed_levels
     ]
     hot_records.sort(
         key=lambda item: (
+            item.priority,
             item.salience,
             bool(item.source_memory_ids),
             item.reinforcement_count,

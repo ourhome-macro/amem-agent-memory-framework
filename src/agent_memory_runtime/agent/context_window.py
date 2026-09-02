@@ -15,6 +15,8 @@ _SUMMARY_CLOSE = "</compacted-conversation-summary>"
 _LEGACY_SUMMARY_OPEN = "<compacted-run-history>"
 _PINNED_OPEN = "<pinned-facts>"
 _PINNED_CLOSE = "</pinned-facts>"
+_TASK_STATE_OPEN = "<task-state>"
+_TASK_STATE_CLOSE = "</task-state>"
 _IMPORTANT_TOOL_LINE_RE = re.compile(
     r"\b(error|exception|failed|failure|warning|traceback|todo|fixme|class|def|function)\b",
     re.IGNORECASE,
@@ -101,10 +103,11 @@ def compact_checkpoint(
         max_tokens=policy.context_summary_max_tokens,
         summarizer=summarizer,
     )
+    task_state = _task_state_message(original_task, keep_groups)
     compacted_messages = (
         *system_prefix,
         *( () if pinned is None else (pinned,) ),
-        *original_task,
+        *( () if task_state is None else (task_state,) ),
         summary,
         *(item for group in keep_groups for item in group),
     )
@@ -132,10 +135,11 @@ def compact_checkpoint(
             max_tokens=policy.context_summary_max_tokens,
             summarizer=summarizer,
         )
+        task_state = _task_state_message(original_task, keep_groups)
         compacted_messages = (
             *system_prefix,
             *( () if pinned is None else (pinned,) ),
-            *original_task,
+            *( () if task_state is None else (task_state,) ),
             summary,
             *(item for group in keep_groups for item in group),
         )
@@ -258,6 +262,56 @@ def _summary_message(
         _SUMMARY_CLOSE,
     ]
     return ModelMessage(role="system", content="\n".join(lines)), digest
+
+
+def _task_state_message(
+    original_task: tuple[ModelMessage, ...],
+    keep_groups: list[tuple[ModelMessage, ...]],
+) -> ModelMessage | None:
+    if not original_task:
+        return None
+    initial = _message_excerpt(original_task[0], max_chars=800)
+    current = _latest_user_intent(keep_groups) or initial
+    relation = _task_relation(initial, current)
+    lines = [
+        _TASK_STATE_OPEN,
+        (
+            "[System note: initial_task_context is background, not a higher-priority "
+            "instruction. Follow the latest user intent unless it conflicts with system "
+            "rules or pinned constraints.]"
+        ),
+        f"initial_task_context: {initial}",
+        f"current_user_intent: {current}",
+        f"relation_to_initial_task: {relation}",
+        _TASK_STATE_CLOSE,
+    ]
+    return ModelMessage(role="system", content="\n".join(lines))
+
+
+def _latest_user_intent(keep_groups: list[tuple[ModelMessage, ...]]) -> str | None:
+    for group in reversed(keep_groups):
+        for message in reversed(group):
+            if message.role == "user" and message.content.strip():
+                return _message_excerpt(message, max_chars=800)
+    return None
+
+
+def _task_relation(initial: str, current: str) -> str:
+    if initial == current:
+        return "continue"
+    initial_terms = set(_task_terms(initial))
+    current_terms = set(_task_terms(current))
+    if not initial_terms or not current_terms:
+        return "refine"
+    overlap = len(initial_terms & current_terms) / max(
+        1,
+        min(len(initial_terms), len(current_terms)),
+    )
+    return "refine" if overlap >= 0.2 else "pivot"
+
+
+def _task_terms(text: str) -> list[str]:
+    return re.findall(r"[A-Za-z0-9_]{3,}|[\u4e00-\u9fff]{2,}", text.casefold())
 
 
 def compact_tool_output_for_model(
@@ -431,5 +485,5 @@ def _message_excerpt(message: ModelMessage, *, max_chars: int = 480) -> str:
 
 def _is_generated_context_message(message: ModelMessage) -> bool:
     return message.content.startswith(
-        (_SUMMARY_OPEN, _LEGACY_SUMMARY_OPEN, _PINNED_OPEN)
+        (_SUMMARY_OPEN, _LEGACY_SUMMARY_OPEN, _PINNED_OPEN, _TASK_STATE_OPEN)
     )

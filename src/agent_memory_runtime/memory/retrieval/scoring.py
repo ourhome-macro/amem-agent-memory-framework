@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from agent_memory_runtime.config import RuntimeConfig
-from agent_memory_runtime.domain.enums import MemoryLayer, MemoryType
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery, ScoreBreakdown
 from agent_memory_runtime.memory.retrieval.candidates import CandidateHit
@@ -12,7 +11,6 @@ from agent_memory_runtime.memory.retrieval.lexical import (
     lexical_tokens,
     searchable_record_text,
 )
-from agent_memory_runtime.memory.retrieval.planner import requests_archival_recall
 from agent_memory_runtime.memory.semantic_state import text_conflicts_record_state
 
 
@@ -38,11 +36,10 @@ def score_record(
         lexical = candidate.lexical_relevance * config.retrieval_weights.keyword
         semantic = candidate.semantic_relevance * config.retrieval_weights.semantic
         fusion = candidate.fusion_score * config.retrieval_weights.fusion
+    # Keep RRF/keyword as the primary signal. Priority and freshness are small
+    # deterministic adjustments, not a hand-written learning-to-rank formula.
     recency = _recency(record) * config.retrieval_weights.recency
-    salience = (record.salience + _reinforcement_boost(record)) * config.retrieval_weights.salience
-    confidence = record.confidence * config.retrieval_weights.confidence
-    type_boost = _type_boost(record, query) * config.retrieval_weights.type_boost
-    source_link = _source_link(record, query) * config.retrieval_weights.source_link
+    priority = record.priority * config.retrieval_weights.salience
     hard_negative = (
         config.retrieval_weights.hard_negative
         if text_conflicts_record_state(query.text, record)
@@ -55,10 +52,10 @@ def score_record(
         semantic=round(semantic, 4),
         fusion=round(fusion, 4),
         recency=round(recency, 4),
-        salience=round(salience, 4),
-        confidence=round(confidence, 4),
-        type_boost=round(type_boost, 4),
-        source_link=round(source_link, 4),
+        salience=round(priority, 4),
+        confidence=0.0,
+        type_boost=0.0,
+        source_link=0.0,
         hard_negative=round(hard_negative, 4),
     )
 
@@ -79,24 +76,3 @@ def _recency(record: MemoryRecord) -> float:
         return 0.35
     return 0.0
 
-
-def _reinforcement_boost(record: MemoryRecord) -> float:
-    if record.reinforcement_count <= 1:
-        return 0.0
-    return min(0.35, (record.reinforcement_count - 1) * 0.08)
-
-
-def _type_boost(record: MemoryRecord, query: MemoryQuery) -> float:
-    if record.memory_type in set(query.memory_types):
-        return 1.0
-    if record.layer == MemoryLayer.ARCHIVAL.value and requests_archival_recall(query.text):
-        return 1.0
-    if "how" in query.text.casefold() and record.memory_type == MemoryType.STRATEGY.value:
-        return 0.8
-    return 0.0
-
-
-def _source_link(record: MemoryRecord, query: MemoryQuery) -> float:
-    if not query.source_memory_ids:
-        return 0.0
-    return 1.0 if set(query.source_memory_ids) & set(record.source_memory_ids) else 0.0

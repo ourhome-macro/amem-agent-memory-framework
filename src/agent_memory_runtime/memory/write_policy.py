@@ -3,7 +3,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from agent_memory_runtime.domain.enums import MemoryLabel, MemoryLayer, MemoryOperation, MemoryScope
+from agent_memory_runtime.domain.enums import (
+    MemoryLabel,
+    MemoryLevel,
+    MemoryOperation,
+    MemoryStatus,
+    MemoryVisibility,
+)
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.memory.intake.models import MemoryProposal
 
@@ -25,36 +31,32 @@ class MemoryValidator:
             return PolicyDecision("rejected", "proposal_id_required")
         if proposal.action not in {
             MemoryOperation.CREATE.value,
-            MemoryOperation.REINFORCE.value,
-            MemoryOperation.REVISE.value,
+            MemoryOperation.MERGE.value,
+            MemoryOperation.IGNORE.value,
             MemoryOperation.SUPERSEDE.value,
-            MemoryOperation.ARCHIVE.value,
             MemoryOperation.DELETE.value,
-            MemoryOperation.KEEP_BOTH.value,
-            MemoryOperation.NEEDS_REVIEW.value,
         }:
             return PolicyDecision("rejected", "unsupported_action")
-        if proposal.action in {MemoryOperation.KEEP_BOTH.value, MemoryOperation.NEEDS_REVIEW.value}:
-            return PolicyDecision("needs_review", proposal.reason or proposal.action)
+        if proposal.action == MemoryOperation.IGNORE.value:
+            return PolicyDecision("allowed")
         if proposal.action in {
-            MemoryOperation.REINFORCE.value,
-            MemoryOperation.REVISE.value,
             MemoryOperation.SUPERSEDE.value,
-            MemoryOperation.ARCHIVE.value,
             MemoryOperation.DELETE.value,
         } and not proposal.target_memory_id:
             return PolicyDecision("rejected", "target_memory_id_required")
-        if proposal.action not in {MemoryOperation.ARCHIVE.value, MemoryOperation.DELETE.value}:
+        if proposal.action != MemoryOperation.DELETE.value:
             if not proposal.subject_id.strip():
                 return PolicyDecision("rejected", "subject_id_required")
             if not proposal.key or not proposal.key.strip():
                 return PolicyDecision("rejected", "key_required")
             if not proposal.content.strip():
                 return PolicyDecision("rejected", "content_required")
-        if proposal.layer not in {item.value for item in MemoryLayer}:
-            return PolicyDecision("rejected", "invalid_layer")
-        if proposal.scope not in {item.value for item in MemoryScope}:
-            return PolicyDecision("rejected", "invalid_scope")
+        if proposal.level not in {item.value for item in MemoryLevel}:
+            return PolicyDecision("rejected", "invalid_level")
+        if proposal.visibility not in {item.value for item in MemoryVisibility}:
+            return PolicyDecision("rejected", "invalid_visibility")
+        if proposal.status not in {item.value for item in MemoryStatus}:
+            return PolicyDecision("rejected", "invalid_status")
         if not 0.0 <= proposal.confidence <= 1.0:
             return PolicyDecision("rejected", "invalid_confidence")
         if not 0.0 <= proposal.salience <= 1.0:
@@ -99,6 +101,9 @@ class RiskGuard:
             return PolicyDecision("needs_review", "visible_to_expansion_requires_review")
         if MemoryLabel.SENSITIVE.value in set(proposal.labels):
             return PolicyDecision("needs_review", "sensitive_label_requires_review")
+        if current is not None and _promotes_to_profile(current, proposal):
+            if proposal.confidence < 0.85 or proposal.salience < 0.7:
+                return PolicyDecision("needs_review", "profile_promotion_requires_high_signal")
         return PolicyDecision("allowed")
 
 
@@ -131,11 +136,20 @@ class MemoryWritePolicy:
 
 
 def _expands_visibility(current: MemoryRecord, proposal: MemoryProposal) -> bool:
-    if current.scope == proposal.scope and set(proposal.visible_to).issubset(current.visible_to):
+    if (
+        current.visibility == proposal.visibility
+        and set(proposal.visible_to).issubset(current.visible_to)
+    ):
         return False
-    if current.scope == MemoryScope.PRIVATE.value and proposal.scope != MemoryScope.PRIVATE.value:
+    if (
+        current.visibility == MemoryVisibility.PRIVATE.value
+        and proposal.visibility != MemoryVisibility.PRIVATE.value
+    ):
         return True
-    if current.scope == MemoryScope.SHARED.value and proposal.scope == MemoryScope.GLOBAL.value:
+    if (
+        current.visibility == MemoryVisibility.SHARED.value
+        and proposal.visibility == MemoryVisibility.PUBLIC.value
+    ):
         return True
     return not set(proposal.visible_to).issubset(set(current.visible_to))
 
@@ -149,3 +163,10 @@ def _contains_high_risk_secret(content: str) -> bool:
     if re.search(r"\b\d{3}-\d{2}-\d{4}\b", content):
         return True
     return False
+
+
+def _promotes_to_profile(current: MemoryRecord, proposal: MemoryProposal) -> bool:
+    return (
+        current.level != MemoryLevel.PROFILE.value
+        and proposal.level == MemoryLevel.PROFILE.value
+    )

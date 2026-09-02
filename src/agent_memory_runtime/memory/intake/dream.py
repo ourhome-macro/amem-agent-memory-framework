@@ -3,7 +3,13 @@ from __future__ import annotations
 import re
 
 from agent_memory_runtime.audit.hashing import stable_hash
-from agent_memory_runtime.domain.enums import EventKind, MemoryLayer, MemoryOperation, MemoryStatus
+from agent_memory_runtime.domain.enums import (
+    EventKind,
+    MemoryLevel,
+    MemoryOperation,
+    MemoryStatus,
+    MemoryVisibility,
+)
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.memory.intake.models import (
@@ -27,6 +33,9 @@ _REVISE_RE = re.compile(
 _FORGET_RE = re.compile(
     r"(\u5fd8\u6389|\u5220\u6389|\u4e0d\u8981\u8bb0|\u4e0d\u7528\u8bb0)"
 )
+_CORE_PROMOTION_MIN_REINFORCEMENTS = 3
+_CORE_PROMOTION_MIN_CONFIDENCE = 0.85
+_CORE_PROMOTION_MIN_SALIENCE = 0.8
 
 
 class AutoDreamAnalyzer:
@@ -96,7 +105,7 @@ class AutoDreamAnalyzer:
         if _FORGET_RE.search(text):
             return _proposal(
                 event,
-                action=MemoryOperation.NEEDS_REVIEW.value,
+                action=MemoryOperation.IGNORE.value,
                 kind=target.memory_type if target is not None else None,
                 key=str(target.metadata.get("key") or key) if target is not None else key,
                 content=_shorten(text),
@@ -110,7 +119,7 @@ class AutoDreamAnalyzer:
             if target is not None:
                 return _proposal(
                     event,
-                    action=MemoryOperation.REVISE.value,
+                    action=MemoryOperation.SUPERSEDE.value,
                     kind=target.memory_type,
                     key=str(target.metadata.get("key") or key),
                     content=_shorten(text),
@@ -122,7 +131,7 @@ class AutoDreamAnalyzer:
                 )
             return _proposal(
                 event,
-                action=MemoryOperation.NEEDS_REVIEW.value,
+                action=MemoryOperation.IGNORE.value,
                 kind=EventKind.BELIEF.value,
                 key=key,
                 content=_shorten(text),
@@ -135,7 +144,7 @@ class AutoDreamAnalyzer:
             if target is not None and _similarity(text, target.content) >= 0.82:
                 return _proposal(
                     event,
-                    action=MemoryOperation.REINFORCE.value,
+                    action=MemoryOperation.MERGE.value,
                     kind=target.memory_type,
                     key=str(target.metadata.get("key") or key),
                     content=target.content,
@@ -148,7 +157,7 @@ class AutoDreamAnalyzer:
             if target is not None:
                 return _proposal(
                     event,
-                    action=MemoryOperation.NEEDS_REVIEW.value,
+                    action=MemoryOperation.IGNORE.value,
                     kind=target.memory_type,
                     key=str(target.metadata.get("key") or key),
                     content=_shorten(text),
@@ -201,7 +210,7 @@ class AutoDreamAnalyzer:
             if _similarity(content, target.content) >= 0.82:
                 return _proposal(
                     event,
-                    action=MemoryOperation.REINFORCE.value,
+                    action=MemoryOperation.MERGE.value,
                     kind=target.memory_type,
                     key=str(target.metadata.get("key") or key),
                     content=target.content,
@@ -213,9 +222,11 @@ class AutoDreamAnalyzer:
                 )
             requested_action = str(event.payload.get("operation") or "").casefold()
             if requested_action in {
-                MemoryOperation.REVISE.value,
+                "revise",
                 MemoryOperation.SUPERSEDE.value,
             }:
+                if requested_action == "revise":
+                    requested_action = MemoryOperation.MERGE.value
                 return _proposal(
                     event,
                     action=requested_action,
@@ -230,7 +241,7 @@ class AutoDreamAnalyzer:
                 )
             return _proposal(
                 event,
-                action=MemoryOperation.NEEDS_REVIEW.value,
+                action=MemoryOperation.IGNORE.value,
                 kind=target.memory_type,
                 key=str(target.metadata.get("key") or key),
                 content=_shorten(content),
@@ -270,14 +281,12 @@ class AutoDreamAnalyzer:
                     MemoryProposal(
                         proposal_id=f"auto-dream:conflict:{record.memory_id}",
                         source="auto_dream",
-                        action=MemoryOperation.NEEDS_REVIEW.value,
+                        action=MemoryOperation.IGNORE.value,
                         target_memory_id=record.memory_id,
                         subject_id=record.subject_id,
                         key=str(record.metadata.get("key") or ""),
                         content=record.content,
                         memory_type=record.memory_type,
-                        layer=record.layer,
-                        scope=record.scope,
                         visible_to=record.visible_to,
                         confidence=record.confidence,
                         salience=record.salience,
@@ -293,6 +302,10 @@ class AutoDreamAnalyzer:
                         session_id=record.session_id,
                         labels=record.labels,
                         tags=record.tags,
+                        level=record.level,
+                        visibility=record.visibility,
+                        priority=record.priority,
+                        decision_status="pending_review",
                     )
                 )
         for record in active:
@@ -313,6 +326,13 @@ class AutoDreamAnalyzer:
                     dream_run_id=dream_run_id,
                 )
             )
+        proposals.extend(
+            _profile_promotion_proposals(
+                active,
+                dream_version=self.dream_version,
+                dream_run_id=dream_run_id,
+            )
+        )
         return proposals
 
 
@@ -338,6 +358,12 @@ def _proposal(
     )
     key_value = key or _infer_key(content)
     action_suffix = f"{action}:{target.memory_id}" if target is not None else action
+    level = target.level if target is not None else _level_from_event(event, kind_value)
+    visibility = (
+        target.visibility
+        if target is not None
+        else _visibility_from_event(event)
+    )
     return MemoryProposal(
         proposal_id=f"auto-dream:{event.event_id}:{action_suffix}",
         source="auto_dream",
@@ -347,12 +373,6 @@ def _proposal(
         key=key_value,
         content=content,
         memory_type=memory_type_from_kind(kind_value),
-        layer=(
-            target.layer
-            if target is not None
-            else str(event.payload.get("layer") or MemoryLayer.CORE.value)
-        ),
-        scope=target.scope if target is not None else str(event.payload.get("scope") or "private"),
         visible_to=(
             target.visible_to
             if target is not None
@@ -375,6 +395,12 @@ def _proposal(
         tags=tuple(dict.fromkeys((*event.tags, "auto_dream"))),
         metadata=state_fact_metadata(content, source="auto_dream_state_v1"),
         expected_version=None if target is None else target.version,
+        level=level,
+        visibility=visibility,
+        priority=max(target.priority, salience) if target is not None else salience,
+        decision_status=(
+            "pending_review" if action == MemoryOperation.IGNORE.value else None
+        ),
     )
 
 
@@ -476,7 +502,7 @@ def _merge_group(
         if similarity >= 0.82:
             proposals.append(
                 _record_proposal(
-                    action=MemoryOperation.REINFORCE.value,
+                    action=MemoryOperation.MERGE.value,
                     target=keep,
                     source=duplicate,
                     content=keep.content,
@@ -489,7 +515,7 @@ def _merge_group(
             )
             proposals.append(
                 _record_proposal(
-                    action=MemoryOperation.ARCHIVE.value,
+                    action=MemoryOperation.MERGE.value,
                     target=duplicate,
                     source=keep,
                     content=duplicate.content,
@@ -498,12 +524,13 @@ def _merge_group(
                     reason=f"archived_duplicate_of:{keep.memory_id}",
                     dream_version=dream_version,
                     dream_run_id=dream_run_id,
+                    status=MemoryStatus.ARCHIVED.value,
                 )
             )
         elif keep.confidence >= 0.8 and duplicate.confidence >= 0.8:
             proposals.append(
                 _record_proposal(
-                    action=MemoryOperation.NEEDS_REVIEW.value,
+                    action=MemoryOperation.IGNORE.value,
                     target=duplicate,
                     source=keep,
                     content=duplicate.content,
@@ -512,12 +539,13 @@ def _merge_group(
                     reason=f"same_key_conflict_with:{keep.memory_id}",
                     dream_version=dream_version,
                     dream_run_id=dream_run_id,
+                    decision_status="pending_review",
                 )
             )
         else:
             proposals.append(
                 _record_proposal(
-                    action=MemoryOperation.KEEP_BOTH.value,
+                    action=MemoryOperation.CREATE.value,
                     target=duplicate,
                     source=keep,
                     content=duplicate.content,
@@ -568,7 +596,7 @@ def _current_state_conflict_proposals(
         for conflict in ordered[1:]:
             proposals.append(
                 _record_proposal(
-                    action=MemoryOperation.NEEDS_REVIEW.value,
+                    action=MemoryOperation.IGNORE.value,
                     target=conflict,
                     source=incumbent,
                     content=conflict.content,
@@ -577,9 +605,89 @@ def _current_state_conflict_proposals(
                     reason=f"current_state_conflict_with:{incumbent.memory_id}",
                     dream_version=dream_version,
                     dream_run_id=dream_run_id,
+                    decision_status="pending_review",
                 )
             )
     return proposals
+
+
+def _profile_promotion_proposals(
+    records: list[MemoryRecord],
+    *,
+    dream_version: str,
+    dream_run_id: str | None,
+) -> list[MemoryProposal]:
+    proposals: list[MemoryProposal] = []
+    for record in records:
+        if record.level == MemoryLevel.PROFILE.value:
+            continue
+        if record.reinforcement_count < _CORE_PROMOTION_MIN_REINFORCEMENTS:
+            continue
+        if record.confidence < _CORE_PROMOTION_MIN_CONFIDENCE:
+            continue
+        if record.salience < _CORE_PROMOTION_MIN_SALIENCE:
+            continue
+        proposals.append(
+            _profile_promotion_proposal(
+                target=record,
+                confidence=record.confidence,
+                salience=record.salience,
+                reason="working_memory_reinforced_for_core",
+                dream_version=dream_version,
+                dream_run_id=dream_run_id,
+            )
+        )
+    return proposals
+
+
+def _profile_promotion_proposal(
+    *,
+    target: MemoryRecord,
+    confidence: float,
+    salience: float,
+    reason: str,
+    dream_version: str,
+    dream_run_id: str | None,
+) -> MemoryProposal:
+    key = str(target.metadata.get("key") or _infer_key(target.content))
+    metadata = state_fact_metadata(target.content, source="auto_dream_state_v1")
+    metadata.update(
+        {
+            "promotion_source_level": target.level,
+            "migration_target_level": MemoryLevel.PROFILE.value,
+            "migration_reason": reason,
+        }
+    )
+    return MemoryProposal(
+        proposal_id=f"auto-dream:promote-profile:{target.memory_id}",
+        source="auto_dream",
+        action=MemoryOperation.MERGE.value,
+        target_memory_id=target.memory_id,
+        subject_id=target.subject_id,
+        key=key,
+        content=target.content,
+        memory_type=target.memory_type,
+        visible_to=target.visible_to,
+        confidence=confidence,
+        salience=salience,
+        source_message_ids=target.source_event_ids,
+        source_memory_ids=(target.memory_id,),
+        evidence_text=target.content,
+        reason=reason,
+        dream_run_id=dream_run_id,
+        dream_version=dream_version,
+        agent_id=target.agent_id,
+        tenant_id=target.tenant_id,
+        user_id=target.user_id,
+        session_id=target.session_id,
+        labels=target.labels,
+        tags=tuple(dict.fromkeys((*target.tags, "auto_dream", "profile_promotion"))),
+        metadata=metadata,
+        expected_version=target.version,
+        level=MemoryLevel.PROFILE.value,
+        visibility=target.visibility,
+        priority=max(target.priority, target.salience),
+    )
 
 
 def _record_proposal(
@@ -593,6 +701,8 @@ def _record_proposal(
     reason: str,
     dream_version: str,
     dream_run_id: str | None,
+    status: str = MemoryStatus.ACTIVE.value,
+    decision_status: str | None = None,
 ) -> MemoryProposal:
     key = str(target.metadata.get("key") or _infer_key(target.content))
     return MemoryProposal(
@@ -604,8 +714,6 @@ def _record_proposal(
         key=key,
         content=content,
         memory_type=target.memory_type,
-        layer=target.layer,
-        scope=target.scope,
         visible_to=target.visible_to,
         confidence=confidence,
         salience=salience,
@@ -623,7 +731,38 @@ def _record_proposal(
         tags=tuple(dict.fromkeys((*target.tags, "auto_dream"))),
         metadata=state_fact_metadata(content, source="auto_dream_state_v1"),
         expected_version=target.version,
+        level=target.level,
+        visibility=target.visibility,
+        priority=max(target.priority, salience),
+        status=status,
+        decision_status=decision_status,
     )
+
+
+def _level_from_event(event: Event, kind: str) -> str:
+    explicit = event.payload.get("level")
+    if explicit is not None:
+        return str(explicit)
+    legacy_layer = str(event.payload.get("layer") or "")
+    if legacy_layer == "core":
+        return MemoryLevel.PROFILE.value
+    if legacy_layer == "archival":
+        return MemoryLevel.ATOM.value
+    if kind in {EventKind.PREFERENCE.value, EventKind.TASK_OUTCOME.value}:
+        return MemoryLevel.PROFILE.value
+    return MemoryLevel.ATOM.value
+
+
+def _visibility_from_event(event: Event) -> str:
+    explicit = event.payload.get("visibility")
+    if explicit is not None:
+        return str(explicit)
+    scope = str(event.payload.get("scope") or "private")
+    if scope == "global":
+        return MemoryVisibility.PUBLIC.value
+    if scope == "shared":
+        return MemoryVisibility.SHARED.value
+    return MemoryVisibility.PRIVATE.value
 
 
 def _similarity(left: str, right: str) -> float:

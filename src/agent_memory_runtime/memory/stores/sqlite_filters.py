@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_memory_runtime.domain.enums import MemoryLayer, MemorySessionPolicy, MemoryStatus
+from agent_memory_runtime.domain.enums import MemoryLevel, MemorySessionPolicy, MemoryStatus
 from agent_memory_runtime.domain.query import MemoryQuery
 
 
@@ -20,19 +20,8 @@ def structured_memory_where(
         where.append(f"({alias}.user_id IS NULL OR {alias}.user_id = ?)")
         parameters.append(query.user_id)
 
-    archival_enabled = MemoryLayer.ARCHIVAL.value in set(query.layers)
-    if archival_enabled:
-        where.append(f"({alias}.status = ? OR ({alias}.status = ? AND {alias}.layer = ?))")
-        parameters.extend(
-            [
-                MemoryStatus.ACTIVE.value,
-                MemoryStatus.ARCHIVED.value,
-                MemoryLayer.ARCHIVAL.value,
-            ]
-        )
-    else:
-        where.append(f"{alias}.status = ?")
-        parameters.append(MemoryStatus.ACTIVE.value)
+    statuses = query.statuses or (MemoryStatus.ACTIVE.value,)
+    _append_in_filter(where, parameters, f"{alias}.status", statuses)
 
     if query.session_id is not None:
         policy = MemorySessionPolicy(query.session_policy)
@@ -40,12 +29,12 @@ def structured_memory_where(
             where.append(f"{alias}.session_id = ?")
             parameters.append(query.session_id)
         elif policy is MemorySessionPolicy.PROFILE:
-            where.append(f"({alias}.session_id = ? OR {alias}.layer <> ?)")
-            parameters.extend([query.session_id, MemoryLayer.WORKING.value])
+            where.append(f"({alias}.session_id = ? OR {alias}.level = ?)")
+            parameters.extend([query.session_id, MemoryLevel.PROFILE.value])
 
-    _append_in_filter(where, parameters, f"{alias}.scope", query.scopes)
     _append_in_filter(where, parameters, f"{alias}.memory_type", query.memory_types)
-    _append_in_filter(where, parameters, f"{alias}.layer", query.layers)
+    _append_in_filter(where, parameters, f"{alias}.level", query.levels)
+    _append_in_filter(where, parameters, f"{alias}.visibility", query.visibilities)
     if query.tags:
         placeholders = ", ".join("?" for _ in query.tags)
         where.append(

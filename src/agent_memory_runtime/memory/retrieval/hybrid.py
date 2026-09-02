@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from hashlib import sha256
 from time import monotonic, perf_counter
 from typing import Any
 
-from agent_memory_runtime.config import HybridRetrievalConfig, QueryRouterConfig
+from agent_memory_runtime.config import HybridRetrievalConfig
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.exceptions import (
     EmbeddingConfigurationError,
@@ -20,7 +20,8 @@ from agent_memory_runtime.memory.embeddings import (
     validate_vector,
 )
 from agent_memory_runtime.memory.retrieval.candidates import CandidateBatch, CandidateHit
-from agent_memory_runtime.memory.retrieval.query_router import route_hybrid_config, route_query
+
+SemanticResult = tuple[tuple[CandidateHit, ...], float, float, float]
 
 
 class StoreLexicalRetriever:
@@ -73,7 +74,7 @@ class SemanticRetriever:
         query: MemoryQuery,
         *,
         limit: int,
-    ) -> tuple[tuple[CandidateHit, ...], float, float, float]:
+    ) -> SemanticResult:
         started = perf_counter()
         vector = self._query_vector(query.text)
         embedding_ms = _elapsed_ms(started)
@@ -162,12 +163,10 @@ class HybridCandidateRetriever:
         lexical: StoreLexicalRetriever | None,
         config: HybridRetrievalConfig,
         semantic: SemanticRetriever | None = None,
-        router_config: QueryRouterConfig | None = None,
     ) -> None:
         self.lexical = lexical
         self.semantic = semantic
         self.config = config
-        self.router_config = router_config or QueryRouterConfig(enabled=False)
         self._semantic_executor = ThreadPoolExecutor(
             max_workers=config.semantic_max_concurrency,
             thread_name_prefix="amem-semantic",
@@ -176,79 +175,46 @@ class HybridCandidateRetriever:
 
     def retrieve(self, query: MemoryQuery, *, limit: int) -> CandidateBatch:
         submitted_at = perf_counter()
-        route = route_query(query, self.router_config)
-        retrieval_config = route_hybrid_config(self.config, route, self.router_config)
+        retrieval_config = self.config
         lexical_limit = min(limit, retrieval_config.lexical_candidate_limit)
         semantic_limit = min(limit, retrieval_config.semantic_candidate_limit)
-        semantic_future = None
-        semantic_error_type = None
-        if self.semantic is not None and retrieval_config.enable_semantic and query.text.strip():
-            if self._semantic_slots.acquire(blocking=False):
-                try:
-                    semantic_future = self._semantic_executor.submit(
-                        self._retrieve_semantic,
-                        query,
-                        limit=semantic_limit,
-                    )
-                except BaseException:
-                    self._semantic_slots.release()
-                    raise
-            else:
-                semantic_error_type = "SemanticBulkheadRejected"
-
         lexical_enabled = self.lexical is not None and retrieval_config.enable_lexical
+        semantic_future, semantic_error_type = self._start_semantic(
+            query,
+            retrieval_config=retrieval_config,
+            limit=semantic_limit,
+        )
         lexical_hits = (
             () if not lexical_enabled else self.lexical.retrieve(query, limit=lexical_limit)
         )
-        semantic_hits: tuple[CandidateHit, ...] = ()
-        embedding_ms = 0.0
-        vector_search_ms = 0.0
-        embedding_coverage = None
-        semantic_timed_out = False
-        semantic_completed = False
-        if semantic_future is not None:
-            try:
-                deadline_seconds = max(0, retrieval_config.semantic_timeout_ms) / 1000
-                remaining_seconds = max(
-                    0.0,
-                    deadline_seconds - (perf_counter() - submitted_at),
-                )
-                semantic_hits, embedding_ms, vector_search_ms, embedding_coverage = (
-                    semantic_future.result(timeout=remaining_seconds)
-                )
-                semantic_completed = True
-            except FutureTimeoutError:
-                semantic_timed_out = True
-                if semantic_future.cancel():
-                    self._semantic_slots.release()
-            except Exception as error:
-                semantic_error_type = type(error).__name__
-
-        started = perf_counter()
-        fused = _rrf_fuse(
-            lexical_hits,
+        (
             semantic_hits,
-            config=retrieval_config,
-            drop_lexical_only=route.mode == "vector_heavy" and bool(semantic_hits),
+            embedding_ms,
+            vector_search_ms,
+            embedding_coverage,
+            semantic_timed_out,
+            semantic_completed,
+            semantic_error_type,
+        ) = self._finish_semantic(
+            semantic_future,
+            submitted_at=submitted_at,
+            retrieval_config=retrieval_config,
+            semantic_error_type=semantic_error_type,
         )
-        return CandidateBatch(
-            hits=tuple(fused[:limit]),
-            retrieval_legs=(
-                (("lexical",) if lexical_enabled else ())
-                + (("semantic",) if semantic_completed else ())
-            ),
-            lexical_candidate_count=len(lexical_hits),
-            semantic_candidate_count=len(semantic_hits),
-            semantic_generation=(
-                self.semantic.provider.spec.generation if self.semantic is not None else None
-            ),
-            embedding_ms=round(embedding_ms, 4),
-            vector_search_ms=round(vector_search_ms, 4),
-            fusion_ms=round(_elapsed_ms(started), 4),
+        return self._batch(
+            limit=limit,
+            execution="hybrid",
+            retrieval_config=retrieval_config,
+            lexical_enabled=lexical_enabled,
+            semantic_completed=semantic_completed,
+            lexical_hits=lexical_hits,
+            semantic_hits=semantic_hits,
+            embedding_ms=embedding_ms,
+            vector_search_ms=vector_search_ms,
+            embedding_coverage=embedding_coverage,
             semantic_timed_out=semantic_timed_out,
             semantic_error_type=semantic_error_type,
-            embedding_coverage=embedding_coverage,
-            query_route=route.to_metadata(),
+            drop_lexical_only=False,
         )
 
     def close(self, *, wait: bool = False) -> None:
@@ -267,6 +233,129 @@ class HybridCandidateRetriever:
         finally:
             self._semantic_slots.release()
 
+    def _start_semantic(
+        self,
+        query: MemoryQuery,
+        *,
+        retrieval_config: HybridRetrievalConfig,
+        limit: int,
+    ) -> tuple[Future[SemanticResult] | None, str | None]:
+        if self.semantic is None or not retrieval_config.enable_semantic or not query.text.strip():
+            return None, None
+        if not self._semantic_slots.acquire(blocking=False):
+            return None, "SemanticBulkheadRejected"
+        try:
+            return (
+                self._semantic_executor.submit(
+                    self._retrieve_semantic,
+                    query,
+                    limit=limit,
+                ),
+                None,
+            )
+        except BaseException:
+            self._semantic_slots.release()
+            raise
+
+    def _finish_semantic(
+        self,
+        semantic_future: Future[SemanticResult] | None,
+        *,
+        submitted_at: float,
+        retrieval_config: HybridRetrievalConfig,
+        semantic_error_type: str | None,
+    ) -> tuple[tuple[CandidateHit, ...], float, float, float | None, bool, bool, str | None]:
+        semantic_hits: tuple[CandidateHit, ...] = ()
+        embedding_ms = 0.0
+        vector_search_ms = 0.0
+        embedding_coverage = None
+        semantic_timed_out = False
+        semantic_completed = False
+        if semantic_future is None:
+            return (
+                semantic_hits,
+                embedding_ms,
+                vector_search_ms,
+                embedding_coverage,
+                semantic_timed_out,
+                semantic_completed,
+                semantic_error_type,
+            )
+        try:
+            deadline_seconds = max(0, retrieval_config.semantic_timeout_ms) / 1000
+            remaining_seconds = max(
+                0.0,
+                deadline_seconds - (perf_counter() - submitted_at),
+            )
+            semantic_hits, embedding_ms, vector_search_ms, embedding_coverage = (
+                semantic_future.result(timeout=remaining_seconds)
+            )
+            semantic_completed = True
+        except FutureTimeoutError:
+            semantic_timed_out = True
+            if semantic_future.cancel():
+                self._semantic_slots.release()
+        except Exception as error:
+            semantic_error_type = type(error).__name__
+        return (
+            semantic_hits,
+            embedding_ms,
+            vector_search_ms,
+            embedding_coverage,
+            semantic_timed_out,
+            semantic_completed,
+            semantic_error_type,
+        )
+
+    def _batch(
+        self,
+        *,
+        limit: int,
+        execution: str,
+        retrieval_config: HybridRetrievalConfig,
+        lexical_enabled: bool,
+        semantic_completed: bool,
+        lexical_hits: tuple[CandidateHit, ...],
+        semantic_hits: tuple[CandidateHit, ...],
+        embedding_ms: float,
+        vector_search_ms: float,
+        embedding_coverage: float | None,
+        semantic_timed_out: bool,
+        semantic_error_type: str | None,
+        drop_lexical_only: bool,
+    ) -> CandidateBatch:
+        started = perf_counter()
+        fused = _rrf_fuse(
+            lexical_hits,
+            semantic_hits,
+            config=retrieval_config,
+            drop_lexical_only=drop_lexical_only,
+        )
+        route_metadata = {
+            "mode": "hybrid",
+            "confidence": 1.0,
+            "reasons": ["default_hybrid"],
+            "execution": execution,
+        }
+        return CandidateBatch(
+            hits=tuple(fused[:limit]),
+            retrieval_legs=(
+                (("lexical",) if lexical_enabled else ())
+                + (("semantic",) if semantic_completed else ())
+            ),
+            lexical_candidate_count=len(lexical_hits),
+            semantic_candidate_count=len(semantic_hits),
+            semantic_generation=(
+                self.semantic.provider.spec.generation if self.semantic is not None else None
+            ),
+            embedding_ms=round(embedding_ms, 4),
+            vector_search_ms=round(vector_search_ms, 4),
+            fusion_ms=round(_elapsed_ms(started), 4),
+            semantic_timed_out=semantic_timed_out,
+            semantic_error_type=semantic_error_type,
+            embedding_coverage=embedding_coverage,
+            query_route=route_metadata,
+        )
 
 def _rrf_fuse(
     lexical_hits: tuple[CandidateHit, ...],

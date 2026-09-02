@@ -1,22 +1,19 @@
-# Tools
+# 工具
 
-The tool runtime exposes explicit agent capabilities and records tool execution
-through typed context objects.
+工具运行时暴露显式 Agent 能力，并通过类型化上下文记录工具执行。
 
-## Module Roles
+## 模块职责
 
-- `ToolRegistry`: registers callable tools and their schemas.
-- `ToolExecutor`: validates tool arguments, invokes handlers, and records tool
-  audit data.
-- `ToolExecutionContext`: passes tenant, user, agent, session, run, and call
-  identity to handlers.
-- `MemoryIntakeService`: implements `save_memory`, `revise_memory`, and
-  `forget_memory` by creating `MemoryProposal` objects.
-- `MemorySearchTool`: exposes authorized memory search through the runtime
-  projection path.
+- `ToolRegistry`：注册可调用工具和 schema。
+- `ToolExecutor`：校验工具参数、调用 handler、记录工具审计数据。
+- `ToolExecutionContext`：把 tenant、user、agent、session、run、call 身份传入 handler。
+- `MemoryIntakeService`：用 `save_memory`、`revise_memory`、`forget_memory` 生成 `MemoryProposal`。
+- `MemorySearchTool`：通过 runtime projection path 暴露授权记忆搜索。
 
-## Memory Tool Semantics
+## 记忆工具语义
 
-- `save_memory`: creates or reinforces memory.
-- `revise_memory`: updates a targeted memory using optimistic version checks.
-- `forget_memory`: archives or deletes memory and records tombstone/audit data.
+- `save_memory`：生成 `action=create`。
+- `revise_memory`：对目标记忆执行 `merge` 或 `supersede`，并使用乐观版本校验。
+- `forget_memory`：删除并写 tombstone，或把目标记忆标记为 `status=archived`。
+
+工具只提出意图，不直接绕过策略改库。最终是否落库由 `MemoryWritePolicy` 和 `MemoryService` 决定。

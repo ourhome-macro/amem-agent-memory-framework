@@ -1,27 +1,27 @@
-# Module Responsibilities
+# 模块职责
 
-| Module | Role |
+| 模块 | 职责 |
 | --- | --- |
-| `agent` | Runs agent requests, model calls, tool loops, checkpoints, and conversation compaction. |
-| `tools` | Registers and executes explicit tools, including memory save, revise, forget, and search. |
-| `memory.intake` | Builds `MemoryProposal` objects from explicit tools and Auto Dream output. |
-| `memory.write_policy` | Enforces deterministic schema, access, version, and risk checks. |
-| `memory.service` | Applies accepted proposals to `MemoryRecord`, tombstones, and audit logs. |
-| `memory.intake.dream` | Produces maintenance proposals for duplicates, state conflicts, and missing derived memory. |
-| `memory.intake.worker` | Schedules, leases, runs, retries, and checkpoints Auto Dream jobs. |
-| `memory.retrieval` | Routes queries, gathers FTS5/Qdrant candidates, fuses, reranks, filters, and selects results. |
-| `memory.embeddings` | Manages embedding providers, generations, outbox jobs, workers, SQLite vectors, and Qdrant vectors. |
-| `memory.stores` | Provides SQLite, JSONL, and in-memory stores for events, memory, snapshots, tombstones, audit, jobs, and state. |
-| `audit` | Records audit envelopes, LLM traces, memory write logs, and audit replay input. |
-| `access` | Applies principal-based record access and sensitive payload sanitization. |
-| `context` | Builds model-facing memory context, structured projections, and personalization snippets. |
-| `llm` | Normalizes chat provider requests, responses, streaming events, usage, and errors. |
-| `config` | Defines runtime, retrieval, rerank, query-router, worker, LLM, and token-budget settings. |
+| `agent` | 执行 Agent 请求、模型调用、工具循环、checkpoint 和对话压缩 |
+| `tools` | 注册并执行显式工具，包括记忆保存、修订、删除和搜索 |
+| `memory.intake` | 从工具输入和 Auto Dream 输出构建 `MemoryProposal` |
+| `memory.write_policy` | 执行 schema、访问、版本和风险校验 |
+| `memory.service` | 将通过校验的 proposal 应用到 `MemoryRecord`、tombstone 和 audit log |
+| `memory.intake.dream` | 为重复、冲突、派生和状态维护生成 proposal |
+| `memory.intake.worker` | 调度、租约、执行、重试和 checkpoint Auto Dream job |
+| `memory.retrieval` | 召回 FTS5/Qdrant 候选、RRF 融合、rerank、过滤和预算选择 |
+| `memory.embeddings` | 管理 embedding provider、generation、outbox job、worker、SQLite vector 和 Qdrant |
+| `memory.stores` | 提供 SQLite、JSONL、in-memory 存储实现 |
+| `audit` | 记录 audit envelope、LLM trace、memory write log 和审计重放输入 |
+| `access` | 执行 principal-based 访问控制和敏感载荷清理 |
+| `context` | 构建模型可见记忆上下文、结构化投影和个性化片段 |
+| `llm` | 归一化 chat provider 请求、响应、streaming event、usage 和错误 |
+| `config` | 定义 runtime、retrieval、rerank、worker、LLM 和 token budget 配置 |
 
-## Data Contracts
+## 数据契约
 
-- `MemoryQuery`: read request with identity and retrieval constraints.
-- `MemoryProposal`: write request with action, target, identity, evidence, and version.
-- `MemoryRecord`: durable memory state.
-- `MemoryAuditLog`: durable write history and replay input.
-- `MemoryTombstone`: durable deletion watermark.
+- `MemoryQuery`：带身份和检索约束的读取请求。
+- `MemoryProposal`：带 action、target、identity、evidence 和 version 的写入请求。
+- `MemoryRecord`：持久记忆状态。
+- `MemoryAuditLog`：持久写入历史和重放输入。
+- `MemoryTombstone`：持久删除水位。

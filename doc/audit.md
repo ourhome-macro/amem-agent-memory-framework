@@ -1,22 +1,22 @@
-# Audit
+# 审计
 
-The audit module records memory changes, access decisions, model-call metadata,
-and legacy event observations.
+审计模块记录记忆变更、访问决策、模型调用 metadata 和历史事件观测。
 
-## Module Roles
+## 模块职责
 
-- `MemoryAuditLog`: stores before/after memory state for proposal writes.
-- `AuditEnvelope`: stores normalized audit records for access, model, and event
-  observation flows.
-- `AuditStore`: persists audit envelopes, LLM traces, and memory audit logs.
-- `replay_memory_audit_logs`: rebuilds memory state from ordered
-  `MemoryAuditLog` entries.
-- `RuntimeTrace`: exposes retrieval, projection, and model-call metadata for one
-  runtime request.
+- `MemoryAuditLog`：保存 proposal 写入前后的记忆状态。
+- `AuditEnvelope`：保存 access、model、event observation 等归一化审计记录。
+- `AuditStore`：持久化 audit envelope、LLM trace 和 memory audit log。
+- `replay_memory_audit_logs`：从有序 `MemoryAuditLog` 重建记忆状态。
+- `RuntimeTrace`：暴露一次 runtime 请求中的检索、投影和模型调用 metadata。
 
-## Memory Replay Semantics
+## 记忆重放语义
 
-- `after_record` present: replay upserts that record as memory state.
-- `after_record` absent: replay deletes that memory id.
-- delete logs rebuild tombstones from `before_record` and audit metadata.
-- replay replaces retrieval projections through the memory store.
+- `after_record` 存在：重放时 upsert 该记录作为当前记忆状态。
+- `after_record` 不存在：重放时删除该 memory id。
+- delete 日志会从 `before_record` 和 audit metadata 重建 tombstone。
+- 重放完成后通过 memory store 重建检索投影。
+
+## 保留理由
+
+`MemoryAuditLog` 是生产必须保留的边界。它让写入可追踪、状态可恢复、删除水位可重建，也让后续排查 LLM/Auto Dream 写入问题时有证据链。

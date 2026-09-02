@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent_memory_runtime.domain.enums import MemoryLabel, MemoryScope
+from agent_memory_runtime.domain.enums import MemoryLabel, MemoryVisibility
 from agent_memory_runtime.domain.memory import MemoryCandidate
 
 
@@ -21,10 +21,13 @@ class CandidateRiskScorer:
         if MemoryLabel.SENSITIVE.value in labels:
             score += 0.8
             reasons.append("sensitive_label")
-        if candidate.scope == MemoryScope.GLOBAL.value:
+        if candidate.visibility == MemoryVisibility.PUBLIC.value:
             score += 0.4
-            reasons.append("global_scope")
-        if candidate.scope == MemoryScope.SHARED.value and MemoryLabel.SENSITIVE.value in labels:
+            reasons.append("public_visibility")
+        if (
+            candidate.visibility == MemoryVisibility.SHARED.value
+            and MemoryLabel.SENSITIVE.value in labels
+        ):
             score += 0.2
             reasons.append("shared_sensitive")
         if {"health", "medical", "credential", "payment", "legal"} & tags:

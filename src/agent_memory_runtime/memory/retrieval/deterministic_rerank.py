@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from agent_memory_runtime.config import RuntimeConfig
-from agent_memory_runtime.domain.enums import MemoryLayer, MemoryStatus
+from agent_memory_runtime.domain.enums import MemoryStatus
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.domain.query import MemoryQuery, RetrievalResult
 from agent_memory_runtime.memory.retrieval.candidates import CandidateBatch
@@ -88,9 +88,7 @@ def _drop_record(
     rerank_config = config.deterministic_rerank
     if record.status == MemoryStatus.CONFLICTED.value:
         return True
-    if record.status == MemoryStatus.ARCHIVED.value and MemoryLayer.ARCHIVAL.value not in set(
-        query.layers
-    ):
+    if record.status == MemoryStatus.ARCHIVED.value and record.status not in set(query.statuses):
         return True
     if rerank_config.drop_state_conflicts and text_conflicts_record_state(query.text, record):
         return True

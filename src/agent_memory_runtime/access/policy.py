@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from agent_memory_runtime.access.principal import Principal
-from agent_memory_runtime.domain.enums import MemoryLabel, MemoryScope
+from agent_memory_runtime.domain.enums import MemoryLabel, MemoryVisibility
 from agent_memory_runtime.domain.memory import MemoryRecord
 
 
@@ -31,17 +31,18 @@ class AccessPolicy:
         if MemoryLabel.PRIVATE.value in labels and owner_agent_id != principal.agent_id:
             if principal.agent_id not in set(record.visible_to) and not principal.is_auditor:
                 return AccessDecision(False, "private_label_blocked")
-        if record.scope == MemoryScope.GLOBAL.value:
+        visibility = record.visibility
+        if visibility == MemoryVisibility.PUBLIC.value:
             return AccessDecision(True)
-        if record.scope == MemoryScope.SHARED.value:
+        if visibility == MemoryVisibility.SHARED.value:
             if (
                 not record.visible_to
                 or principal.agent_id in set(record.visible_to)
                 or principal.is_auditor
             ):
                 return AccessDecision(True)
-            return AccessDecision(False, "shared_scope_visibility_blocked")
-        if record.scope == MemoryScope.PRIVATE.value:
+            return AccessDecision(False, "shared_visibility_blocked")
+        if visibility == MemoryVisibility.PRIVATE.value:
             if (
                 owner_agent_id == principal.agent_id
                 or principal.agent_id in set(record.visible_to)
@@ -49,5 +50,5 @@ class AccessPolicy:
                 return AccessDecision(True)
             if principal.is_auditor:
                 return AccessDecision(True, "auditor_override")
-            return AccessDecision(False, "private_scope_owner_blocked")
-        return AccessDecision(False, "unknown_scope")
+            return AccessDecision(False, "private_visibility_owner_blocked")
+        return AccessDecision(False, "unknown_visibility")

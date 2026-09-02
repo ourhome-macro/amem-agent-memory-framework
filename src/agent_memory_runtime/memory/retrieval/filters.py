@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from agent_memory_runtime.domain.enums import (
-    MemoryLayer,
+    MemoryLevel,
     MemorySessionPolicy,
     MemoryStatus,
 )
@@ -10,12 +10,8 @@ from agent_memory_runtime.domain.query import MemoryQuery
 
 
 def hard_filter(record: MemoryRecord, query: MemoryQuery) -> bool:
-    retrievable_archival = (
-        record.status == MemoryStatus.ARCHIVED.value
-        and record.layer == MemoryLayer.ARCHIVAL.value
-        and MemoryLayer.ARCHIVAL.value in set(query.layers)
-    )
-    if record.status != MemoryStatus.ACTIVE.value and not retrievable_archival:
+    explicit_status_match = bool(query.statuses and record.status in set(query.statuses))
+    if record.status != MemoryStatus.ACTIVE.value and not explicit_status_match:
         return False
     if record.tenant_id != query.tenant_id:
         return False
@@ -28,13 +24,13 @@ def hard_filter(record: MemoryRecord, query: MemoryQuery) -> bool:
         policy = MemorySessionPolicy(query.session_policy)
         if policy is MemorySessionPolicy.EXACT:
             return False
-        if policy is MemorySessionPolicy.PROFILE and record.layer == MemoryLayer.WORKING.value:
+        if policy is MemorySessionPolicy.PROFILE and record.level != MemoryLevel.PROFILE.value:
             return False
-    if query.scopes and record.scope not in set(query.scopes):
-        return False
     if query.memory_types and record.memory_type not in set(query.memory_types):
         return False
-    if query.layers and record.layer not in set(query.layers):
+    if query.levels and record.level not in set(query.levels):
+        return False
+    if query.visibilities and record.visibility not in set(query.visibilities):
         return False
     if query.tags and not set(query.tags) & set(record.tags):
         return False
