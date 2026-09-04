@@ -18,6 +18,7 @@ from database import DEFAULT_DB_PATH, LEGACY_OWNER_USER_ID, get_connection, init
 from discovery_planner import DiscoveryPlanner
 from discovery_service import DiscoveryService
 from library_service import LibraryService
+from keyword_governance import KeywordGovernance
 from memory_lifecycle import SceneMemoryService
 from models import Track
 from music_keyword_pool import (
@@ -159,6 +160,7 @@ class RecommendationService:
             amem_bridge=self.amem_bridge,
         )
         self.scene_memory_service = SceneMemoryService(str(self.db_path), user_id=self.user_id)
+        self.keyword_governance = KeywordGovernance(str(self.db_path), user_id=self.user_id)
         self.auto_discovery = _env_bool("RECOMMEND_AUTO_DISCOVERY_ENABLED", False) if auto_discovery is None else auto_discovery
 
     def list_recommendations(
@@ -597,6 +599,7 @@ class RecommendationService:
                 scene=item["scene"],
                 payload=behavior_payload,
             )
+            self.keyword_governance.record_feedback(item["trackId"], item["event"])
         if normalized:
             self.profile_update_pipeline.process()
         return [

@@ -10,6 +10,7 @@ from uuid import uuid4
 from candidate_pool import CandidatePool
 from database import get_connection
 from discovery_planner import DiscoveryPlanner
+from keyword_governance import KeywordGovernance
 from models import Track
 from music_profile import MusicProfile
 from request_spec import RequestSpec
@@ -27,6 +28,7 @@ class DiscoveryService:
         self.bili_client = bili_client
         self.planner = planner or DiscoveryPlanner()
         self.pool = CandidatePool(db_path, user_id=user_id)
+        self.keyword_governance = KeywordGovernance(db_path, user_id=user_id)
 
     def enqueue(self, *, profile: MusicProfile, request_spec: RequestSpec, scene: str, limit: int) -> str | None:
         plan = self.planner.plan(profile=profile, request_spec=request_spec, scene=scene)
@@ -79,6 +81,13 @@ class DiscoveryService:
 
     def _discover(self, queries: list[str], spec: RequestSpec, limit: int, *, trace_id: str) -> dict[str, Any]:
         started = time.perf_counter()
+        governed = self.keyword_governance.prepare(
+            queries,
+            source="request" if spec.constrained else "profile",
+            preserve_order=spec.constrained,
+        )
+        queries = [item["query"] for item in governed]
+        keyword_ids = {item["query"]: item["keywordId"] for item in governed}
         per_query = max(4, min(16, max(limit, 1) * 2))
         total = {"enqueued": 0, "admitted": 0}
         query_timings = []
@@ -95,11 +104,12 @@ class DiscoveryService:
         for query, tracks, search_ms in search_results:
             admit_started = time.perf_counter()
             result = self.pool.admit(tracks, source="discovery_search", request_spec=spec, query=query)
+            self.keyword_governance.record_discovery(keyword_ids[query], tracks=tracks, admitted_count=result["admitted"])
             admit_ms = (time.perf_counter() - admit_started) * 1000
             total["enqueued"] += result["enqueued"]
             total["admitted"] += result["admitted"]
             query_timings.append({"query": query, "searchMs": round(search_ms, 2), "admissionMs": round(admit_ms, 2), "resultCount": len(tracks)})
-        return {"traceId": trace_id, "queries": queries, **total, "available": self.pool.availability(spec), "timing": {"queries": query_timings, "totalMs": round((time.perf_counter() - started) * 1000, 2)}}
+        return {"traceId": trace_id, "queries": queries, "keywords": governed, **total, "available": self.pool.availability(spec), "timing": {"queries": query_timings, "totalMs": round((time.perf_counter() - started) * 1000, 2)}}
 
     def _safe_search(self, query: str, page_size: int) -> list[Track]:
         try:

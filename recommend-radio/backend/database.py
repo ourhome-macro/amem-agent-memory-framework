@@ -382,6 +382,11 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
                 conn.execute('PRAGMA user_version = 15')
                 current_version = 15
 
+            if current_version < 16:
+                _ensure_keyword_governance_tables(conn)
+                conn.execute('PRAGMA user_version = 16')
+                current_version = 16
+
             _ensure_current_schema_columns(conn)
 
         _initialized_paths.add(path)
@@ -404,6 +409,7 @@ def _ensure_current_schema_columns(conn: sqlite3.Connection) -> None:
     _ensure_memory_lifecycle_tables(conn)
     _ensure_conversation_memory_tables(conn)
     _ensure_candidate_scope_columns(conn)
+    _ensure_keyword_governance_tables(conn)
 
 
 def _ensure_recommendation_history_table(conn: sqlite3.Connection) -> None:
@@ -589,6 +595,46 @@ def _ensure_candidate_scope_columns(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "content_cache", "scope_key", "TEXT NOT NULL DEFAULT ''")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_content_cache_scope ON content_cache (user_id, status, scope_kind, scope_key, updated_at DESC)"
+    )
+
+
+def _ensure_keyword_governance_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_keywords (
+            keyword_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            platform TEXT NOT NULL DEFAULT 'bilibili',
+            keyword TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'profile',
+            status TEXT NOT NULL DEFAULT 'active',
+            search_count INTEGER NOT NULL DEFAULT 0,
+            candidate_count INTEGER NOT NULL DEFAULT 0,
+            admitted_count INTEGER NOT NULL DEFAULT 0,
+            clicked_count INTEGER NOT NULL DEFAULT 0,
+            liked_count INTEGER NOT NULL DEFAULT 0,
+            quality_score REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT,
+            last_evaluated_at TEXT,
+            UNIQUE(user_id, platform, keyword),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_keywords_rank
+            ON discovery_keywords (user_id, platform, status, quality_score DESC, last_used_at DESC);
+
+        CREATE TABLE IF NOT EXISTS discovery_keyword_candidates (
+            keyword_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            discovered_at TEXT NOT NULL,
+            PRIMARY KEY(keyword_id, track_id),
+            FOREIGN KEY(keyword_id) REFERENCES discovery_keywords(keyword_id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_keyword_candidates_track
+            ON discovery_keyword_candidates (user_id, track_id, discovered_at DESC);
+        """
     )
 
 
