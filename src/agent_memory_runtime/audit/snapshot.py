@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from agent_memory_runtime.audit.hashing import stable_hash
 from agent_memory_runtime.config import RuntimeConfig
-from agent_memory_runtime.domain.enums import MemoryLevel, MemoryStatus
+from agent_memory_runtime.domain.enums import MemoryStatus, MemoryTemperature
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 
@@ -58,11 +58,11 @@ def build_snapshot(
 def _hot_memory_ids(records: list[MemoryRecord], *, limit: int) -> tuple[str, ...]:
     if limit <= 0:
         return ()
-    allowed_levels = {MemoryLevel.ATOM.value, MemoryLevel.SCENARIO.value, MemoryLevel.PROFILE.value}
     hot_records = [
         record
         for record in records
-        if record.status == MemoryStatus.ACTIVE.value and record.level in allowed_levels
+        if record.status == MemoryStatus.ACTIVE.value
+        and record.temperature == MemoryTemperature.HOT.value
     ]
     hot_records.sort(
         key=lambda item: (

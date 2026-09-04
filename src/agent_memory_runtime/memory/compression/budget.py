@@ -13,7 +13,8 @@ def estimate_tokens(
     counter = estimator or AdaptiveTokenEstimator()
     projection = (
         f"[{record.memory_id}] type={record.memory_type} level={record.level} "
-        f"visibility={record.visibility} priority={record.priority:.2f} "
+        f"visibility={record.visibility} status={record.status} "
+        f"temperature={record.temperature} priority={record.priority:.2f} "
         f"confidence={record.confidence:.2f} :: {record.content}"
     )
     return max(1, counter.count_text(projection, model=model))

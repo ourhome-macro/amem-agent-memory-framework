@@ -1,0 +1,252 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: recommend-radio-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root_dev_password}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-bili_radio}
+      MYSQL_USER: ${MYSQL_USER:-radio}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-radio_dev_password}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    ports:
+      - "${MYSQL_PORT:-13306}:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - radio-backend
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: recommend-radio-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-16379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+    networks:
+      - radio-backend
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.3.2
+    container_name: recommend-radio-rocketmq-namesrv
+    user: root
+    restart: unless-stopped
+    command: ["sh", "mqnamesrv"]
+    ports:
+      - "${ROCKETMQ_NAMESRV_PORT:-9876}:9876"
+    volumes:
+      - rocketmq-namesrv-logs:/home/rocketmq/logs
+    healthcheck:
+      test: ["CMD-SHELL", "sh mqadmin clusterList -n 127.0.0.1:9876 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 20s
+    networks:
+      - radio-backend
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.3.2
+    container_name: recommend-radio-rocketmq-broker
+    user: root
+    restart: unless-stopped
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    command: ["sh", "mqbroker", "-n", "rocketmq-namesrv:9876", "-c", "/home/rocketmq/conf/broker.conf"]
+    ports:
+      - "${ROCKETMQ_BROKER_PORT:-10911}:10911"
+      - "${ROCKETMQ_BROKER_HA_PORT:-10912}:10912"
+    environment:
+      JAVA_OPT_EXT: "-server -Xms512m -Xmx512m -Xmn256m"
+    volumes:
+      - ./deploy/rocketmq/broker.conf:/home/rocketmq/conf/broker.conf:ro
+      - rocketmq-broker-store:/home/rocketmq/store
+      - rocketmq-broker-logs:/home/rocketmq/logs
+    healthcheck:
+      test: ["CMD-SHELL", "sh mqadmin clusterList -n rocketmq-namesrv:9876 | grep broker-a >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    networks:
+      - radio-backend
+
+  rocketmq-proxy:
+    image: apache/rocketmq:5.3.2
+    container_name: recommend-radio-rocketmq-proxy
+    user: root
+    restart: unless-stopped
+    depends_on:
+      rocketmq-broker:
+        condition: service_healthy
+    command: ["sh", "mqproxy", "-n", "rocketmq-namesrv:9876"]
+    ports:
+      - "${ROCKETMQ_PROXY_GRPC_PORT:-8081}:8081"
+      - "${ROCKETMQ_PROXY_REST_PORT:-8080}:8080"
+    environment:
+      JAVA_OPT_EXT: "-server -Xms256m -Xmx512m"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sS -m 2 http://127.0.0.1:8080/ >/dev/null; code=$$?; test $$code -eq 0 -o $$code -eq 52"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - radio-backend
+
+  rocketmq-init:
+    image: apache/rocketmq:5.3.2
+    container_name: recommend-radio-rocketmq-init
+    user: root
+    depends_on:
+      rocketmq-broker:
+        condition: service_healthy
+    command: ["sh", "-lc", "sh mqadmin updateTopic -n rocketmq-namesrv:9876 -c DefaultCluster -t radio_behavior_v1"]
+    networks:
+      - radio-backend
+
+  amem:
+    build:
+      context: ..
+      dockerfile: recommend-radio/backend/Dockerfile
+    container_name: recommend-radio-amem
+    restart: unless-stopped
+    command: ["python", "amem_grpc_server.py"]
+    environment:
+      AMEM_ENABLED: "${AMEM_ENABLED:-true}"
+      AMEM_GRPC_BIND: "0.0.0.0:9090"
+      AMEM_GRPC_WORKERS: "${AMEM_GRPC_WORKERS:-8}"
+      AMEM_DB_PATH: "/app/data/amem.sqlite3"
+      AMEM_RETRIEVAL_ROUTE_MUSIC_RECOMMENDATION: "${AMEM_RETRIEVAL_ROUTE_MUSIC_RECOMMENDATION:-lexical_first}"
+      AMEM_RETRIEVAL_ROUTE_CONVERSATION: "${AMEM_RETRIEVAL_ROUTE_CONVERSATION:-hybrid}"
+      RECOMMEND_LLM_ENABLED: "${RECOMMEND_LLM_ENABLED:-true}"
+      RECOMMEND_LLM_PROVIDER: "${RECOMMEND_LLM_PROVIDER:-deepseek}"
+      RECOMMEND_LLM_BASE_URL: "${RECOMMEND_LLM_BASE_URL:-https://api.deepseek.com}"
+      RECOMMEND_LLM_API_KEY_ENV: "${RECOMMEND_LLM_API_KEY_ENV:-DEEPSEEK_API_KEY}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY:-}"
+      RECOMMEND_LLM_MODEL: "${RECOMMEND_LLM_MODEL:-deepseek-chat}"
+      RECOMMEND_LLM_TIMEOUT_SECONDS: "${RECOMMEND_LLM_TIMEOUT_SECONDS:-12}"
+      RECOMMEND_LLM_TEMPERATURE: "${RECOMMEND_LLM_TEMPERATURE:-0.2}"
+      RECOMMEND_LLM_TOP_P: "${RECOMMEND_LLM_TOP_P:-0.95}"
+      RECOMMEND_LLM_MAX_TOKENS: "${RECOMMEND_LLM_MAX_TOKENS:-3000}"
+      RECOMMEND_LLM_EXTRA_BODY: "${RECOMMEND_LLM_EXTRA_BODY:-{\"chat_template_kwargs\":{\"thinking\":false}}}"
+      RECOMMEND_LLM_JSON_RESPONSE: "${RECOMMEND_LLM_JSON_RESPONSE:-true}"
+      RECOMMEND_LLM_ATTEMPTS: "${RECOMMEND_LLM_ATTEMPTS:-2}"
+      RECOMMEND_PROFILE_TTL_SECONDS: "${RECOMMEND_PROFILE_TTL_SECONDS:-600}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      TZ: Asia/Shanghai
+    volumes:
+      - ./server-data:/app/data
+    ports:
+      - "${AMEM_GRPC_PORT:-19090}:9090"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "python -c \"import sys, grpc; sys.path.insert(0, '/app/amem_gen'); from amem.v1 import amem_pb2, amem_pb2_grpc; channel=grpc.insecure_channel('127.0.0.1:9090'); response=amem_pb2_grpc.AmemServiceStub(channel).Health(amem_pb2.HealthRequest(), timeout=3); raise SystemExit(0 if response.status in ('serving','noop') else 1)\""
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - radio-backend
+
+  backend-go:
+    build:
+      context: .
+      dockerfile: backend-go/Dockerfile
+      args:
+        GO_BUILD_TAGS: rocketmq
+    container_name: recommend-radio-backend-go
+    restart: unless-stopped
+    environment:
+      GO_BACKEND_ADDR: ":5000"
+      MYSQL_DSN: "${MYSQL_USER:-radio}:${MYSQL_PASSWORD:-radio_dev_password}@tcp(mysql:3306)/${MYSQL_DATABASE:-bili_radio}?charset=utf8mb4&parseTime=true&loc=Local"
+      REDIS_ADDR: "redis:6379"
+      BILI_CACHE_PREFIX: "recommend-radio:bili"
+      MAX_MEDIA_STREAMS: "${MAX_MEDIA_STREAMS:-32}"
+      STREAM_TIMEOUT: "${STREAM_TIMEOUT:-300s}"
+      OUTBOX_WORKERS: "${OUTBOX_WORKERS:-4}"
+      OUTBOX_TOPIC: "radio_behavior_v1"
+      ROCKETMQ_ENABLED: "true"
+      ROCKETMQ_CONSUMERS_ENABLED: "${ROCKETMQ_CONSUMERS_ENABLED:-true}"
+      ROCKETMQ_ENDPOINT: "rocketmq-proxy:8081"
+      MQ_CONSUMER_WORKERS: "${MQ_CONSUMER_WORKERS:-4}"
+      MQ_CONSUMER_DLQ_THRESHOLD: "${MQ_CONSUMER_DLQ_THRESHOLD:-16}"
+      AMEM_TRANSPORT: "${AMEM_TRANSPORT:-grpc}"
+      AMEM_GRPC_ADDR: "${AMEM_GRPC_ADDR:-amem:9090}"
+      AMEM_TIMEOUT: "${AMEM_TIMEOUT:-10s}"
+      AMEM_BASE_URL: "${AMEM_BASE_URL:-}"
+      RECOMMEND_EMBEDDING_ENABLED: "${RECOMMEND_EMBEDDING_ENABLED:-true}"
+      RECOMMEND_EMBEDDING_BASE_URL: "${RECOMMEND_EMBEDDING_BASE_URL:-}"
+      RECOMMEND_EMBEDDING_API_KEY_ENV: "${RECOMMEND_EMBEDDING_API_KEY_ENV:-BGE_M3_API_KEY}"
+      BGE_M3_API_KEY: "${BGE_M3_API_KEY:-}"
+      RECOMMEND_EMBEDDING_MODEL: "${RECOMMEND_EMBEDDING_MODEL:-bge-m3}"
+      RECOMMEND_EMBEDDING_DIMENSIONS: "${RECOMMEND_EMBEDDING_DIMENSIONS:-1024}"
+      RECOMMEND_EMBEDDING_TIMEOUT: "${RECOMMEND_EMBEDDING_TIMEOUT:-8s}"
+      RECOMMEND_EMBEDDING_CACHE_TTL: "${RECOMMEND_EMBEDDING_CACHE_TTL:-168h}"
+      RECOMMEND_PREFILTER_MODE: "${RECOMMEND_PREFILTER_MODE:-shadow}"
+      RECOMMEND_PREFILTER_POSITIVE_PASS: "${RECOMMEND_PREFILTER_POSITIVE_PASS:-0.70}"
+      RECOMMEND_PREFILTER_POSITIVE_REJECT: "${RECOMMEND_PREFILTER_POSITIVE_REJECT:-0.20}"
+      RECOMMEND_PREFILTER_NEGATIVE_REJECT: "${RECOMMEND_PREFILTER_NEGATIVE_REJECT:-0.65}"
+      RECOMMEND_PREFILTER_NEGATIVE_PASS_MAX: "${RECOMMEND_PREFILTER_NEGATIVE_PASS_MAX:-0.30}"
+      RECOMMEND_LLM_EVALUATOR_ENABLED: "${RECOMMEND_LLM_EVALUATOR_ENABLED:-false}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      TZ: Asia/Shanghai
+    ports:
+      - "${GO_BACKEND_PORT:-5000}:5000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rocketmq-init:
+        condition: service_completed_successfully
+      rocketmq-proxy:
+        condition: service_healthy
+      amem:
+        condition: service_healthy
+    networks:
+      - radio-backend
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: recommend-radio-frontend
+    restart: unless-stopped
+    depends_on:
+      backend-go:
+        condition: service_healthy
+    ports:
+      - "${HTTP_BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-3000}:80"
+    networks:
+      - radio-backend
+
+networks:
+  radio-backend:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  redis-data:
+  rocketmq-namesrv-logs:
+  rocketmq-broker-store:
+  rocketmq-broker-logs:

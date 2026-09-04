@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 
@@ -11,6 +12,7 @@ import agent_memory_runtime.cli.chat as cli_chat
 from agent_memory_runtime.agent import AgentRunEvent
 from agent_memory_runtime.config import LLMConfig
 from agent_memory_runtime.domain.event import Event
+from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.llm import LLMResponse
 from agent_memory_runtime.memory.stores import SQLiteStoreBundle
 from agent_memory_runtime.runtime import AgentMemoryRuntime
@@ -184,6 +186,39 @@ def test_cli_cross_session_profile_retention_worker_and_eval_gate(tmp_path) -> N
     )
     assert evaluation.exit_code == 1
     assert '"failed": 1' in evaluation.output
+
+
+def test_cli_retention_plan_exposes_hot_memory_cooling_threshold(tmp_path) -> None:
+    runner = CliRunner()
+    data_dir = tmp_path / ".amem"
+    assert runner.invoke(cli_app.app, ["init", "--path", str(data_dir)]).exit_code == 0
+    stores = SQLiteStoreBundle(data_dir / "runtime.sqlite")
+    stores.memory_store.upsert(
+        replace(
+            _memory_record("hot-raw", "Raw turn detail."),
+            level="L0",
+            temperature="hot",
+        )
+    )
+
+    planned = runner.invoke(
+        cli_app.app,
+        [
+            "--no-banner",
+            "retention",
+            "plan",
+            "--cool-hot-after-seq",
+            "0",
+            "--archive-after-seq",
+            "30",
+            "--data-dir",
+            str(data_dir),
+        ],
+    )
+
+    assert planned.exit_code == 0
+    assert '"action": "mark_warm"' in planned.output
+    assert '"memory_id": "hot-raw"' in planned.output
 
 
 def test_cli_audit_dashboard_for_event_audit(tmp_path) -> None:
@@ -436,6 +471,30 @@ def test_cli_chat_remembers_completed_turn_atomically(monkeypatch, tmp_path) -> 
     assert [event.actor_id for event in events] == ["user", "assistant"]
     assert all("cli-chat" in event.tags for event in events)
     assert events[1].caused_by_event_id == events[0].event_id
+
+
+def _memory_record(memory_id: str, content: str) -> MemoryRecord:
+    return MemoryRecord(
+        memory_id=memory_id,
+        memory_type="episodic",
+        session_id="s1",
+        subject_id="user-1",
+        content=content,
+        source_event_ids=("event-1",),
+        rule_id="test.cli",
+        owner_id="assistant",
+        visible_to=("assistant",),
+        labels=("private",),
+        tenant_id="tenant-1",
+        user_id="user-1",
+        agent_id="assistant",
+        created_at="2026-09-03T00:00:00+00:00",
+        updated_at="2026-09-03T00:00:00+00:00",
+        last_event_sequence=1,
+        level="L1",
+        visibility="private",
+        priority=0.5,
+    )
 
 
 class _FakeChatClient:

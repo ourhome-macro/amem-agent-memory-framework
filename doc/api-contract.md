@@ -7,7 +7,7 @@
 `MemoryQuery` 描述一次记忆检索请求。
 
 - 身份字段：`tenant_id`、`user_id`、`agent_id`、`session_id`。
-- 查询字段：`text`、`limit`、`tags`、`memory_types`、`levels`、`statuses`、`visibilities`。
+- 查询字段：`text`、`limit`、`tags`、`memory_types`、`levels`、`statuses`、`visibilities`、`temperatures`。
 - 会话策略：`session_policy` 控制 exact-session、profile 或 broad recall。
 
 `MemoryQuery` 不再暴露旧的层级或混合可见性字段。旧字典输入如果仍带历史字段，只能在 runtime 边界转换。
@@ -20,7 +20,7 @@
 - 写入目标：`action`、`target_memory_id`、`subject_id`、`key`、`content`。
 - 写入动作：`create`、`merge`、`supersede`、`ignore`、`delete`。
 - 审核路由：用 `decision_status=pending_review` 表达，不作为写入动作。
-- 记忆形态：`memory_type`、`level`、`status`、`visibility`、`priority`、`visible_to`、`labels`、`tags`。
+- 记忆形态：`memory_type`、`level`、`status`、`visibility`、`temperature`、`priority`、`visible_to`、`labels`、`tags`。
 - 证据字段：`source_message_ids`、`source_memory_ids`、`evidence_text`、`reason`。
 - 安全和幂等：`proposal_id`、`expected_version`、`source`。
 - Auto Dream 元数据：`dream_run_id`、`dream_version`。

@@ -527,6 +527,34 @@ _MIGRATIONS = (
             """,
         ),
     ),
+    _Migration(
+        version=10,
+        name="memory_temperature_projection",
+        statements=(
+            "ALTER TABLE memories ADD COLUMN temperature TEXT NOT NULL DEFAULT 'warm'",
+            """
+            UPDATE memories
+            SET temperature = CASE
+                WHEN COALESCE(json_extract(payload, '$.status'), status)
+                     IN ('archived', 'superseded', 'deleted')
+                    THEN 'cold'
+                WHEN json_extract(payload, '$.temperature') IN ('hot', 'warm', 'cold')
+                    THEN json_extract(payload, '$.temperature')
+                WHEN COALESCE(json_extract(payload, '$.level'), level) = 'L0'
+                    THEN 'hot'
+                ELSE 'warm'
+            END
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_temperature_status
+            ON memories(tenant_id, temperature, status)
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_memories_temperature_updated
+            ON memories(tenant_id, temperature, updated_at)
+            """,
+        ),
+    ),
 )
 
 LATEST_SCHEMA_VERSION = _MIGRATIONS[-1].version

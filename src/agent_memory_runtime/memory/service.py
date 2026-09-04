@@ -12,10 +12,11 @@ from agent_memory_runtime.domain.enums import (
     MemoryLevel,
     MemoryOperation,
     MemoryStatus,
+    MemoryTemperature,
     MemoryType,
     MemoryVisibility,
 )
-from agent_memory_runtime.domain.memory import MemoryRecord
+from agent_memory_runtime.domain.memory import MemoryRecord, default_temperature
 from agent_memory_runtime.domain.tombstone import MemoryTombstone
 from agent_memory_runtime.memory.intake.models import (
     MemoryAuditLog,
@@ -123,10 +124,11 @@ class MemoryService:
                     action=action,
                     proposal=proposal,
                     reason="target_memory_not_found",
-                )
+            )
             after = replace(
                 current,
                 status=MemoryStatus.SUPERSEDED.value,
+                temperature=MemoryTemperature.COLD.value,
                 source_memory_ids=_dedupe(
                     (*current.source_memory_ids, *proposal.source_memory_ids)
                 ),
@@ -195,7 +197,7 @@ class MemoryService:
             tags=_dedupe((*proposal.tags, "proposal", proposal.source)),
             salience=_clamp(proposal.salience),
             confidence=_clamp(proposal.confidence),
-            metadata=_metadata(proposal),
+            metadata=_metadata(proposal, current=None),
             status=proposal.status,
             reinforcement_count=1,
             created_at=now,
@@ -209,6 +211,7 @@ class MemoryService:
             level=_proposal_level(proposal),
             visibility=_proposal_visibility(proposal),
             priority=_clamp(proposal.priority),
+            temperature=_proposal_temperature(proposal, current=None),
         )
 
     def _updated_record(
@@ -236,7 +239,7 @@ class MemoryService:
             visible_to=proposal.visible_to or current.visible_to,
             labels=_dedupe((*current.labels, *proposal.labels)),
             tags=_dedupe((*current.tags, *proposal.tags, "proposal", proposal.source)),
-            metadata={**current.metadata, **_metadata(proposal)},
+            metadata={**current.metadata, **_metadata(proposal, current=current)},
             status=proposal.status,
             reinforcement_count=reinforcement_count,
             updated_at=now,
@@ -244,6 +247,7 @@ class MemoryService:
             version=current.version + 1,
             level=_proposal_level(proposal),
             visibility=_proposal_visibility(proposal),
+            temperature=_proposal_temperature(proposal, current=current),
         )
 
     def _existing_result(self, proposal: MemoryProposal) -> MemoryProposalResult | None:
@@ -307,28 +311,33 @@ def _archived_id_tuple(log: MemoryAuditLog) -> tuple[str, ...]:
     return (log.memory_id,)
 
 
-def _metadata(proposal: MemoryProposal) -> dict[str, Any]:
+def _metadata(
+    proposal: MemoryProposal,
+    *,
+    current: MemoryRecord | None,
+) -> dict[str, Any]:
     metadata = dict(proposal.metadata)
     metadata.update(
         {
-        "key": proposal.key,
-        "level": _proposal_level(proposal),
-        "visibility": _proposal_visibility(proposal),
-        "priority": _clamp(proposal.priority),
-        "profile_key": "|".join(
-            (
-                proposal.tenant_id or "default",
-                str(proposal.user_id or proposal.subject_id or proposal.actor_id),
-                str(proposal.agent_id or proposal.actor_id),
-                str(proposal.key or "item"),
-            )
-        ),
-        "proposal_id": proposal.proposal_id,
-        "proposal_source": proposal.source,
-        "dream_run_id": proposal.dream_run_id,
-        "dream_version": proposal.dream_version,
-        "evidence_text": proposal.evidence_text,
-        "reason": proposal.reason,
+            "key": proposal.key,
+            "level": _proposal_level(proposal),
+            "visibility": _proposal_visibility(proposal),
+            "priority": _clamp(proposal.priority),
+            "temperature": _proposal_temperature(proposal, current=current),
+            "profile_key": "|".join(
+                (
+                    proposal.tenant_id or "default",
+                    str(proposal.user_id or proposal.subject_id or proposal.actor_id),
+                    str(proposal.agent_id or proposal.actor_id),
+                    str(proposal.key or "item"),
+                )
+            ),
+            "proposal_id": proposal.proposal_id,
+            "proposal_source": proposal.source,
+            "dream_run_id": proposal.dream_run_id,
+            "dream_version": proposal.dream_version,
+            "evidence_text": proposal.evidence_text,
+            "reason": proposal.reason,
         }
     )
     return metadata
@@ -377,6 +386,25 @@ def _proposal_visibility(proposal: MemoryProposal) -> str:
     if proposal.visibility:
         return proposal.visibility
     return MemoryVisibility.PRIVATE.value
+
+
+def _proposal_temperature(
+    proposal: MemoryProposal,
+    *,
+    current: MemoryRecord | None,
+) -> str:
+    level = _proposal_level(proposal)
+    if proposal.status in {
+        MemoryStatus.ARCHIVED.value,
+        MemoryStatus.SUPERSEDED.value,
+        MemoryStatus.DELETED.value,
+    }:
+        return MemoryTemperature.COLD.value
+    if proposal.temperature:
+        return proposal.temperature
+    if current is not None and current.status == proposal.status and current.level == level:
+        return current.temperature
+    return default_temperature(status=proposal.status, level=level)
 
 
 def memory_type_from_kind(kind: str | None) -> str:

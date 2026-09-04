@@ -700,8 +700,6 @@ def _memory_record(memory_id: str, content: str) -> MemoryRecord:
     return MemoryRecord(
         memory_id=memory_id,
         memory_type="belief",
-        scope="private",
-        layer="core",
         session_id="s1",
         subject_id="user-a",
         content=content,
@@ -714,4 +712,7 @@ def _memory_record(memory_id: str, content: str) -> MemoryRecord:
         agent_id="assistant",
         created_at="2026-07-29T00:00:00+00:00",
         updated_at="2026-07-29T00:00:00+00:00",
+        level="L3",
+        visibility="private",
+        priority=0.5,
     )

@@ -10,6 +10,7 @@ def project_record(record: MemoryRecord) -> dict[str, object]:
         "level": record.level,
         "visibility": record.visibility,
         "status": record.status,
+        "temperature": record.temperature,
         "subject_id": record.subject_id,
         "content": record.content,
         "source_event_ids": list(record.source_event_ids),

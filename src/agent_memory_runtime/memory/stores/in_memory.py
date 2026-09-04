@@ -5,7 +5,7 @@ from threading import RLock
 
 from agent_memory_runtime.audit.stores.in_memory import InMemoryAuditStore
 from agent_memory_runtime.domain.event import Event
-from agent_memory_runtime.domain.memory import MemoryRecord
+from agent_memory_runtime.domain.memory import MemoryRecord, normalize_record_temperature
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.domain.tombstone import MemoryTombstone
 from agent_memory_runtime.exceptions import EventConflictError
@@ -60,6 +60,7 @@ class InMemoryMemoryStore:
         self._records: dict[str, MemoryRecord] = {}
 
     def upsert(self, record: MemoryRecord) -> None:
+        record = normalize_record_temperature(record)
         self._records[record.memory_id] = record
 
     def get(self, memory_id: str) -> MemoryRecord | None:
@@ -89,7 +90,10 @@ class InMemoryMemoryStore:
         )
 
     def replace_all(self, records: list[MemoryRecord]) -> None:
-        self._records = {record.memory_id: record for record in records}
+        self._records = {
+            record.memory_id: record
+            for record in (normalize_record_temperature(item) for item in records)
+        }
 
     def clear(self) -> None:
         self._records.clear()

@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_memory_runtime.domain.enums import MemoryLevel, MemoryStatus, MemoryVisibility
+from agent_memory_runtime.domain.enums import (
+    MemoryLevel,
+    MemoryStatus,
+    MemoryVisibility,
+)
 from agent_memory_runtime.domain.event import Event
 from agent_memory_runtime.domain.memory import MemoryRecord
 
@@ -138,6 +142,7 @@ class MemoryProposal:
     visibility: str = MemoryVisibility.PRIVATE.value
     priority: float = 0.5
     status: str = MemoryStatus.ACTIVE.value
+    temperature: str | None = None
     decision_status: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -172,6 +177,7 @@ class MemoryProposal:
             "visibility": self.visibility,
             "priority": self.priority,
             "status": self.status,
+            "temperature": self.temperature,
             "decision_status": self.decision_status,
             # Compatibility keys for the pre-proposal Auto Dream API.
             "kind": self.memory_type,

@@ -8,6 +8,7 @@ from agent_memory_runtime.domain.enums import (
     MemoryLevel,
     MemoryOperation,
     MemoryStatus,
+    MemoryTemperature,
     MemoryVisibility,
 )
 from agent_memory_runtime.domain.memory import MemoryRecord
@@ -57,6 +58,11 @@ class MemoryValidator:
             return PolicyDecision("rejected", "invalid_visibility")
         if proposal.status not in {item.value for item in MemoryStatus}:
             return PolicyDecision("rejected", "invalid_status")
+        if (
+            proposal.temperature is not None
+            and proposal.temperature not in {item.value for item in MemoryTemperature}
+        ):
+            return PolicyDecision("rejected", "invalid_temperature")
         if not 0.0 <= proposal.confidence <= 1.0:
             return PolicyDecision("rejected", "invalid_confidence")
         if not 0.0 <= proposal.salience <= 1.0:

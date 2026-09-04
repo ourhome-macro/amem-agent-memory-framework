@@ -43,6 +43,55 @@ def test_qdrant_vector_index_writes_memory_filter_payload() -> None:
     assert point.payload["acl_principals"] == ["assistant"]
 
 
+def test_qdrant_vector_index_creates_acl_payload_index_before_upsert() -> None:
+    client = _FakeQdrantClient()
+    spec = EmbeddingSpec(provider="test", model_id="bge-m3", dimensions=3)
+    index = QdrantVectorIndex(collection_name="memories", client=client)
+    memory = _memory()
+
+    index.upsert(
+        VectorRecord(
+            memory_id=memory.memory_id,
+            spec=spec,
+            content_hash="hash-1",
+            source_sequence=7,
+            vector=(1.0, 0.0, 0.0),
+        ),
+        memory=memory,
+    )
+
+    indexed_fields = {item["field_name"] for item in client.payload_indexes}
+    assert "acl_principals" in indexed_fields
+    assert "tenant_id" in indexed_fields
+    assert "user_id" in indexed_fields
+
+
+def test_qdrant_shared_memory_without_visible_to_indexes_global_acl() -> None:
+    client = _FakeQdrantClient()
+    spec = EmbeddingSpec(provider="test", model_id="bge-m3", dimensions=3)
+    index = QdrantVectorIndex(collection_name="memories", client=client)
+    memory = replace(
+        _memory(),
+        visibility="shared",
+        labels=("public",),
+        visible_to=(),
+    )
+
+    index.upsert(
+        VectorRecord(
+            memory_id=memory.memory_id,
+            spec=spec,
+            content_hash="hash-1",
+            source_sequence=7,
+            vector=(1.0, 0.0, 0.0),
+        ),
+        memory=memory,
+    )
+
+    point = client.upserts[0]["points"][0]
+    assert point.payload["acl_principals"] == ["*", "assistant"]
+
+
 def test_qdrant_vector_index_search_applies_identity_acl_and_generation_filters() -> None:
     client = _FakeQdrantClient(
         search_rows=[
@@ -158,6 +207,7 @@ class _FakeQdrantClient:
         self.searches: list[dict[str, object]] = []
         self.deletes: list[dict[str, object]] = []
         self.created_collections: list[str] = []
+        self.payload_indexes: list[dict[str, object]] = []
 
     def upsert(self, **kwargs: object) -> None:
         self.upserts.append(kwargs)
@@ -178,6 +228,9 @@ class _FakeQdrantClient:
     def create_collection(self, **kwargs: object) -> None:
         self.created_collections.append(str(kwargs["collection_name"]))
         self.collection_exists_value = True
+
+    def create_payload_index(self, **kwargs: object) -> None:
+        self.payload_indexes.append(kwargs)
 
 
 def _conditions(qfilter: object) -> set[tuple[str, object]]:
@@ -202,8 +255,6 @@ def _memory() -> MemoryRecord:
         MemoryRecord(
             memory_id="memory-1",
             memory_type="episodic",
-            scope="private",
-            layer="working",
             session_id="session-1",
             subject_id="user-1",
             content="Preferred workshop is North Star.",
@@ -215,6 +266,9 @@ def _memory() -> MemoryRecord:
             agent_id="assistant",
             status="active",
             last_event_sequence=7,
+            level="L1",
+            visibility="private",
+            priority=0.5,
         ),
         labels=("private",),
     )

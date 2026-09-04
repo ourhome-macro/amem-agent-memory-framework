@@ -1,0 +1,15 @@
+Flask==3.0.0
+Flask-CORS==4.0.0
+click==8.1.7
+Authlib==1.7.2
+gunicorn==23.0.0
+prometheus-client==0.25.0
+requests==2.31.0
+Werkzeug==3.0.1
+openai>=1.0
+python-dotenv>=1.0
+PyYAML>=6.0
+jsonschema>=4.23
+sqlite-vec==0.1.9
+grpcio==1.83.0
+grpcio-tools==1.83.0

@@ -86,6 +86,7 @@ _COMMON_WRITE_PROPERTIES: dict[str, Any] = {
     "visibility": {"type": "string", "enum": ["private", "shared", "public"]},
     "level": {"type": "string", "enum": ["L0", "L1", "L2", "L3"]},
     "status": {"type": "string", "enum": ["active", "superseded", "archived", "deleted"]},
+    "temperature": {"type": "string", "enum": ["hot", "warm", "cold"]},
     "priority": {"type": "number", "minimum": 0, "maximum": 1},
     "salience": {"type": "number", "minimum": 0, "maximum": 1},
     "confidence": {"type": "number", "minimum": 0, "maximum": 1},

@@ -8,10 +8,11 @@ from agent_memory_runtime.domain.enums import (
     MemoryLevel,
     MemoryOperation,
     MemoryStatus,
+    MemoryTemperature,
     MemoryVisibility,
 )
 from agent_memory_runtime.domain.event import Event
-from agent_memory_runtime.domain.memory import MemoryRecord
+from agent_memory_runtime.domain.memory import MemoryRecord, default_temperature
 from agent_memory_runtime.memory.intake.models import (
     AutoDreamReport,
     DreamCheckpoint,
@@ -364,6 +365,11 @@ def _proposal(
         if target is not None
         else _visibility_from_event(event)
     )
+    temperature = (
+        target.temperature
+        if target is not None
+        else _temperature_from_event(event, status=MemoryStatus.ACTIVE.value, level=level)
+    )
     return MemoryProposal(
         proposal_id=f"auto-dream:{event.event_id}:{action_suffix}",
         source="auto_dream",
@@ -397,6 +403,7 @@ def _proposal(
         expected_version=None if target is None else target.version,
         level=level,
         visibility=visibility,
+        temperature=temperature,
         priority=max(target.priority, salience) if target is not None else salience,
         decision_status=(
             "pending_review" if action == MemoryOperation.IGNORE.value else None
@@ -686,6 +693,7 @@ def _profile_promotion_proposal(
         expected_version=target.version,
         level=MemoryLevel.PROFILE.value,
         visibility=target.visibility,
+        temperature=MemoryTemperature.WARM.value,
         priority=max(target.priority, target.salience),
     )
 
@@ -733,6 +741,11 @@ def _record_proposal(
         expected_version=target.version,
         level=target.level,
         visibility=target.visibility,
+        temperature=(
+            MemoryTemperature.COLD.value
+            if status != MemoryStatus.ACTIVE.value
+            else target.temperature
+        ),
         priority=max(target.priority, salience),
         status=status,
         decision_status=decision_status,
@@ -763,6 +776,18 @@ def _visibility_from_event(event: Event) -> str:
     if scope == "shared":
         return MemoryVisibility.SHARED.value
     return MemoryVisibility.PRIVATE.value
+
+
+def _temperature_from_event(
+    event: Event,
+    *,
+    status: str,
+    level: str,
+) -> str:
+    explicit = str(event.payload.get("temperature") or "")
+    if explicit in {item.value for item in MemoryTemperature}:
+        return explicit
+    return default_temperature(status=status, level=level)
 
 
 def _similarity(left: str, right: str) -> float:

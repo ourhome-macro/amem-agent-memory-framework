@@ -485,11 +485,13 @@ app.add_typer(retention_app, name="retention")
 
 
 def _retention_policy(
+    cool_hot_after: int | None,
     archive_after: int,
     archive_below_salience: float | None,
     delete_sensitive_after: int | None,
 ) -> RetentionPolicy:
     return RetentionPolicy(
+        cool_hot_after_sequences=cool_hot_after,
         archive_working_after_sequences=archive_after,
         archive_below_salience=archive_below_salience,
         delete_sensitive_after_sequences=delete_sensitive_after,
@@ -498,6 +500,7 @@ def _retention_policy(
 
 @retention_app.command("plan")
 def retention_plan(
+    cool_hot_after: Annotated[int | None, typer.Option("--cool-hot-after-seq", min=0)] = 5,
     archive_after: Annotated[int, typer.Option("--archive-after-seq")] = 30,
     archive_below_salience: Annotated[
         float | None,
@@ -511,7 +514,12 @@ def retention_plan(
 ) -> None:
     runtime = _runtime(data_dir)
     plan = RetentionPlanner(
-        _retention_policy(archive_after, archive_below_salience, delete_sensitive_after)
+        _retention_policy(
+            cool_hot_after,
+            archive_after,
+            archive_below_salience,
+            delete_sensitive_after,
+        )
     ).plan(
         runtime.memory_store.list_records(),
         current_sequence=runtime.snapshot().last_event_sequence,
@@ -533,6 +541,7 @@ def retention_plan(
 
 @retention_app.command("apply")
 def retention_apply(
+    cool_hot_after: Annotated[int | None, typer.Option("--cool-hot-after-seq", min=0)] = 5,
     archive_after: Annotated[int, typer.Option("--archive-after-seq")] = 30,
     archive_below_salience: Annotated[
         float | None,
@@ -547,7 +556,12 @@ def retention_apply(
     runtime = _runtime(data_dir)
     snapshot = runtime.snapshot()
     plan = RetentionPlanner(
-        _retention_policy(archive_after, archive_below_salience, delete_sensitive_after)
+        _retention_policy(
+            cool_hot_after,
+            archive_after,
+            archive_below_salience,
+            delete_sensitive_after,
+        )
     ).plan(runtime.memory_store.list_records(), current_sequence=snapshot.last_event_sequence)
     report = RetentionExecutor(
         memory_store=runtime.memory_store,
@@ -560,6 +574,7 @@ def retention_apply(
         {
             "archived_memory_ids": list(report.archived_memory_ids),
             "deleted_memory_ids": list(report.deleted_memory_ids),
+            "cooled_memory_ids": list(report.cooled_memory_ids),
             "snapshot": runtime.snapshot().to_dict(),
         }
     )
@@ -576,6 +591,10 @@ def retention_worker(
         float,
         typer.Option("--interval-seconds", min=0.1),
     ] = 300.0,
+    cool_hot_after: Annotated[
+        int | None,
+        typer.Option("--cool-hot-after-seq", min=0),
+    ] = 5,
     archive_after: Annotated[int, typer.Option("--archive-after-seq", min=0)] = 30,
     archive_below_salience: Annotated[
         float | None,
@@ -591,6 +610,7 @@ def retention_worker(
     retention = RetentionWorker(
         runtime,
         policy=_retention_policy(
+            cool_hot_after,
             archive_after,
             archive_below_salience,
             delete_sensitive_after,
@@ -618,6 +638,7 @@ def retention_worker(
             "cycles": report.cycles,
             "archived": report.archived,
             "deleted": report.deleted,
+            "cooled": report.cooled,
         }
     )
 
@@ -804,6 +825,7 @@ def _print_retention_cycle(cycle: RetentionCycle) -> None:
             "planned_actions": len(cycle.plan.actions),
             "archived_memory_ids": list(cycle.report.archived_memory_ids),
             "deleted_memory_ids": list(cycle.report.deleted_memory_ids),
+            "cooled_memory_ids": list(cycle.report.cooled_memory_ids),
             "snapshot": cycle.snapshot.to_dict(),
         }
     )

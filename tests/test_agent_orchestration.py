@@ -615,7 +615,7 @@ def test_sqlite_orchestration_survives_restart_and_bundle_uses_schema_v7(
         assert stored.status is OrchestrationStatus.COMPLETED
         assert stored.outputs == {"one": "durable"}
         assert records[0].status is DelegationStatus.COMPLETED
-        assert SQLiteStoreBundle(path).schema_version == 7
+        assert SQLiteStoreBundle(path).schema_version == 10
         with sqlite3.connect(path) as connection:
             assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 

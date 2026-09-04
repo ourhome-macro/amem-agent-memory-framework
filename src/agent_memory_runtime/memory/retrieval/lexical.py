@@ -60,6 +60,7 @@ def searchable_record_text(record: object) -> str:
             str(getattr(record, "level", "")),
             str(getattr(record, "status", "")),
             str(getattr(record, "visibility", "")),
+            str(getattr(record, "temperature", "")),
             str(getattr(record, "priority", "")),
             str(getattr(record, "subject_id", "")),
             str(getattr(record, "content", "")),

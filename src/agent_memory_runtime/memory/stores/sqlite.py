@@ -10,10 +10,11 @@ from agent_memory_runtime.domain.enums import (
     MemoryLabel,
     MemoryLevel,
     MemoryStatus,
+    MemoryTemperature,
     MemoryVisibility,
 )
 from agent_memory_runtime.domain.event import Event
-from agent_memory_runtime.domain.memory import MemoryRecord
+from agent_memory_runtime.domain.memory import MemoryRecord, normalize_record_temperature
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.domain.tombstone import MemoryTombstone
 from agent_memory_runtime.exceptions import EventConflictError, StoreError
@@ -145,15 +146,16 @@ class SQLiteMemoryStore(SQLiteStore):
         )
 
     def upsert(self, record: MemoryRecord) -> None:
+        record = normalize_record_temperature(record)
         with self._manager.connection() as connection:
             connection.execute(
                 """
                 INSERT INTO memories(
                     memory_id, payload, tenant_id, user_id, agent_id, session_id,
                     status, memory_type, updated_at, salience,
-                    level, visibility, priority,
+                    level, visibility, priority, temperature,
                     search_indexed, retrieval_v6_indexed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
                 ON CONFLICT(memory_id) DO UPDATE SET
                     payload = excluded.payload,
                     tenant_id = excluded.tenant_id,
@@ -167,6 +169,7 @@ class SQLiteMemoryStore(SQLiteStore):
                     level = excluded.level,
                     visibility = excluded.visibility,
                     priority = excluded.priority,
+                    temperature = excluded.temperature,
                     search_indexed = 1,
                     retrieval_v6_indexed = 1
                 """,
@@ -232,6 +235,7 @@ class SQLiteMemoryStore(SQLiteStore):
                 JOIN memories ON memories.memory_id = memory_fts.memory_id
                 WHERE memory_fts MATCH ? AND {" AND ".join(where)}
                 ORDER BY bm25(memory_fts) ASC,
+                         {_temperature_order_sql('memories')} ASC,
                          memories.priority DESC,
                          memories.updated_at DESC,
                          memories.memory_id ASC
@@ -243,7 +247,8 @@ class SQLiteMemoryStore(SQLiteStore):
                 SELECT memories.payload
                 FROM memories
                 WHERE {" AND ".join(where)}
-                ORDER BY memories.priority DESC,
+                ORDER BY {_temperature_order_sql('memories')} ASC,
+                         memories.priority DESC,
                          memories.updated_at DESC,
                          memories.memory_id ASC
                 LIMIT ? OFFSET ?
@@ -270,6 +275,7 @@ class SQLiteMemoryStore(SQLiteStore):
                 JOIN memories ON memories.memory_id = memory_fts.memory_id
                 WHERE memory_fts MATCH ? AND {" AND ".join(where)}
                 ORDER BY lexical_score ASC,
+                         {_temperature_order_sql('memories')} ASC,
                          memories.priority DESC,
                          memories.updated_at DESC,
                          memories.memory_id ASC
@@ -281,7 +287,8 @@ class SQLiteMemoryStore(SQLiteStore):
                 SELECT memories.memory_id, NULL AS lexical_score
                 FROM memories
                 WHERE {" AND ".join(where)}
-                ORDER BY memories.priority DESC,
+                ORDER BY {_temperature_order_sql('memories')} ASC,
+                         memories.priority DESC,
                          memories.updated_at DESC,
                          memories.memory_id ASC
                 LIMIT ?
@@ -300,6 +307,7 @@ class SQLiteMemoryStore(SQLiteStore):
         ]
 
     def replace_all(self, records: list[MemoryRecord]) -> None:
+        records = [normalize_record_temperature(record) for record in records]
         with self._manager.connection() as connection:
             connection.execute("DELETE FROM memory_fts")
             connection.execute("DELETE FROM memory_tags")
@@ -310,9 +318,9 @@ class SQLiteMemoryStore(SQLiteStore):
                 INSERT INTO memories(
                     memory_id, payload, tenant_id, user_id, agent_id, session_id,
                     status, memory_type, updated_at, salience,
-                    level, visibility, priority,
+                    level, visibility, priority, temperature,
                     search_indexed, retrieval_v6_indexed
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)
                 """,
                 [_memory_row(record) for record in records],
             )
@@ -738,6 +746,7 @@ def _memory_row(record: MemoryRecord) -> tuple[object, ...]:
         record.level,
         record.visibility,
         record.priority,
+        record.temperature,
     )
 
 
@@ -760,6 +769,8 @@ def _acl_principals(record: MemoryRecord) -> tuple[str, ...]:
 def _should_embed(record: MemoryRecord) -> bool:
     if record.status != MemoryStatus.ACTIVE.value:
         return False
+    if record.temperature != MemoryTemperature.WARM.value:
+        return False
     if not _acl_principals(record):
         return False
     if record.level == MemoryLevel.ATOM.value:
@@ -767,3 +778,7 @@ def _should_embed(record: MemoryRecord) -> bool:
     if record.level == MemoryLevel.RAW.value:
         return bool(record.metadata.get("embedding_index"))
     return False
+
+
+def _temperature_order_sql(alias: str) -> str:
+    return f"CASE {alias}.temperature WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 ELSE 2 END"

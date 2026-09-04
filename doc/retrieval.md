@@ -1,6 +1,6 @@
 # 检索
 
-检索模块负责在身份、会话、level、status、visibility、类型、标签和 token 预算约束下，为当前请求选出可用记忆。
+检索模块负责在身份、会话、level、status、visibility、temperature、类型、标签和 token 预算约束下，为当前请求选出可用记忆。
 
 ## 模块职责
 
@@ -23,6 +23,7 @@ Query understanding 只做过滤条件归一化，例如：
 - `status`
 - `level`
 - `visibility`
+- `temperature`
 - `tags`
 - `memory_types`
 - identity 和 session policy
@@ -30,9 +31,11 @@ Query understanding 只做过滤条件归一化，例如：
 
 它不再决定是否使用 lexical 或 vector。召回方式由 runtime 配置决定，候选通过 RRF 融合。这样可以避免一个隐藏 router 同时承担理解、召回策略、短路检索和排序解释。
 
+普通查询默认检索 `hot+warm`，历史回忆类查询默认检索 `hot+warm+cold`。显式传 `temperatures` 时按调用方约束执行。
+
 ## Qdrant Payload
 
-embedding outbox 发布向量到 Qdrant 时，payload 包含 `tenant_id`、`user_id`、`session_id`、`level`、`memory_status`、`visibility`、`tags`、`acl_principals` 等过滤字段。
+embedding outbox 发布向量到 Qdrant 时，payload 包含 `tenant_id`、`user_id`、`session_id`、`level`、`memory_status`、`visibility`、`temperature`、`tags`、`acl_principals` 等过滤字段。
 
 Qdrant payload ACL 只是检索投影。最终授权仍由 `AccessChecker` 基于当前 SQLite `MemoryRecord` 二次校验。
 

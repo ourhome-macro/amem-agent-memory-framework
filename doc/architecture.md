@@ -15,7 +15,7 @@ save/revise/forget 工具或 Auto Dream
   -> Qdrant vector projection
 ```
 
-`MemoryRecord` 的主语义是 `level`、`status`、`visibility` 和 `priority`。历史 payload 如果含有旧字段，会在加载时转换；新记录和新查询接口不再输出旧字段。
+`MemoryRecord` 的主语义是 `level`、`status`、`visibility`、`temperature` 和 `priority`。历史 payload 如果含有旧字段，会在加载时转换；新记录和新查询接口不再输出旧字段。
 
 ## 主读取链路
 
@@ -42,9 +42,25 @@ MemoryQuery
 - `audit`：记录写入历史和审计重放输入。
 - `agent`：协调模型调用、工具循环、checkpoint 和记忆投影。
 
+## B站音乐推荐集成
+
+`recommend-radio/` 是 AMEM 的本地音乐应用。它不把视频候选写成记忆：AMEM 负责画像和事件，推荐服务负责候选库存与排序。
+
+```text
+RequestSpec + MusicProfile
+  -> DiscoveryService
+  -> CandidatePool
+  -> RecommendationEngine
+  -> recommendation events
+  -> AMEM lifecycle
+```
+
+请求约束优先于长期画像；候选池与记忆事实源分开持久化。详见 [recommendation.md](recommendation.md)。
+
 ## 设计原则
 
 - SQLite 是事实源；Qdrant、FTS5、SQLite vector 都是投影。
+- `temperature=hot/warm/cold` 只表达检索温度和调用成本，不替代 `level/status/memory_type`。
 - L3 profile 数量少且影响大，profile-aware 查询直接加载，不依赖向量搜索。
 - 规则引擎只做确定性约束，不承担隐藏检索路由或复杂排序。
 - 旧 payload 兼容只存在于入口和迁移层，不能扩散到新公共契约。

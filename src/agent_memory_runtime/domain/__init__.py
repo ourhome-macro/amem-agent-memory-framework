@@ -5,6 +5,7 @@ from agent_memory_runtime.domain.enums import (
     MemoryOperation,
     MemorySessionPolicy,
     MemoryStatus,
+    MemoryTemperature,
     MemoryType,
     MemoryVisibility,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "MemoryRecord",
     "MemorySessionPolicy",
     "MemoryStatus",
+    "MemoryTemperature",
     "MemoryType",
     "MemoryVisibility",
     "RetrievalTrace",

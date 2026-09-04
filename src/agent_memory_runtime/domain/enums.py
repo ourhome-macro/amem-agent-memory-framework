@@ -34,6 +34,12 @@ class MemoryVisibility(StrEnum):
     PUBLIC = "public"
 
 
+class MemoryTemperature(StrEnum):
+    HOT = "hot"
+    WARM = "warm"
+    COLD = "cold"
+
+
 class MemorySessionPolicy(StrEnum):
     EXACT = "exact"
     PROFILE = "profile"

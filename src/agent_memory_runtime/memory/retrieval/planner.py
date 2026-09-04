@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_memory_runtime.domain.enums import MemoryStatus
+from agent_memory_runtime.domain.enums import MemoryStatus, MemoryTemperature
 from agent_memory_runtime.domain.query import MemoryQuery
 
 _ARCHIVAL_QUERY_MARKERS = (
@@ -17,6 +17,10 @@ _ARCHIVAL_QUERY_MARKERS = (
 
 def normalize_query(query: MemoryQuery) -> MemoryQuery:
     statuses = query.statuses or _default_statuses(query.text)
+    temperatures = query.temperatures or _default_temperatures(
+        query.text,
+        statuses=statuses,
+    )
     return MemoryQuery(
         agent_id=query.agent_id,
         text=query.text,
@@ -27,6 +31,7 @@ def normalize_query(query: MemoryQuery) -> MemoryQuery:
         levels=query.levels,
         statuses=statuses,
         visibilities=query.visibilities,
+        temperatures=temperatures,
         tags=query.tags,
         source_memory_ids=query.source_memory_ids,
         limit=query.limit,
@@ -52,6 +57,22 @@ def _default_statuses(text: str) -> tuple[str, ...]:
             MemoryStatus.SUPERSEDED.value,
         )
     return (MemoryStatus.ACTIVE.value,)
+
+
+def _default_temperatures(
+    text: str,
+    *,
+    statuses: tuple[str, ...],
+) -> tuple[str, ...]:
+    if requests_archival_recall(text) or any(
+        status != MemoryStatus.ACTIVE.value for status in statuses
+    ):
+        return (
+            MemoryTemperature.HOT.value,
+            MemoryTemperature.WARM.value,
+            MemoryTemperature.COLD.value,
+        )
+    return (MemoryTemperature.HOT.value, MemoryTemperature.WARM.value)
 
 
 def requests_archival_recall(text: str) -> bool:

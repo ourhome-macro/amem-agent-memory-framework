@@ -31,9 +31,15 @@ SQLite 中的 memory record、audit log、tombstone、job、checkpoint 是持久
 
 embedding job 按 level 调度：
 
-- active `L1` atom 默认 embedding。
-- active `L0` raw event 只有在 `metadata.embedding_index=true` 时 embedding。
+- active warm `L1` atom 默认 embedding。
+- active warm `L0` raw event 只有在 `metadata.embedding_index=true` 时 embedding。
 - `L2` scenario 不默认 embedding，依赖元数据、文本和时间召回。
 - `L3` profile 不 embedding，profile-aware 查询直接加载。
 
 向量发布只能通过 embedding outbox。Qdrant 故障不影响 SQLite 写入。
+
+## 冷热分层
+
+- `hot`：仍在热队列中，优先服务低延迟上下文，普通查询可见，但默认不发布向量。
+- `warm`：主索引层，承载 FTS、keywords、metadata 和 embedding。
+- `cold`：归档和历史层，保留在 SQLite 和 FTS 中，默认不进入普通检索。
