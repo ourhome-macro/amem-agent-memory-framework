@@ -26,4 +26,5 @@ backend/data/
 server-data/
 backend/tests/
 agent/
-*tar*
+*.tar
+*.tar.gz
