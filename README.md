@@ -30,24 +30,16 @@ docker compose up -d --build
 
 首次推荐会建立画像和候选库存；后续命中画像与 L2 缓存时通常只需约百毫秒。默认使用本机 bge-m3 embedding 服务，详见 [recommend-radio/README.md](recommend-radio/README.md)。
 
-## 开发与测试
+## 开发
 
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev,qdrant]"
-pytest
 
 cd recommend-radio\frontend
 npm install
 npm run build
-```
-
-推荐后端测试：
-
-```powershell
-$env:PYTHONPATH = "$PWD\recommend-radio\backend"
-pytest recommend-radio/backend/tests -q
 ```
 
 ## 文档
