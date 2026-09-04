@@ -387,6 +387,11 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
                 conn.execute('PRAGMA user_version = 16')
                 current_version = 16
 
+            if current_version < 17:
+                _ensure_keyword_feedback_columns(conn)
+                conn.execute('PRAGMA user_version = 17')
+                current_version = 17
+
             _ensure_current_schema_columns(conn)
 
         _initialized_paths.add(path)
@@ -410,6 +415,7 @@ def _ensure_current_schema_columns(conn: sqlite3.Connection) -> None:
     _ensure_conversation_memory_tables(conn)
     _ensure_candidate_scope_columns(conn)
     _ensure_keyword_governance_tables(conn)
+    _ensure_keyword_feedback_columns(conn)
 
 
 def _ensure_recommendation_history_table(conn: sqlite3.Connection) -> None:
@@ -636,6 +642,12 @@ def _ensure_keyword_governance_tables(conn: sqlite3.Connection) -> None:
             ON discovery_keyword_candidates (user_id, track_id, discovered_at DESC);
         """
     )
+
+
+def _ensure_keyword_feedback_columns(conn: sqlite3.Connection) -> None:
+    _add_column_if_missing(conn, "discovery_keywords", "shown_count", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "discovery_keywords", "dismissed_count", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "discovery_keywords", "completed_count", "INTEGER NOT NULL DEFAULT 0")
 
 
 def _ensure_agent_dialogue_tables(conn: sqlite3.Connection) -> None:

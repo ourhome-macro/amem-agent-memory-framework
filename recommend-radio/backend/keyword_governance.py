@@ -33,7 +33,7 @@ class KeywordGovernance:
                     "SELECT keyword_id, keyword, quality_score, status FROM discovery_keywords WHERE keyword_id = ?",
                     (keyword_id,),
                 ).fetchone()
-                if row and row["status"] == "active":
+                if row and row["status"] in {"active", "cooldown"}:
                     prepared.append({"keywordId": row["keyword_id"], "query": row["keyword"], "quality": str(row["quality_score"])})
         if not preserve_order:
             prepared.sort(key=lambda item: float(item["quality"]), reverse=True)
@@ -62,7 +62,7 @@ class KeywordGovernance:
             self._recalculate(conn, keyword_id)
 
     def record_feedback(self, track_id: str, event: str) -> None:
-        if event not in {"played", "accepted", "completed", "liked"}:
+        if event not in {"shown", "played", "accepted", "completed", "liked", "skipped", "dismissed", "dislike"}:
             return
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
@@ -74,14 +74,24 @@ class KeywordGovernance:
                 (self.user_id, track_id),
             ).fetchall()
             for row in rows:
-                field = "liked_count" if event == "liked" else "clicked_count"
-                conn.execute(f"UPDATE discovery_keywords SET {field} = {field} + 1, last_evaluated_at = ? WHERE keyword_id = ?", (_utc_now(), row["keyword_id"]))
+                increments = {
+                    "shown": {"shown_count": 1},
+                    "played": {"clicked_count": 1},
+                    "accepted": {"clicked_count": 1},
+                    "completed": {"clicked_count": 1, "completed_count": 1},
+                    "liked": {"liked_count": 1},
+                    "skipped": {"dismissed_count": 1},
+                    "dismissed": {"dismissed_count": 1},
+                    "dislike": {"dismissed_count": 1},
+                }[event]
+                assignments = ", ".join(f"{field} = {field} + {amount}" for field, amount in increments.items())
+                conn.execute(f"UPDATE discovery_keywords SET {assignments}, last_evaluated_at = ? WHERE keyword_id = ?", (_utc_now(), row["keyword_id"]))
                 self._recalculate(conn, row["keyword_id"])
 
     @staticmethod
     def _recalculate(conn: Any, keyword_id: str) -> None:
         row = conn.execute(
-            "SELECT search_count, candidate_count, admitted_count, clicked_count, liked_count FROM discovery_keywords WHERE keyword_id = ?",
+            "SELECT search_count, candidate_count, admitted_count, shown_count, dismissed_count, clicked_count, completed_count, liked_count FROM discovery_keywords WHERE keyword_id = ?",
             (keyword_id,),
         ).fetchone()
         if row is None:
@@ -90,9 +100,14 @@ class KeywordGovernance:
         admitted = int(row["admitted_count"])
         clicks = int(row["clicked_count"])
         likes = int(row["liked_count"])
+        shown = int(row["shown_count"])
+        dismissed = int(row["dismissed_count"])
+        completed = int(row["completed_count"])
         searches = int(row["search_count"])
-        quality = 0.45 * (admitted / candidates) + 0.35 * (clicks / max(admitted, 1)) + 0.20 * (likes / max(clicks, 1))
-        status = "retired" if searches >= 5 and admitted == 0 else "active"
+        acceptance = min((0.25 * clicks + completed + 1.2 * likes) / max(shown, 1), 1.0)
+        dismiss_rate = dismissed / max(shown, 1)
+        quality = 0.30 * (admitted / candidates) + 0.50 * acceptance + 0.20 * (1.0 - dismiss_rate)
+        status = "retired" if searches >= 5 and admitted == 0 else "cooldown" if shown >= 8 and dismiss_rate >= 0.7 and completed == 0 and likes == 0 else "active"
         conn.execute("UPDATE discovery_keywords SET quality_score = ?, status = ? WHERE keyword_id = ?", (round(quality, 4), status, keyword_id))
 
 
