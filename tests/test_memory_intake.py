@@ -46,8 +46,10 @@ def test_save_memory_tool_applies_proposal_and_writes_audit_log() -> None:
     record = runtime.memory_store.get(result.memory_ids[0])
     assert record is not None
     assert record.content == "Use explicit loops in Java examples."
-    assert record.layer == "core"
+    assert record.level == "L3"
+    assert record.temperature == "warm"
     assert record.metadata["key"] == "java_style"
+    assert record.metadata["temperature"] == "warm"
     assert record.metadata["proposal_id"] == "memory-intake:save_memory:save-java-style"
     assert record.rule_id == "proposal.direct.v1"
     assert record.version == 1
@@ -66,7 +68,7 @@ def test_revise_memory_updates_same_profile_memory_and_preserves_sources() -> No
             "kind": "belief.stated",
             "key": "database",
             "content": "The user uses MySQL.",
-            "layer": "core",
+            "level": "L3",
         },
         identity=_identity(),
         idempotency_key="save-db",
@@ -79,7 +81,7 @@ def test_revise_memory_updates_same_profile_memory_and_preserves_sources() -> No
             "content": "The user uses PostgreSQL.",
             "target_memory_id": original.memory_ids[0],
             "operation": "supersede",
-            "layer": "core",
+            "level": "L3",
         },
         identity=_identity(),
         idempotency_key="revise-db",
@@ -88,8 +90,10 @@ def test_revise_memory_updates_same_profile_memory_and_preserves_sources() -> No
     assert revised.memory_ids == original.memory_ids
     record = runtime.memory_store.get(original.memory_ids[0])
     assert record is not None
-    assert record.content == "The user uses PostgreSQL."
-    assert record.last_operation == "revise"
+    assert record.content == "The user uses MySQL."
+    assert record.status == "superseded"
+    assert record.temperature == "cold"
+    assert record.last_operation == "supersede"
     assert record.source_memory_ids == (original.memory_ids[0],)
     assert record.version == 2
     audit_logs = runtime.audit_store.list_memory_logs()
@@ -97,7 +101,31 @@ def test_revise_memory_updates_same_profile_memory_and_preserves_sources() -> No
     assert audit_logs[-1].before_record is not None
     assert audit_logs[-1].before_record.content == "The user uses MySQL."
     assert audit_logs[-1].after_record is not None
-    assert audit_logs[-1].after_record.content == "The user uses PostgreSQL."
+    assert audit_logs[-1].after_record.status == "superseded"
+    assert audit_logs[-1].after_record.temperature == "cold"
+
+
+def test_l0_save_defaults_to_hot_memory_temperature() -> None:
+    runtime = AgentMemoryRuntime()
+    service = MemoryIntakeService(runtime)
+
+    result = service.save_memory(
+        {
+            "kind": "belief.stated",
+            "key": "turn_detail",
+            "content": "The user is comparing hot and cold memory tiers.",
+            "level": "L0",
+        },
+        identity=_identity(),
+        idempotency_key="save-l0-hot",
+    )
+
+    assert result.status == "succeeded"
+    record = runtime.memory_store.get(result.memory_ids[0])
+    assert record is not None
+    assert record.level == "L0"
+    assert record.temperature == "hot"
+    assert runtime.snapshot().hot_memory_ids == (record.memory_id,)
 
 
 def test_forget_memory_tombstones_and_hides_authorized_memory() -> None:
@@ -108,7 +136,7 @@ def test_forget_memory_tombstones_and_hides_authorized_memory() -> None:
             "kind": "belief.stated",
             "key": "phone",
             "content": "The user's phone is 15500001111.",
-            "layer": "core",
+            "level": "L3",
         },
         identity=_identity(),
         idempotency_key="save-phone",
@@ -191,7 +219,8 @@ def test_auto_dream_analyzes_incremental_messages_and_advances_checkpoint() -> N
 
     assert report.source_sequence_range == (2, 3)
     assert report.checkpoint.last_processed_sequence == 3
-    assert [proposal.action for proposal in report.proposals] == ["needs_review"]
+    assert [proposal.action for proposal in report.proposals] == ["ignore"]
+    assert report.proposals[0].decision_status == "pending_review"
     assert report.proposals[0].reason == "explicit_forget_marker"
 
 
@@ -264,11 +293,39 @@ def test_auto_dream_detects_duplicate_active_memories() -> None:
 
     report = AutoDreamAnalyzer().analyze(events=[], records=records)
 
-    assert [proposal.action for proposal in report.proposals] == ["reinforce", "archive"]
-    assert report.proposals[0].action == "reinforce"
+    assert [proposal.action for proposal in report.proposals] == ["merge", "merge"]
+    assert report.proposals[0].action == "merge"
     assert report.proposals[0].target_memory_id == "m1"
     assert report.proposals[0].source_memory_ids == ("m2",)
     assert report.proposals[0].reason == "semantic_duplicate_of:m1"
+    assert report.proposals[1].status == "archived"
+
+
+def test_auto_dream_proposes_core_promotion_for_reinforced_working_memory() -> None:
+    report = AutoDreamAnalyzer().analyze(
+        events=[],
+        records=[
+            _record(
+                "working-style",
+                "Use explicit loops in Java examples.",
+                ("e1", "e2", "e3"),
+                key="java_style",
+                level="L1",
+                reinforcement_count=3,
+                confidence=0.9,
+                salience=0.86,
+            )
+        ],
+    )
+
+    assert len(report.proposals) == 1
+    proposal = report.proposals[0]
+    assert proposal.action == "merge"
+    assert proposal.target_memory_id == "working-style"
+    assert proposal.level == "L3"
+    assert proposal.reason == "working_memory_reinforced_for_core"
+    assert proposal.metadata["promotion_source_level"] == "L1"
+    assert proposal.metadata["migration_target_level"] == "L3"
 
 
 def test_auto_dream_routes_current_state_conflict_to_review_across_keys() -> None:
@@ -292,7 +349,8 @@ def test_auto_dream_routes_current_state_conflict_to_review_across_keys() -> Non
     reviews = [
         proposal
         for proposal in report.proposals
-        if proposal.action == "needs_review"
+        if proposal.action == "ignore"
+        and proposal.decision_status == "pending_review"
         and proposal.reason.startswith("current_state_conflict_with:")
     ]
     assert len(reviews) == 1
@@ -346,7 +404,7 @@ def test_auto_dream_worker_retains_review_for_conflicting_same_key(tmp_path) -> 
 
     assert report.review == 1
     reviews = stores.dream_store.list_reviews()
-    assert reviews[0]["status"] == "needs_review"
+    assert reviews[0]["status"] == "pending_review"
     assert "same_key_conflict" in str(reviews[0]["reason"])
 
 
@@ -389,7 +447,7 @@ def test_optimistic_lock_conflict_is_retryable() -> None:
             "kind": "belief.stated",
             "key": "database",
             "content": "The user uses MySQL.",
-            "layer": "core",
+            "level": "L3",
         },
         identity=_identity(),
         idempotency_key="lock-save",
@@ -400,7 +458,7 @@ def test_optimistic_lock_conflict_is_retryable() -> None:
     result = runtime.apply_memory_proposal(
         _proposal(
             proposal_id="manual-stale-revise",
-            action="revise",
+            action="merge",
             target_memory_id=record.memory_id,
             key="database",
             content="The user uses PostgreSQL.",
@@ -423,7 +481,7 @@ def test_cross_tenant_proposal_is_rejected() -> None:
             "kind": "belief.stated",
             "key": "database",
             "content": "The user uses MySQL.",
-            "layer": "core",
+            "level": "L3",
         },
         identity=_identity(),
         idempotency_key="tenant-save",
@@ -432,7 +490,7 @@ def test_cross_tenant_proposal_is_rejected() -> None:
     result = runtime.apply_memory_proposal(
         _proposal(
             proposal_id="manual-cross-tenant",
-            action="revise",
+            action="merge",
             target_memory_id=saved.memory_ids[0],
             key="database",
             content="The user uses PostgreSQL.",
@@ -452,7 +510,7 @@ def test_visible_to_expansion_requires_review() -> None:
             "kind": "belief.stated",
             "key": "database",
             "content": "The user uses MySQL.",
-            "layer": "core",
+            "level": "L3",
         },
         identity=_identity(),
         idempotency_key="visibility-save",
@@ -461,17 +519,93 @@ def test_visible_to_expansion_requires_review() -> None:
     result = runtime.apply_memory_proposal(
         _proposal(
             proposal_id="manual-expand-visibility",
-            action="revise",
+            action="merge",
             target_memory_id=saved.memory_ids[0],
             key="database",
             content="The user uses MySQL.",
-            scope="shared",
+            visibility="shared",
             visible_to=("assistant", "agent-b"),
         )
     )
 
     assert result.status == "needs_review"
     assert result.reason == "visible_to_expansion_requires_review"
+
+
+def test_level_promotion_updates_memory_after_policy_validation() -> None:
+    runtime = AgentMemoryRuntime()
+    service = MemoryIntakeService(runtime)
+    saved = service.save_memory(
+        {
+            "kind": "belief.stated",
+            "key": "java_style",
+            "content": "Use explicit loops in Java examples.",
+            "level": "L1",
+        },
+        identity=_identity(),
+        idempotency_key="move-layer-save",
+    )
+    record = runtime.memory_store.get(saved.memory_ids[0])
+    assert record is not None
+    assert record.level == "L1"
+
+    result = runtime.apply_memory_proposal(
+        _proposal(
+            proposal_id="manual-promote-working",
+            action="merge",
+            target_memory_id=record.memory_id,
+            key="java_style",
+            content=record.content,
+            level="L3",
+            expected_version=record.version,
+        )
+    )
+
+    assert result.status == "succeeded"
+    promoted = runtime.memory_store.get(record.memory_id)
+    assert promoted is not None
+    assert promoted.level == "L3"
+    assert promoted.status == "active"
+    assert promoted.last_operation == "merge"
+    assert promoted.version == 2
+    assert runtime.audit_store.list_memory_logs()[-1].action == "merge"
+
+
+def test_level_promotion_to_profile_requires_high_signal() -> None:
+    runtime = AgentMemoryRuntime()
+    service = MemoryIntakeService(runtime)
+    saved = service.save_memory(
+        {
+            "kind": "belief.stated",
+            "key": "weak_hint",
+            "content": "The user may sometimes prefer concise answers.",
+            "level": "L1",
+        },
+        identity=_identity(),
+        idempotency_key="weak-move-save",
+    )
+    record = runtime.memory_store.get(saved.memory_ids[0])
+    assert record is not None
+
+    result = runtime.apply_memory_proposal(
+        _proposal(
+            proposal_id="manual-weak-promote-working",
+            action="merge",
+            target_memory_id=record.memory_id,
+            key="weak_hint",
+            content=record.content,
+            level="L3",
+            confidence=0.8,
+            salience=0.9,
+            expected_version=record.version,
+        )
+    )
+
+    assert result.status == "needs_review"
+    assert result.reason == "profile_promotion_requires_high_signal"
+    unchanged = runtime.memory_store.get(record.memory_id)
+    assert unchanged is not None
+    assert unchanged.level == "L1"
 
 
 def test_sqlite_write_succeeds_and_embedding_outbox_is_retained(tmp_path) -> None:
@@ -497,7 +631,7 @@ def test_sqlite_write_succeeds_and_embedding_outbox_is_retained(tmp_path) -> Non
             "kind": "preference.updated",
             "key": "java_style",
             "content": "Use explicit loops in Java examples.",
-            "layer": "core",
+            "level": "L1",
         },
         identity=_identity(),
         idempotency_key="sqlite-outbox",
@@ -521,7 +655,7 @@ def test_memory_audit_replay_rebuilds_current_records_and_tombstones() -> None:
             "kind": "preference.updated",
             "key": "java_style",
             "content": "Use explicit loops in Java examples.",
-            "layer": "core",
+            "level": "L3",
         },
         identity=_identity(),
         idempotency_key="replay-java",
@@ -531,7 +665,7 @@ def test_memory_audit_replay_rebuilds_current_records_and_tombstones() -> None:
             "kind": "belief.stated",
             "key": "database",
             "content": "The user uses MySQL.",
-            "layer": "core",
+            "level": "L3",
         },
         identity=_identity(),
         idempotency_key="replay-db",
@@ -584,7 +718,7 @@ def test_sqlite_audit_replay_clears_stale_acl_and_tag_projection(tmp_path) -> No
             "kind": "belief.stated",
             "key": "database",
             "content": "The user uses PostgreSQL.",
-            "layer": "core",
+            "level": "L3",
         },
         identity=_identity(),
         idempotency_key="sqlite-replay-kept",
@@ -594,7 +728,7 @@ def test_sqlite_audit_replay_clears_stale_acl_and_tag_projection(tmp_path) -> No
             "kind": "preference.updated",
             "key": "java_style",
             "content": "Use explicit loops in Java examples.",
-            "layer": "core",
+            "level": "L3",
         },
         identity=_identity(),
         idempotency_key="sqlite-replay-deleted",
@@ -680,12 +814,14 @@ def _record(
     source_event_ids: tuple[str, ...],
     *,
     key: str | None = None,
+    level: str = "L3",
+    reinforcement_count: int = 1,
+    confidence: float = 1.0,
+    salience: float = 0.5,
 ) -> MemoryRecord:
     return MemoryRecord(
         memory_id=memory_id,
         memory_type="belief",
-        scope="private",
-        layer="core",
         session_id="s1",
         subject_id="user-a",
         content=content,
@@ -700,6 +836,12 @@ def _record(
         updated_at="2026-07-28T00:00:00+00:00",
         last_event_sequence=1,
         metadata=({} if key is None else {"key": key}),
+        reinforcement_count=reinforcement_count,
+        confidence=confidence,
+        salience=salience,
+        level=level,
+        visibility="private",
+        priority=salience,
     )
 
 
@@ -711,8 +853,12 @@ def _proposal(
     key: str,
     content: str,
     tenant_id: str = "tenant-a",
-    scope: str = "private",
+    level: str = "L3",
+    visibility: str = "private",
+    status: str = "active",
     visible_to: tuple[str, ...] = ("assistant",),
+    confidence: float = 0.9,
+    salience: float = 0.9,
     expected_version: int | None = None,
 ) -> MemoryProposal:
     return MemoryProposal(
@@ -724,11 +870,9 @@ def _proposal(
         key=key,
         content=content,
         memory_type="belief",
-        layer="core",
-        scope=scope,
         visible_to=visible_to,
-        confidence=0.9,
-        salience=0.9,
+        confidence=confidence,
+        salience=salience,
         source_message_ids=("message-1",),
         source_memory_ids=(() if target_memory_id is None else (target_memory_id,)),
         evidence_text=content,
@@ -740,6 +884,10 @@ def _proposal(
         session_id="s1",
         labels=("private",),
         expected_version=expected_version,
+        level=level,
+        visibility=visibility,
+        priority=salience,
+        status=status,
     )
 
 

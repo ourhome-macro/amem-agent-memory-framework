@@ -8,7 +8,7 @@ from typing import Any
 
 from agent_memory_runtime.audit.stores.jsonl import JsonlAuditStore
 from agent_memory_runtime.domain.event import Event
-from agent_memory_runtime.domain.memory import MemoryRecord
+from agent_memory_runtime.domain.memory import MemoryRecord, normalize_record_temperature
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.domain.tombstone import MemoryTombstone
 from agent_memory_runtime.exceptions import EventConflictError
@@ -107,7 +107,8 @@ class JsonlMemoryStore:
 
     def replace_all(self, records: list[MemoryRecord]) -> None:
         with self.path.open("w", encoding="utf-8") as handle:
-            for record in sorted(records, key=lambda item: item.memory_id):
+            normalized = [normalize_record_temperature(record) for record in records]
+            for record in sorted(normalized, key=lambda item: item.memory_id):
                 handle.write(json.dumps(record.to_dict(), ensure_ascii=True, sort_keys=True) + "\n")
 
     def clear(self) -> None:

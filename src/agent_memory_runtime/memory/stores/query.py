@@ -22,6 +22,7 @@ def select_candidates(
         overlap = len(query_terms & lexical_tokens(searchable_record_text(record)))
         return (
             overlap,
+            _temperature_rank(record.temperature),
             record.priority,
             record.salience,
             record.confidence,
@@ -34,3 +35,13 @@ def select_candidates(
     eligible.sort(key=order_key, reverse=True)
     start = max(0, offset)
     return eligible[start : start + max(0, limit)]
+
+
+def _temperature_rank(value: str) -> int:
+    if value == "hot":
+        return 3
+    if value == "warm":
+        return 2
+    if value == "cold":
+        return 1
+    return 0

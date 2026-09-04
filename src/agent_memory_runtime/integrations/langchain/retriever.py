@@ -53,6 +53,7 @@ if Document is not None:
                         "memory_type": record.memory_type,
                         "visibility": record.visibility,
                         "status": record.status,
+                        "temperature": record.temperature,
                         "tags": list(record.tags),
                     },
                 )

@@ -8,8 +8,10 @@ from agent_memory_runtime.domain.enums import (
     MemoryLevel,
     MemoryOperation,
     MemoryStatus,
+    MemoryTemperature,
     MemoryVisibility,
 )
+from agent_memory_runtime.domain.memory import default_temperature
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.memory.intake.models import (
     MemoryProposal,
@@ -151,6 +153,7 @@ class MemoryIntakeService:
             level=record.level,
             visibility=record.visibility,
             priority=record.priority,
+            temperature=MemoryTemperature.COLD.value,
             status=(
                 MemoryStatus.DELETED.value
                 if mode == "delete"
@@ -200,6 +203,11 @@ class MemoryIntakeService:
             arguments.get("visibility")
             or _visibility_from_legacy_scope(str(arguments.get("scope") or "private"))
         )
+        status = str(arguments.get("status") or MemoryStatus.ACTIVE.value)
+        temperature = str(
+            arguments.get("temperature")
+            or default_temperature(status=status, level=level)
+        )
         return MemoryProposal(
             proposal_id=_proposal_id(default_action, idempotency_key),
             source=source,
@@ -235,7 +243,8 @@ class MemoryIntakeService:
             level=level,
             visibility=visibility,
             priority=_clamp_float(arguments.get("priority"), default=0.5),
-            status=str(arguments.get("status") or MemoryStatus.ACTIVE.value),
+            status=status,
+            temperature=temperature,
         )
 
     def _resolve_forget_target(

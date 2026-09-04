@@ -690,6 +690,7 @@ class SQLiteVectorIndex:
                     FROM memories AS m
                     JOIN memory_acl AS a ON a.memory_id = m.memory_id
                     WHERE m.status = 'active'
+                      AND m.temperature = 'warm'
                       AND (
                           m.level = 'L1'
                           OR (
@@ -709,6 +710,7 @@ class SQLiteVectorIndex:
                     JOIN memory_acl AS a ON a.memory_id = e.memory_id
                     WHERE e.generation = ? AND e.status = 'ready'
                       AND m.status = 'active'
+                      AND m.temperature = 'warm'
                       AND (
                           m.level = 'L1'
                           OR (

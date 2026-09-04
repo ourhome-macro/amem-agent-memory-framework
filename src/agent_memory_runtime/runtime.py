@@ -905,6 +905,7 @@ def _query_from_dict(value: dict[str, object]) -> MemoryQuery:
         levels=levels,
         statuses=statuses,
         visibilities=visibilities,
+        temperatures=tuple(str(item) for item in value.get("temperatures", ())),
         tags=tuple(str(item) for item in value.get("tags", ())),
         source_memory_ids=tuple(str(item) for item in value.get("source_memory_ids", ())),
         limit=int(value["limit"]) if value.get("limit") is not None else None,

@@ -9,7 +9,7 @@ from agent_memory_runtime.audit.envelope import AuditEnvelope
 from agent_memory_runtime.audit.snapshot import RuntimeSnapshot
 from agent_memory_runtime.audit.stores.base import AuditStore
 from agent_memory_runtime.audit.subject import AuditSubject
-from agent_memory_runtime.domain.enums import MemoryOperation, MemoryStatus
+from agent_memory_runtime.domain.enums import MemoryOperation, MemoryStatus, MemoryTemperature
 from agent_memory_runtime.domain.tombstone import MemoryTombstone
 from agent_memory_runtime.governance.retention.policy import RetentionPlan, RetentionReport
 from agent_memory_runtime.memory.stores.base import (
@@ -46,6 +46,7 @@ class RetentionExecutor:
             action_by_id = {action.memory_id: action for action in plan.actions}
             archived: list[str] = []
             deleted: list[str] = []
+            cooled: list[str] = []
             records = []
             for record in self.memory_store.list_records():
                 action = action_by_id.get(record.memory_id)
@@ -71,7 +72,22 @@ class RetentionExecutor:
                         replace(
                             record,
                             status=MemoryStatus.ARCHIVED.value,
+                            temperature=MemoryTemperature.COLD.value,
+                            updated_at=datetime.now(UTC).isoformat(),
                             last_operation=MemoryOperation.MERGE.value,
+                            version=record.version + 1,
+                        )
+                    )
+                    continue
+                if action.action == "mark_warm":
+                    cooled.append(record.memory_id)
+                    records.append(
+                        replace(
+                            record,
+                            temperature=MemoryTemperature.WARM.value,
+                            updated_at=datetime.now(UTC).isoformat(),
+                            last_operation=MemoryOperation.MERGE.value,
+                            version=record.version + 1,
                         )
                     )
                     continue
@@ -81,6 +97,7 @@ class RetentionExecutor:
             report = RetentionReport(
                 archived_memory_ids=tuple(archived),
                 deleted_memory_ids=tuple(deleted),
+                cooled_memory_ids=tuple(cooled),
             )
             self._audit(plan, report, snapshot=snapshot)
         return report
@@ -110,6 +127,7 @@ class RetentionExecutor:
                     "current_sequence": plan.current_sequence,
                     "archived_memory_ids": list(report.archived_memory_ids),
                     "deleted_memory_ids": list(report.deleted_memory_ids),
+                    "cooled_memory_ids": list(report.cooled_memory_ids),
                     "actions": [
                         {
                             "memory_id": action.memory_id,

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar, Protocol
 
-from agent_memory_runtime.domain.enums import MemorySessionPolicy
+from agent_memory_runtime.domain.enums import MemorySessionPolicy, MemoryTemperature
 from agent_memory_runtime.domain.query import MemoryQuery
 from agent_memory_runtime.tools.policy import ToolPolicyError
 
@@ -150,6 +150,13 @@ class MemorySearchTool:
             "levels": {"type": "array", "items": {"type": "string"}},
             "statuses": {"type": "array", "items": {"type": "string"}},
             "visibilities": {"type": "array", "items": {"type": "string"}},
+            "temperatures": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": [item.value for item in MemoryTemperature],
+                },
+            },
             "tags": {"type": "array", "items": {"type": "string"}},
             "source_memory_ids": {"type": "array", "items": {"type": "string"}},
         },
@@ -205,6 +212,7 @@ class MemorySearchTool:
                 levels=_string_tuple(arguments.get("levels")),
                 statuses=_string_tuple(arguments.get("statuses")),
                 visibilities=_string_tuple(arguments.get("visibilities")),
+                temperatures=_string_tuple(arguments.get("temperatures")),
                 tags=_string_tuple(arguments.get("tags")),
                 source_memory_ids=_string_tuple(arguments.get("source_memory_ids")),
                 limit=limit,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from agent_memory_runtime.domain.enums import MemorySessionPolicy
+from agent_memory_runtime.domain.enums import MemorySessionPolicy, MemoryTemperature
 
 
 @dataclass(frozen=True)
@@ -22,12 +22,21 @@ class MemoryQuery:
     levels: tuple[str, ...] = ()
     statuses: tuple[str, ...] = ()
     visibilities: tuple[str, ...] = ()
+    temperatures: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         try:
             MemorySessionPolicy(self.session_policy)
         except ValueError as error:
             raise ValueError(f"unsupported memory session policy: {self.session_policy}") from error
+        invalid_temperatures = [
+            value
+            for value in self.temperatures
+            if value not in {item.value for item in MemoryTemperature}
+        ]
+        if invalid_temperatures:
+            joined = ", ".join(sorted(set(invalid_temperatures)))
+            raise ValueError(f"unsupported memory temperatures: {joined}")
 
 
 @dataclass(frozen=True)

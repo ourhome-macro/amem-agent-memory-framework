@@ -21,3 +21,7 @@
 Auto Dream 可以把重复强化且高置信的 `L1` 记忆原子提议提升为 `L3` profile。提升使用 `action=merge`，目标 level 在 proposal 中表达。低信号提升会被策略层打回 review。
 
 归档是 `status=archived`，不是单独层级。审核是 `decision_status=pending_review`，不是写入 action。
+
+## Retention 冷热流转
+
+retention 支持 `mark_warm` 和 `mark_archived` 两类非删除动作。`mark_warm` 把到期的 active hot 记忆降为 warm；`mark_archived` 把满足归档条件的 active 非 profile 记忆标为 `status=archived` 并强制 `temperature=cold`。

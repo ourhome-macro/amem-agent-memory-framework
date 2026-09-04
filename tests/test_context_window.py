@@ -34,7 +34,12 @@ def test_compacts_42_message_history_into_structured_context() -> None:
     assert report.after_tokens < report.before_tokens * 0.4
     assert compacted.messages[0].role == "system"
     assert compacted.messages[1].content.startswith("<pinned-facts>")
-    assert compacted.messages[2] == messages[1]
+    assert compacted.messages[2].role == "system"
+    assert compacted.messages[2].content.startswith("<task-state>")
+    assert "initial_task_context:" in compacted.messages[2].content
+    assert "current_user_intent:" in compacted.messages[2].content
+    assert "relation_to_initial_task:" in compacted.messages[2].content
+    assert messages[1].content in compacted.messages[2].content
     assert compacted.messages[3].content.startswith("<compacted-conversation-summary>")
     assert "核心诉求:" in compacted.messages[3].content
     assert "已完成操作:" in compacted.messages[3].content

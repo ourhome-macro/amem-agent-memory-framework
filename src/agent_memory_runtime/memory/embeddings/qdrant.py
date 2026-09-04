@@ -23,6 +23,7 @@ _KEYWORD_PAYLOAD_INDEX_FIELDS = (
     "memory_status",
     "memory_type",
     "visibility",
+    "temperature",
     "tags",
     "acl_principals",
 )
@@ -245,6 +246,7 @@ def _query_filter(query: MemoryQuery, *, generation: str) -> dict[str, object]:
         ("level", query.levels),
         ("memory_status", query.statuses),
         ("visibility", query.visibilities),
+        ("temperature", query.temperatures),
     ):
         if values:
             must.append(_any(key, values))
@@ -265,6 +267,7 @@ def qdrant_payload_for_memory(
     status: str,
     memory_type: str,
     visibility: str,
+    temperature: str,
     priority: float,
     tags: tuple[str, ...],
     acl_principals: tuple[str, ...],
@@ -278,6 +281,7 @@ def qdrant_payload_for_memory(
         "memory_status": status,
         "memory_type": memory_type,
         "visibility": visibility,
+        "temperature": temperature,
         "priority": priority,
         "tags": list(tags),
         "acl_principals": list(acl_principals),
@@ -294,6 +298,7 @@ def qdrant_payload_from_memory(record: MemoryRecord) -> dict[str, object]:
         status=record.status,
         memory_type=record.memory_type,
         visibility=record.visibility,
+        temperature=record.temperature,
         priority=record.priority,
         tags=tuple(record.tags),
         acl_principals=_acl_principals(record),

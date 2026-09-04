@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from agent_memory_runtime.domain.enums import MemoryLabel, MemoryLevel, MemoryStatus
+from agent_memory_runtime.domain.enums import (
+    MemoryLabel,
+    MemoryLevel,
+    MemoryStatus,
+    MemoryTemperature,
+)
 from agent_memory_runtime.domain.memory import MemoryRecord
 from agent_memory_runtime.governance.retention.policy import (
     RetentionAction,
@@ -36,6 +41,15 @@ class RetentionPlanner:
                         reason="working_memory_retention_expired",
                     )
                 )
+                continue
+            if self._should_cool_hot(record, age):
+                actions.append(
+                    RetentionAction(
+                        memory_id=record.memory_id,
+                        action="mark_warm",
+                        reason="hot_memory_queue_expired",
+                    )
+                )
         return RetentionPlan(actions=tuple(actions), current_sequence=current_sequence)
 
     def _should_delete_sensitive(self, record: MemoryRecord, age: int) -> bool:
@@ -53,3 +67,11 @@ class RetentionPlanner:
             return False
         salience_limit = self.policy.archive_below_salience
         return salience_limit is None or record.salience <= salience_limit
+
+    def _should_cool_hot(self, record: MemoryRecord, age: int) -> bool:
+        limit = self.policy.cool_hot_after_sequences
+        return (
+            limit is not None
+            and record.temperature == MemoryTemperature.HOT.value
+            and age >= limit
+        )

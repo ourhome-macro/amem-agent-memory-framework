@@ -5,11 +5,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class RetentionPolicy:
+    cool_hot_after_sequences: int | None = 5
     archive_working_after_sequences: int = 30
     archive_below_salience: float | None = None
     delete_sensitive_after_sequences: int | None = None
 
     def __post_init__(self) -> None:
+        if self.cool_hot_after_sequences is not None and self.cool_hot_after_sequences < 0:
+            raise ValueError("cool_hot_after_sequences cannot be negative")
         if self.archive_working_after_sequences < 0:
             raise ValueError("archive_working_after_sequences cannot be negative")
         if (
@@ -46,7 +49,7 @@ class RetentionPlan:
             {
                 action.action
                 for action in self.actions
-                if action.action not in {"mark_archived", "delete"}
+                if action.action not in {"mark_warm", "mark_archived", "delete"}
             }
         )
         if unsupported:
@@ -57,3 +60,4 @@ class RetentionPlan:
 class RetentionReport:
     archived_memory_ids: tuple[str, ...]
     deleted_memory_ids: tuple[str, ...]
+    cooled_memory_ids: tuple[str, ...] = ()

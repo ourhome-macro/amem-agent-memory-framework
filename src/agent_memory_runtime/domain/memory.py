@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from agent_memory_runtime.domain.enums import (
@@ -8,6 +8,7 @@ from agent_memory_runtime.domain.enums import (
     MemoryLevel,
     MemoryOperation,
     MemoryStatus,
+    MemoryTemperature,
     MemoryType,
     MemoryVisibility,
 )
@@ -38,6 +39,7 @@ class MemoryCandidate:
     level: str = MemoryLevel.ATOM.value
     visibility: str = MemoryVisibility.PRIVATE.value
     priority: float = 0.5
+    temperature: str = MemoryTemperature.WARM.value
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +56,7 @@ class MemoryCandidate:
             "level": self.level,
             "visibility": self.visibility,
             "priority": self.priority,
+            "temperature": self.temperature,
             "operation": self.operation,
             "owner_id": self.owner_id,
             "visible_to": list(self.visible_to),
@@ -97,6 +100,7 @@ class MemoryRecord:
     level: str = MemoryLevel.ATOM.value
     visibility: str = MemoryVisibility.PRIVATE.value
     priority: float = 0.5
+    temperature: str = MemoryTemperature.WARM.value
 
     @classmethod
     def from_candidate(cls, candidate: MemoryCandidate, *, now: str, sequence: int) -> MemoryRecord:
@@ -114,6 +118,7 @@ class MemoryRecord:
             level=candidate.level,
             visibility=candidate.visibility,
             priority=_clamp(candidate.priority),
+            temperature=candidate.temperature,
             owner_id=candidate.owner_id,
             visible_to=tuple(candidate.visible_to),
             source_memory_ids=tuple(candidate.source_memory_ids),
@@ -136,6 +141,8 @@ class MemoryRecord:
         legacy_scope = str(value.get("scope", "private"))
         legacy_layer = str(value.get("layer", "working"))
         status = str(value.get("status", _status_from_legacy_layer(legacy_layer)))
+        level = str(value.get("level") or _level_from_legacy_layer(legacy_layer))
+        visibility = str(value.get("visibility") or _visibility_from_legacy_scope(legacy_scope))
         return cls(
             memory_id=str(value["memory_id"]),
             memory_type=str(value.get("memory_type", MemoryType.EPISODIC.value)),
@@ -166,9 +173,10 @@ class MemoryRecord:
             last_event_sequence=int(value.get("last_event_sequence", 0)),
             last_operation=str(value.get("last_operation", MemoryOperation.CREATE.value)),
             version=int(value.get("version", 1)),
-            level=str(value.get("level") or _level_from_legacy_layer(legacy_layer)),
-            visibility=str(value.get("visibility") or _visibility_from_legacy_scope(legacy_scope)),
+            level=level,
+            visibility=visibility,
             priority=_clamp(float(value.get("priority", value.get("salience", 0.5)))),
+            temperature=_temperature_from_value(value, status=status, level=level),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -186,6 +194,7 @@ class MemoryRecord:
             "level": self.level,
             "visibility": self.visibility,
             "priority": self.priority,
+            "temperature": self.temperature,
             "owner_id": self.owner_id,
             "visible_to": list(self.visible_to),
             "source_memory_ids": list(self.source_memory_ids),
@@ -232,3 +241,44 @@ def _status_from_legacy_layer(layer: str) -> str:
     if layer == "archival":
         return MemoryStatus.ARCHIVED.value
     return MemoryStatus.ACTIVE.value
+
+
+def _temperature_from_value(
+    value: dict[str, Any],
+    *,
+    status: str,
+    level: str,
+) -> str:
+    if status in {
+        MemoryStatus.ARCHIVED.value,
+        MemoryStatus.SUPERSEDED.value,
+        MemoryStatus.DELETED.value,
+    }:
+        return MemoryTemperature.COLD.value
+    explicit = str(value.get("temperature") or "")
+    if explicit in {item.value for item in MemoryTemperature}:
+        return explicit
+    return default_temperature(status=status, level=level)
+
+
+def default_temperature(*, status: str, level: str) -> str:
+    if status in {
+        MemoryStatus.ARCHIVED.value,
+        MemoryStatus.SUPERSEDED.value,
+        MemoryStatus.DELETED.value,
+    }:
+        return MemoryTemperature.COLD.value
+    if level == MemoryLevel.RAW.value:
+        return MemoryTemperature.HOT.value
+    return MemoryTemperature.WARM.value
+
+
+def normalize_record_temperature(record: MemoryRecord) -> MemoryRecord:
+    temperature = _temperature_from_value(
+        {"temperature": record.temperature},
+        status=record.status,
+        level=record.level,
+    )
+    if temperature == record.temperature:
+        return record
+    return replace(record, temperature=temperature)

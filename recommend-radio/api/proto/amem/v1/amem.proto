@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package amem.v1;
+
+option go_package = "recommend-radio/backend-go/internal/amem/gen/amemv1;amemv1";
+
+service AmemService {
+  rpc RecordBehavior(RecordBehaviorRequest) returns (RecordBehaviorResponse);
+  rpc RecordProfileStatement(RecordProfileStatementRequest) returns (RecordProfileStatementResponse);
+  rpc GetMusicProfile(GetMusicProfileRequest) returns (MusicProfileResponse);
+  rpc ExplainRecommendation(ExplainRecommendationRequest) returns (ExplainRecommendationResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message RecordBehaviorRequest {
+  string event_id = 1;
+  string user_id = 2;
+  string event = 3;
+  string scene = 4;
+  string track_id = 5;
+  bytes payload_json = 6;
+}
+
+message RecordBehaviorResponse {
+  bool accepted = 1;
+  string amem_event_id = 2;
+  repeated string memory_ids = 3;
+}
+
+message RecordProfileStatementRequest {
+  string user_id = 1;
+  string scene = 2;
+  string description = 3;
+  bytes profile_json = 4;
+  string source = 5;
+}
+
+message RecordProfileStatementResponse {
+  bool accepted = 1;
+  string amem_event_id = 2;
+  repeated string memory_ids = 3;
+}
+
+message GetMusicProfileRequest {
+  string user_id = 1;
+  string scene = 2;
+  string trace_id = 3;
+}
+
+message MusicProfileResponse {
+  map<string, double> positive_topics = 1;
+  map<string, double> negative_topics = 2;
+  map<string, double> preferred_uploaders = 3;
+  map<string, double> avoid_uploaders = 4;
+  map<string, double> blocked_uploaders = 5;
+  map<string, double> mood_weights = 6;
+  repeated string recent_intents = 7;
+  int32 same_uploader_limit = 8;
+  double exploration_ratio = 9;
+  repeated string evidence_memory_ids = 10;
+  double confidence = 11;
+  string source = 12;
+  repeated string positive_interest_texts = 13;
+  repeated string negative_interest_texts = 14;
+  double profile_llm_api_ms = 15;
+  double profile_retrieval_ms = 16;
+  double profile_total_ms = 17;
+}
+
+message ExplainRecommendationRequest {
+  string user_id = 1;
+  string scene = 2;
+  repeated string candidate_track_ids = 3;
+  string trace_id = 4;
+}
+
+message ExplainRecommendationResponse {
+  string trace_id = 1;
+  map<string, string> reasons = 2;
+  repeated string evidence_memory_ids = 3;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+}

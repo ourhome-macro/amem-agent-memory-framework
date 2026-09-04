@@ -31,6 +31,7 @@ class RetentionWorkerReport:
     cycles: int
     archived: int
     deleted: int
+    cooled: int
     last_cycle: RetentionCycle | None = None
 
 
@@ -80,12 +81,14 @@ class RetentionWorker:
         cycle_count = 0
         archived = 0
         deleted = 0
+        cooled = 0
         last_cycle: RetentionCycle | None = None
         while not stop_event.is_set():
             last_cycle = self.run_once()
             cycle_count += 1
             archived += len(last_cycle.report.archived_memory_ids)
             deleted += len(last_cycle.report.deleted_memory_ids)
+            cooled += len(last_cycle.report.cooled_memory_ids)
             if on_cycle is not None:
                 on_cycle(last_cycle)
             if max_cycles is not None and cycle_count >= max_cycles:
@@ -95,5 +98,6 @@ class RetentionWorker:
             cycles=cycle_count,
             archived=archived,
             deleted=deleted,
+            cooled=cooled,
             last_cycle=last_cycle,
         )

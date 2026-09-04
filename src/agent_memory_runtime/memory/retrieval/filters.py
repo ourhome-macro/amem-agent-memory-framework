@@ -32,6 +32,8 @@ def hard_filter(record: MemoryRecord, query: MemoryQuery) -> bool:
         return False
     if query.visibilities and record.visibility not in set(query.visibilities):
         return False
+    if query.temperatures and record.temperature not in set(query.temperatures):
+        return False
     if query.tags and not set(query.tags) & set(record.tags):
         return False
     return True

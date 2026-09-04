@@ -4,7 +4,7 @@
 
 ## 模块职责
 
-- `MemoryRecord`：权威记忆项，包含 type、level、status、visibility、priority、ownership、confidence、version 和 source metadata。
+- `MemoryRecord`：权威记忆项，包含 type、level、status、visibility、temperature、priority、ownership、confidence、version 和 source metadata。
 - `MemoryAuditLog`：有序写入历史，保存 before/after record 和证据。
 - `MemoryTombstone`：删除水位，供读取路径和审计重放恢复使用。
 - `RuntimeSnapshot`：状态摘要，用于 trace 和快速响应 metadata。
@@ -19,6 +19,8 @@
 - `L3`：画像记忆，profile-aware 上下文中直接加载。
 
 生命周期由 `status` 表达：`active`、`superseded`、`archived`、`deleted`。
+
+检索温度由 `temperature` 表达：`hot`、`warm`、`cold`。它控制召回频率、索引成本和上下文优先级，不改变记忆的认知类别。
 
 ## 事实源
 

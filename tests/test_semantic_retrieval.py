@@ -21,6 +21,8 @@ from agent_memory_runtime.governance.retention import (
     RetentionAction,
     RetentionExecutor,
     RetentionPlan,
+    RetentionPlanner,
+    RetentionPolicy,
 )
 from agent_memory_runtime.memory.embeddings import (
     CallableEmbeddingProvider,
@@ -33,7 +35,7 @@ from agent_memory_runtime.memory.embeddings import (
 from agent_memory_runtime.memory.embeddings.base import validate_vector
 from agent_memory_runtime.memory.retrieval import SemanticRetriever
 from agent_memory_runtime.memory.retrieval.contradiction import has_state_conflict
-from agent_memory_runtime.memory.retrieval.query_router import route_query
+from agent_memory_runtime.memory.retrieval.planner import normalize_query
 from agent_memory_runtime.memory.retrieval.scoring import score_record
 from agent_memory_runtime.memory.semantic_state import (
     extract_query_state_intent,
@@ -113,15 +115,6 @@ def test_vector_acl_filter_runs_before_semantic_top_k(tmp_path) -> None:
     runtime.close()
 
 
-def test_query_router_classifies_exact_state_and_vector_queries() -> None:
-    assert route_query(_query("INV-42 现在付款了吗")).mode == "state_aware"
-    assert route_query(_query("Kubernetes 告警找谁")).mode == "lexical_heavy"
-    assert route_query(_query("what protects memory writes from unsafe changes")).mode == (
-        "vector_heavy"
-    )
-    assert route_query(_query("火星基地根密钥在哪")).mode == "strict_no_answer"
-
-
 def test_default_sqlite_runtime_exposes_query_route_in_trace(tmp_path) -> None:
     provider = _provider(
         model="query-router-trace",
@@ -144,8 +137,166 @@ def test_default_sqlite_runtime_exposes_query_route_in_trace(tmp_path) -> None:
     selected, trace = runtime.retrieve(_query("what protects memory writes from unsafe changes"))
 
     assert [record.memory_id for record in selected] == ["policy"]
-    assert trace.query_route["mode"] == "vector_heavy"
-    assert trace.candidate_details["__query_route"]["mode"] == "vector_heavy"
+    assert trace.query_route["mode"] == "hybrid"
+    assert trace.query_route["execution"] == "hybrid"
+    assert trace.candidate_details["__query_route"]["mode"] == "hybrid"
+    runtime.close()
+
+
+def test_high_confidence_lexical_route_short_circuits_semantic(tmp_path) -> None:
+    provider = _provider(
+        model="lexical-short-circuit",
+        vectors={
+            "kubernetes": [1.0, 0.0, 0.0],
+            "semantic distractor": [1.0, 0.0, 0.0],
+        },
+    )
+    stores = _stores_with_provider(tmp_path / "lexical-short-circuit.sqlite", provider)
+    stores.memory_store.upsert(_record("owner", "Kubernetes 告警找 SRE on-call."))
+    stores.memory_store.upsert(_record("distractor", "Semantic distractor."))
+    stores.embedding_worker().run_until_idle()
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(
+            min_semantic_similarity=0.0,
+            allow_uncalibrated_semantic=True,
+        ),
+    )
+
+    selected, trace = runtime.retrieve(_query("Kubernetes 告警找谁"))
+
+    assert selected[0].memory_id == "owner"
+    assert trace.query_route["mode"] == "hybrid"
+    assert trace.query_route["execution"] == "hybrid"
+    assert trace.retrieval_legs == ("lexical", "semantic")
+    assert trace.semantic_candidate_count >= 1
+    runtime.close()
+
+
+def test_high_confidence_vector_route_short_circuits_lexical(tmp_path) -> None:
+    provider = _provider(
+        model="vector-short-circuit",
+        vectors={
+            "what protects memory writes from unsafe changes": [1.0, 0.0, 0.0],
+            "memorywritepolicy guards unsafe writes": [1.0, 0.0, 0.0],
+            "memory writes": [0.0, 1.0, 0.0],
+        },
+    )
+    stores = _stores_with_provider(tmp_path / "vector-short-circuit.sqlite", provider)
+    stores.memory_store.upsert(_record("policy", "MemoryWritePolicy guards unsafe writes."))
+    stores.memory_store.upsert(_record("lexical", "Memory writes appear in an unrelated note."))
+    stores.embedding_worker().run_until_idle()
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(
+            min_semantic_similarity=0.2,
+            allow_uncalibrated_semantic=True,
+        ),
+    )
+
+    selected, trace = runtime.retrieve(
+        _query("what protects memory writes from unsafe changes")
+    )
+
+    assert selected[0].memory_id == "policy"
+    assert trace.query_route["mode"] == "hybrid"
+    assert trace.query_route["execution"] == "hybrid"
+    assert trace.retrieval_legs == ("lexical", "semantic")
+    assert trace.lexical_candidate_count >= 1
+    assert trace.embedding_coverage == 1.0
+    runtime.close()
+
+
+def test_explicit_archived_status_recall_uses_hybrid_without_router(tmp_path) -> None:
+    provider = _provider(
+        model="routing-tool-plan",
+        vectors={
+            "decision": [1.0, 0.0, 0.0],
+            "archived decision": [1.0, 0.0, 0.0],
+        },
+    )
+    stores = _stores_with_provider(tmp_path / "routing-tool-plan.sqlite", provider)
+    stores.memory_store.upsert(
+        replace(
+            _record("archived", "Archived decision selected vector routing."),
+            status="archived",
+        )
+    )
+    stores.embedding_worker().run_until_idle()
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(
+            min_semantic_similarity=0.2,
+            allow_uncalibrated_semantic=True,
+        ),
+    )
+
+    selected, trace = runtime.retrieve(replace(_query("decision"), statuses=("archived",)))
+
+    assert [record.memory_id for record in selected] == ["archived"]
+    assert trace.query_route["mode"] == "hybrid"
+    assert trace.query_route["execution"] == "hybrid"
+    assert trace.query_route["memory_routing"]["tool_called"] is False
+    runtime.close()
+
+
+def test_temperature_defaults_skip_cold_until_history_recall(tmp_path) -> None:
+    stores = SQLiteStoreBundle(tmp_path / "temperature-recall.sqlite")
+    stores.memory_store.upsert(_record("warm", "Refund archive says manager approved."))
+    stores.memory_store.upsert(
+        replace(
+            _record("cold", "Refund archive says bank approved."),
+            temperature="cold",
+        )
+    )
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(enable_semantic=False),
+    )
+
+    selected, _trace = runtime.retrieve(replace(_query("refund archive"), limit=5))
+    history_selected, _history_trace = runtime.retrieve(
+        replace(_query("remember refund archive"), limit=5)
+    )
+
+    assert [record.memory_id for record in selected] == ["warm"]
+    assert normalize_query(_query("refund archive")).temperatures == ("hot", "warm")
+    assert {record.memory_id for record in history_selected} == {"warm", "cold"}
+    assert normalize_query(_query("remember refund archive")).temperatures == (
+        "hot",
+        "warm",
+        "cold",
+    )
+    assert normalize_query(_query("以前 refund archive")).temperatures == (
+        "hot",
+        "warm",
+        "cold",
+    )
+    runtime.close()
+
+
+def test_default_hybrid_retrieval_has_no_routing_tool(tmp_path) -> None:
+    provider = _provider(
+        model="routing-tool-skip",
+        vectors={"kubernetes": [1.0, 0.0, 0.0]},
+    )
+    stores = _stores_with_provider(tmp_path / "routing-tool-skip.sqlite", provider)
+    stores.memory_store.upsert(_record("owner", "Kubernetes 告警找 SRE on-call."))
+    stores.embedding_worker().run_until_idle()
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(
+            min_semantic_similarity=0.0,
+            allow_uncalibrated_semantic=True,
+        ),
+    )
+
+    selected, trace = runtime.retrieve(_query("Kubernetes 告警找谁"))
+
+    assert [record.memory_id for record in selected] == ["owner"]
+    assert trace.query_route["mode"] == "hybrid"
+    assert trace.query_route["execution"] == "hybrid"
+    assert trace.query_route["memory_routing"]["tool_called"] is False
     runtime.close()
 
 
@@ -528,6 +679,63 @@ def test_tombstone_replay_cannot_resurrect_memory_or_vector(tmp_path) -> None:
     runtime.close()
 
 
+def test_embedding_outbox_schedules_only_warm_memories(tmp_path) -> None:
+    provider = _provider(
+        model="warm-only-outbox",
+        vectors={
+            "warm atom": [1.0, 0.0, 0.0],
+            "hot atom": [0.0, 1.0, 0.0],
+            "cold atom": [0.0, 0.0, 1.0],
+        },
+    )
+    stores = _stores_with_provider(tmp_path / "warm-only-outbox.sqlite", provider)
+
+    stores.memory_store.upsert(_record("warm", "Warm atom."))
+    stores.memory_store.upsert(
+        replace(_record("hot", "Hot atom."), temperature="hot")
+    )
+    stores.memory_store.upsert(
+        replace(_record("cold", "Cold atom."), temperature="cold")
+    )
+
+    jobs = stores.embedding_jobs.list_jobs(generation=provider.spec.generation)
+    assert [job.memory_id for job in jobs] == ["warm"]
+
+
+def test_retention_cools_hot_memory_to_warm(tmp_path) -> None:
+    stores = SQLiteStoreBundle(tmp_path / "retention-cools-hot.sqlite")
+    runtime = _runtime(
+        stores,
+        hybrid=HybridRetrievalConfig(enable_semantic=False),
+    )
+    stores.memory_store.upsert(
+        replace(
+            _record("hot", "Recent raw event.", level="L0", sequence=1),
+            temperature="hot",
+        )
+    )
+    planner = RetentionPlanner(RetentionPolicy(cool_hot_after_sequences=5))
+    plan = planner.plan(stores.memory_store.list_records(), current_sequence=7)
+
+    assert [(action.memory_id, action.action) for action in plan.actions] == [
+        ("hot", "mark_warm")
+    ]
+
+    report = RetentionExecutor(
+        memory_store=stores.memory_store,
+        audit_store=stores.audit_store,
+        tombstone_store=stores.tombstone_store,
+        transaction_manager=stores,
+    ).apply(plan, snapshot=runtime.snapshot())
+
+    cooled = stores.memory_store.get("hot")
+    assert report.cooled_memory_ids == ("hot",)
+    assert cooled is not None
+    assert cooled.status == "active"
+    assert cooled.temperature == "warm"
+    runtime.close()
+
+
 def test_generation_activation_requires_coverage_and_drained_outbox(tmp_path) -> None:
     provider_a = _provider(model="generation-a", vectors={"stable": [1.0, 0.0, 0.0]})
     provider_b = _provider(model="generation-b", vectors={"stable": [0.0, 1.0, 0.0]})
@@ -721,6 +929,10 @@ def test_embedding_worker_batches_documents_and_canonical_text_is_minimal(tmp_pa
 def test_v5_database_migrates_and_backfills_fts_acl_projection(tmp_path) -> None:
     path = tmp_path / "migrate-v5.sqlite"
     record = _record("legacy-memory", "Legacy refund status.")
+    archived_record = replace(
+        _record("legacy-archived", "Legacy archived refund status."),
+        status="archived",
+    )
     with sqlite3.connect(path) as connection:
         connection.execute(
             """
@@ -753,17 +965,55 @@ def test_v5_database_migrates_and_backfills_fts_acl_projection(tmp_path) -> None
             """,
             (
                 record.memory_id,
-                json.dumps(record.to_dict(), sort_keys=True),
+                json.dumps(
+                    {
+                        **record.to_dict(),
+                        "layer": "working",
+                        "scope": "private",
+                    },
+                    sort_keys=True,
+                ),
                 record.tenant_id,
                 record.user_id,
                 record.agent_id,
                 record.session_id,
-                record.layer,
+                "working",
                 record.status,
                 record.memory_type,
-                record.scope,
+                "private",
                 record.updated_at,
                 record.salience,
+            ),
+        )
+        connection.execute(
+            """
+            INSERT INTO memories(
+                memory_id, payload, tenant_id, user_id, agent_id, session_id,
+                layer, status, memory_type, scope, updated_at, salience,
+                search_indexed
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            """,
+            (
+                archived_record.memory_id,
+                json.dumps(
+                    {
+                        **archived_record.to_dict(),
+                        "layer": "archival",
+                        "scope": "private",
+                        "temperature": "warm",
+                    },
+                    sort_keys=True,
+                ),
+                archived_record.tenant_id,
+                archived_record.user_id,
+                archived_record.agent_id,
+                archived_record.session_id,
+                "archival",
+                archived_record.status,
+                archived_record.memory_type,
+                "private",
+                archived_record.updated_at,
+                archived_record.salience,
             ),
         )
 
@@ -776,11 +1026,19 @@ def test_v5_database_migrates_and_backfills_fts_acl_projection(tmp_path) -> None
         acl_count = connection.execute(
             "SELECT COUNT(*) FROM memory_acl WHERE memory_id = 'legacy-memory'"
         ).fetchone()[0]
+        temperature = connection.execute(
+            "SELECT temperature FROM memories WHERE memory_id = 'legacy-memory'"
+        ).fetchone()[0]
+        archived_temperature = connection.execute(
+            "SELECT temperature FROM memories WHERE memory_id = 'legacy-archived'"
+        ).fetchone()[0]
 
-    assert stores.schema_version == 7
+    assert stores.schema_version == 10
     assert [item.memory_id for item in selected] == ["legacy-memory"]
     assert fts_count == 1
     assert acl_count == 1
+    assert temperature == "warm"
+    assert archived_temperature == "cold"
 
 
 def test_embedding_environment_requires_dimensions_and_online_threshold(monkeypatch) -> None:
@@ -854,7 +1112,7 @@ def _runtime(
 ) -> AgentMemoryRuntime:
     return AgentMemoryRuntime(
         config=RuntimeConfig(
-            hybrid_retrieval=hybrid or HybridRetrievalConfig(min_semantic_similarity=0.2)
+            hybrid_retrieval=hybrid or HybridRetrievalConfig(min_semantic_similarity=0.2),
         ),
         event_store=stores.event_store,
         memory_store=stores.memory_store,
@@ -870,13 +1128,12 @@ def _record(
     content: str,
     *,
     agent_id: str = "assistant",
+    level: str = "L1",
     sequence: int = 1,
 ) -> MemoryRecord:
     return MemoryRecord(
         memory_id=memory_id,
         memory_type="belief",
-        scope="private",
-        layer="working",
         session_id="s1",
         subject_id="user-1",
         content=content,
@@ -890,6 +1147,9 @@ def _record(
         created_at="2026-07-22T00:00:00+00:00",
         updated_at="2026-07-22T00:00:00+00:00",
         last_event_sequence=sequence,
+        level=level,
+        visibility="private",
+        priority=0.5,
     )
 
 

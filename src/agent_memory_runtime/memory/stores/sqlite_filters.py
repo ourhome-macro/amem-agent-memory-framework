@@ -35,6 +35,7 @@ def structured_memory_where(
     _append_in_filter(where, parameters, f"{alias}.memory_type", query.memory_types)
     _append_in_filter(where, parameters, f"{alias}.level", query.levels)
     _append_in_filter(where, parameters, f"{alias}.visibility", query.visibilities)
+    _append_in_filter(where, parameters, f"{alias}.temperature", query.temperatures)
     if query.tags:
         placeholders = ", ".join("?" for _ in query.tags)
         where.append(

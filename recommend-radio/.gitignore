@@ -1,0 +1,28 @@
+node_modules
+
+# 打包输出目录，这个不需要提交，每次构建都会新生成
+dist
+
+# 系统垃圾文件
+.DS_Store
+Thumbs.db
+
+# 编辑器配置
+.vscode
+.idea
+
+# 日志文件
+*.log
+npm-debug.log
+.env
+!.env.example
+
+# Python generated files
+__pycache__/
+*.pyc
+
+# Local backend runtime data
+backend/data/
+server-data/
+agent/
+*tar*
