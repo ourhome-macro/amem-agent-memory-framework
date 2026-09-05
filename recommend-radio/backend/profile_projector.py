@@ -9,7 +9,7 @@ from typing import Any
 
 from amem_bridge import _ensure_amem_import_path
 from env_loader import load_recommend_radio_env
-from music_profile import MusicProfile, RelevantMemory
+from music_profile import MusicProfile, RelevantMemory, overlay_profile_snapshot
 
 load_recommend_radio_env()
 
@@ -184,7 +184,9 @@ class ProfileProjector:
         trace_id = f"profile:{user_id}:{scene}:{int(time.time())}"
         if not self.enabled:
             projection = ProfileProjection(
-                profile=self._fallback_with_memories(fallback_profile, memories),
+                profile=overlay_profile_snapshot(
+                    self._fallback_with_memories(fallback_profile, memories), fallback_profile
+                ),
                 memories=memories,
                 trace_id=trace_id,
             )
@@ -196,6 +198,7 @@ class ProfileProjector:
             profile = self._project_with_llm(memories, scene=scene, fallback_profile=fallback_profile)
         except Exception:
             profile = self._fallback_with_memories(fallback_profile, memories)
+        profile = overlay_profile_snapshot(profile, fallback_profile)
 
         projection = ProfileProjection(profile=profile, memories=memories, trace_id=trace_id, llm_latency_ms=self._last_llm_latency_ms)
         self._cache[cache_key] = (time.time(), projection)
@@ -211,6 +214,8 @@ class ProfileProjector:
         client = self.llm_client or _default_llm_client()
         system_prompt = (
             "Extract a music recommendation profile from memories. "
+            "Infer a best-effort tentative MBTI, current music phase, core traits and psychological needs from explicit "
+            "profile statements and aggregated listening behavior. Keep confidence conservative. "
             "Return exactly one JSON object. No markdown, no code, no explanation. "
             "Use real values from memory text as map keys. "
             "positive preference -> positive_topics; skipped/negative -> negative_topics; "
@@ -222,6 +227,13 @@ class ProfileProjector:
                 "output_schema": {
                     "positive_topics": {"actual_extracted_topic_name": 0.0},
                     "negative_topics": {"actual_extracted_topic_name": 0.0},
+                    "mbti": "best-effort four-letter tentative MBTI when evidence exists",
+                    "music_persona": "music personality narrative",
+                    "current_music_phase": "recent listening phase",
+                    "core_traits": ["trait"],
+                    "psychological_needs": ["need"],
+                    "persona_evidence": ["memory-backed evidence"],
+                    "persona_confidence": 0.0,
                     "preferred_uploaders": {"actual_uploader_mid_or_name": 0.0},
                     "avoid_uploaders": {"actual_uploader_mid_or_name": 0.0},
                     "blocked_uploaders": {"actual_uploader_mid_or_name": 0.0},
@@ -305,6 +317,21 @@ class ProfileProjector:
                 if intent and intent not in profile.recent_intents:
                     profile.recent_intents.append(intent[:120])
                     continue
+            if signal == "profile_statement_persona":
+                profile.mbti = str(metadata.get("mbti") or profile.mbti)[:8]
+                profile.music_persona = str(metadata.get("musicPersona") or profile.music_persona)[:500]
+                profile.current_music_phase = str(
+                    metadata.get("currentMusicPhase") or profile.current_music_phase
+                )[:300]
+                profile.core_traits = [str(item)[:120] for item in metadata.get("coreTraits") or []][:8]
+                profile.psychological_needs = [
+                    str(item)[:120] for item in metadata.get("psychologicalNeeds") or []
+                ][:8]
+                profile.persona_confidence = max(
+                    profile.persona_confidence,
+                    float(metadata.get("personaConfidence") or 0.0),
+                )
+                continue
 
             content = memory.content.casefold()
             topic = _mood_from_content(memory.content) if "mood" in content else _topic_from_content(memory.content)
@@ -423,6 +450,11 @@ def _profile_has_signals(profile: MusicProfile) -> bool:
             profile.blocked_uploaders,
             profile.mood_weights,
             profile.recent_intents,
+            profile.mbti,
+            profile.music_persona,
+            profile.current_music_phase,
+            profile.core_traits,
+            profile.psychological_needs,
             profile.confidence > 0,
         ]
     )

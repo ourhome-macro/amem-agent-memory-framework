@@ -1,0 +1,14 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY dist ./dist
+COPY docker_static_proxy.py .
+
+ENV BACKEND_URL=http://backend:5000
+ENV STATIC_ROOT=/app/dist
+ENV PORT=3000
+
+EXPOSE 3000
+
+CMD ["python", "docker_static_proxy.py"]

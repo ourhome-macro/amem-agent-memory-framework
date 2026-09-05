@@ -190,6 +190,7 @@ class MusicDialogueService:
         *,
         session_id: str | None = None,
         context_card_id: str | None = None,
+        context_track_id: str | None = None,
     ) -> dict[str, Any]:
         normalized = _normalize_message(message)
         if not normalized:
@@ -202,6 +203,8 @@ class MusicDialogueService:
             context_card = self._load_card(conn, context_card_id) if context_card_id else None
             if context_card_id and context_card is None:
                 raise KeyError(context_card_id)
+            if context_card is not None and context_track_id:
+                context_card = _context_card_with_track(context_card, context_track_id)
 
             payload = {}
             if context_card is not None:
@@ -225,6 +228,29 @@ class MusicDialogueService:
         self.conversation_memory.refresh_warm(session_id=resolved_session_id, topic=warm_topic)
         if route.signal is not None:
             self._record_conversation_signal(resolved_session_id, normalized, route.signal)
+            referenced_track_id = (
+                str(context_card.get("track_id") or "")
+                if isinstance(context_card, dict)
+                else ""
+            )
+            if referenced_track_id and (
+                _has_positive_preference_intent(normalized)
+                or _has_negative_preference_intent(normalized)
+            ):
+                try:
+                    self.recommendation_service.record_events(
+                        [
+                            {
+                                "trackId": referenced_track_id,
+                                "event": "liked" if route.signal.polarity == "positive" else "dislike",
+                                "scene": "conversation",
+                                "source": "quoted_recommendation_dialogue",
+                                "reason": normalized,
+                            }
+                        ]
+                    )
+                except Exception:
+                    pass
 
         if route.tool == "direct_chat":
             assistant_text = _direct_chat_reply(normalized)
@@ -410,9 +436,17 @@ class MusicDialogueService:
                 scene="conversation",
                 request_spec=request_spec,
             )
-            discovery_result = self._bootstrap_discovery(request_spec)
-            discovery_job_id = discovery_result.get("traceId") or self._schedule_discovery(request_spec)
             recommendations = self._safe_recommendations(request_spec)
+            discovery_job_id = (
+                self._schedule_discovery(request_spec)
+                if len(recommendations) < RECOMMENDATION_CARD_LIMIT
+                else None
+            )
+            discovery_result = {
+                "status": "queued" if discovery_job_id else "not_needed",
+                "jobId": discovery_job_id,
+                "initialCount": len(recommendations),
+            }
             title_topic = (
                 signal.topic
                 if signal
@@ -444,6 +478,7 @@ class MusicDialogueService:
                         "requestSpec": request_spec.to_dict(),
                         "sceneMemoryId": scene_memory_id,
                         "discoveryJobId": discovery_job_id,
+                        "discoveryStatus": "queued" if discovery_job_id else "completed",
                         "discovery": discovery_result,
                         "note": "按本轮请求范围和长期听歌记录推荐",
                     },
@@ -705,6 +740,39 @@ class MusicDialogueService:
             result["eventId"] = write_result.get("eventId")
             result["analysis"] = write_result.get("analysis")
         return result
+
+    def refresh_recommendation_card(self, card_id: str) -> dict[str, Any]:
+        with get_connection(self.db_path) as conn:
+            card = self._load_card(conn, card_id)
+            if card is None or card["kind"] != "recommendation_carousel":
+                raise KeyError(card_id)
+            payload = _json_loads(card["payload_json"])
+            job_id = str(payload.get("discoveryJobId") or "")
+            if job_id:
+                status = self.recommendation_service.discovery_status(job_id)
+                job_status = str(status.get("status") or "")
+                if status.get("available") and job_status not in {"completed", "failed"}:
+                    payload["discoveryStatus"] = job_status or "queued"
+                    self._update_card(conn, card_id, status=card["status"], payload=payload)
+                    session = self._load_session(conn, card["session_id"])
+                    return self._serialize_session(conn, session)
+                if not status.get("available") or job_status == "failed":
+                    payload["discoveryStatus"] = "failed"
+                    payload["error"] = status.get("error") or "discovery job unavailable"
+                    self._update_card(conn, card_id, status=card["status"], payload=payload)
+                    session = self._load_session(conn, card["session_id"])
+                    return self._serialize_session(conn, session)
+            spec = RequestSpec.from_dict(payload.get("requestSpec") or {})
+            existing = payload.get("recommendations") if isinstance(payload.get("recommendations"), list) else []
+            payload["recommendations"] = _merge_recommendations(
+                existing,
+                self._safe_recommendations(spec),
+                limit=RECOMMENDATION_CARD_LIMIT,
+            )
+            payload["discoveryStatus"] = "completed"
+            self._update_card(conn, card_id, status=card["status"], payload=payload)
+            session = self._load_session(conn, card["session_id"])
+            return self._serialize_session(conn, session)
 
     def _save_checkpoint(self, conn: Any, session_id: str, *, reason: str) -> None:
         session = self._load_session(conn, session_id)
@@ -1533,6 +1601,7 @@ def _serialize_card(row: Any) -> dict[str, Any]:
         "requestSpec": payload.get("requestSpec") or {},
         "sceneMemoryId": payload.get("sceneMemoryId"),
         "discoveryJobId": payload.get("discoveryJobId"),
+        "discoveryStatus": payload.get("discoveryStatus"),
         "recommendations": payload.get("recommendations") or [],
         "tracks": payload.get("tracks") or [],
     }
@@ -1554,7 +1623,50 @@ def _card_context(card: Any) -> dict[str, Any]:
         "sourceText": card["source_text"] or card["statement"],
         "topic": card["topic"],
         "polarity": card["polarity"],
+        "trackId": card.get("track_id") if isinstance(card, dict) else None,
     }
+
+
+def _context_card_with_track(card: Any, track_id: str) -> dict[str, Any]:
+    payload = _json_loads(card["payload_json"])
+    for item in payload.get("recommendations") or []:
+        track = item.get("track") if isinstance(item, dict) else None
+        if isinstance(track, dict) and str(track.get("trackId") or "") == track_id:
+            title = str(track.get("title") or "这首歌")
+            owner = str(track.get("owner") or "")
+            return {
+                "card_id": card["card_id"],
+                "kind": card["kind"],
+                "statement": f"用户正在引用《{title}》{f'（{owner}）' if owner else ''}并讨论这首歌。",
+                "source_text": title,
+                "topic": title,
+                "polarity": "neutral",
+                "track_id": track_id,
+                "payload_json": card["payload_json"],
+            }
+    return dict(card)
+
+
+def _merge_recommendations(
+    existing: list[dict[str, Any]],
+    discovered: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in [*existing, *discovered]:
+        if not isinstance(item, dict):
+            continue
+        track = item.get("track") if isinstance(item.get("track"), dict) else {}
+        track_id = str(track.get("trackId") or track.get("bvid") or "")
+        if not track_id or track_id in seen:
+            continue
+        seen.add(track_id)
+        merged.append(item)
+        if len(merged) >= limit:
+            break
+    return merged
 
 
 def _route_payload(route: DialogueRoute, *, reply_engine: str | None = None) -> dict[str, Any]:
@@ -2047,6 +2159,29 @@ def _extract_signal(message: str, context_card: Any | None) -> ExtractedSignal |
         return None
 
     topic = _topic_from_text(text)
+    context_topic = ""
+    if context_card is not None:
+        context_topic = str(context_card["topic"] or context_card["source_text"] or "").strip()
+    if _has_negative_preference_intent(text) and context_topic:
+        return ExtractedSignal(
+            polarity="negative",
+            topic=context_topic,
+            statement=f"用户对引用歌曲 {context_topic} 给出负面反馈；原话：{text}",
+            confidence=0.88,
+            kind="recent_preference",
+            commit_policy="shadow",
+        )
+
+    if _has_positive_preference_intent(text) and context_topic:
+        return ExtractedSignal(
+            polarity="positive",
+            topic=context_topic,
+            statement=f"用户对引用歌曲 {context_topic} 给出正面反馈；原话：{text}",
+            confidence=0.88,
+            kind="recent_preference",
+            commit_policy="shadow",
+        )
+
     if _has_negative_preference_intent(text) and topic:
         return ExtractedSignal(
             polarity="negative",
@@ -2454,6 +2589,12 @@ def _compact_profile_for_chat(analysis: dict[str, Any]) -> dict[str, Any]:
         "negative_topics": _top_score_items(profile.get("negative_topics"), limit=5),
         "moods": _top_score_items(profile.get("mood_weights"), limit=5),
         "recent_intents": [str(item)[:60] for item in profile.get("recent_intents") or []][:5],
+        "mbti": str(profile.get("mbti") or "")[:8],
+        "music_persona": str(profile.get("music_persona") or "")[:300],
+        "current_music_phase": str(profile.get("current_music_phase") or "")[:180],
+        "core_traits": [str(item)[:60] for item in profile.get("core_traits") or []][:6],
+        "psychological_needs": [str(item)[:80] for item in profile.get("psychological_needs") or []][:6],
+        "persona_confidence": profile.get("persona_confidence"),
         "source": str(profile.get("source") or ""),
         "confidence": profile.get("confidence"),
         "summary": {

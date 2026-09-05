@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import re
 import sys
 from dataclasses import dataclass, replace
@@ -14,6 +15,7 @@ from models import Track
 
 
 AGENT_ID = "recommend-radio"
+LOGGER = logging.getLogger("recommend-radio.amem-bridge")
 TENANT_ID = "recommend-radio"
 PROFILE_SESSION_ID = "music-profile"
 MUSIC_TAGS = ("music", "recommend-radio")
@@ -115,6 +117,15 @@ class NoopAmemBridge:
     ) -> dict[str, Any]:
         return {"enabled": False, "eventId": None, "memoryIds": []}
 
+    def demote_music_profile(
+        self,
+        *,
+        user_id: str,
+        profile: Any,
+        reasons: dict[str, str],
+    ) -> dict[str, Any]:
+        return {"enabled": False, "eventId": None, "memoryIds": []}
+
     def retrieve_memories(self, user_id: str, scene: str, *, limit: int = 12) -> list[RelevantMemory]:
         return []
 
@@ -131,6 +142,7 @@ class AmemBridge:
     def __init__(self, db_path: str | Path | None = None) -> None:
         _ensure_amem_import_path()
         from agent_memory_runtime.config import RuntimeConfig
+        from agent_memory_runtime.exceptions import StoreError
         from agent_memory_runtime.memory.embeddings.environment import load_embedding_environment
         from agent_memory_runtime.memory.intake import MemoryIntakeService
         from agent_memory_runtime.memory.stores import SQLiteStoreBundle
@@ -139,7 +151,27 @@ class AmemBridge:
         path = Path(db_path or _default_amem_db_path()).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
         embedding_env = load_embedding_environment(required_provider=False, require_online_threshold=False)
-        bundle = SQLiteStoreBundle(path, embedding_provider=embedding_env.provider)
+        try:
+            bundle = SQLiteStoreBundle(path, embedding_provider=embedding_env.provider)
+        except StoreError as exc:
+            if embedding_env.provider is None or "embedding generation" not in str(exc):
+                raise
+            LOGGER.info("Bootstrapping AMEM embedding generation %s", embedding_env.provider.spec.generation)
+            bootstrap = SQLiteStoreBundle(path)
+            bootstrap.embedding_generations.register(embedding_env.provider.spec, status="backfill")
+            bootstrap.enqueue_embedding_backfill()
+            report = bootstrap.embedding_worker(embedding_env.provider).run_until_idle()
+            coverage = bootstrap.vector_index.coverage(generation=embedding_env.provider.spec.generation)
+            if report.failed or report.dead_lettered or coverage < 1.0:
+                raise StoreError(
+                    "embedding backfill failed: "
+                    f"coverage={coverage:.4f}, failed={report.failed}, dead_lettered={report.dead_lettered}"
+                ) from exc
+            bootstrap.activate_embedding_generation(
+                embedding_env.provider.spec.generation,
+                minimum_coverage=1.0,
+            )
+            bundle = SQLiteStoreBundle(path, embedding_provider=embedding_env.provider)
         runtime_config = RuntimeConfig()
         if embedding_env.min_similarity is not None:
             runtime_config = replace(
@@ -159,10 +191,21 @@ class AmemBridge:
             transaction_manager=bundle,
         )
         self.db_path = path
+        self.store_bundle = bundle
+        self.embedding_worker = (
+            bundle.embedding_worker(embedding_env.provider)
+            if embedding_env.provider is not None
+            else None
+        )
         self.handle = AmemRuntimeHandle(
             runtime=runtime,
             intake=MemoryIntakeService(runtime),
         )
+
+    def process_embedding_jobs(self, *, max_jobs: int = 64) -> Any | None:
+        if self.embedding_worker is None:
+            return None
+        return self.embedding_worker.run_until_idle(max_jobs=max(max_jobs, 1))
 
     @classmethod
     def from_env(cls) -> "AmemBridge | NoopAmemBridge":
@@ -254,6 +297,85 @@ class AmemBridge:
                 if memory_id:
                     memory_ids.append(memory_id)
         return {"enabled": True, "eventId": stored.event_id, "memoryIds": memory_ids}
+
+    def demote_music_profile(
+        self,
+        *,
+        user_id: str,
+        profile: Any,
+        reasons: dict[str, str],
+    ) -> dict[str, Any]:
+        """Supersede active L3 memories invalidated by reverse evidence or time decay."""
+        from agent_memory_runtime.memory.intake.models import MemoryToolIdentity
+
+        stored = self._record_event(
+            "profile_demoted",
+            user_id=user_id,
+            session_id=PROFILE_SESSION_ID,
+            payload={
+                "event": "profile_demoted",
+                "profile": profile.to_dict() if hasattr(profile, "to_dict") else profile,
+                "reasons": reasons,
+            },
+        )
+        targets = {
+            (polarity, str(topic).strip())
+            for polarity, topics in (
+                ("positive", getattr(profile, "positive_topics", {})),
+                ("negative", getattr(profile, "negative_topics", {})),
+            )
+            for topic in topics
+            if str(topic).strip()
+        }
+        if not targets:
+            return {"enabled": True, "eventId": stored.event_id, "memoryIds": []}
+        identity = MemoryToolIdentity(
+            actor_id=user_id,
+            agent_id=AGENT_ID,
+            session_id=PROFILE_SESSION_ID,
+            tenant_id=TENANT_ID,
+            user_id=user_id,
+            labels=("private",),
+            tags=MUSIC_TAGS,
+        )
+        demoted: list[str] = []
+        for record in self.handle.runtime.memory_store.list_records():
+            metadata = getattr(record, "metadata", {}) or {}
+            signal = str(metadata.get("signal") or "")
+            polarity = (
+                "positive"
+                if signal == "profile_l3_positive_topic"
+                else "negative" if signal == "profile_l3_negative_topic" else ""
+            )
+            topic = str(metadata.get("topic") or "").strip()
+            if (
+                (polarity, topic) not in targets
+                or getattr(record, "user_id", None) != user_id
+                or getattr(record, "status", "") != "active"
+            ):
+                continue
+            reason = reasons.get(f"{polarity}:{topic}") or "l3_evidence_invalidated"
+            result = self.handle.intake.revise_memory(
+                {
+                    "kind": "belief.stated",
+                    "operation": "supersede",
+                    "target_memory_id": record.memory_id,
+                    "key": str(metadata.get("key") or record.memory_id),
+                    "content": record.content,
+                    "layer": "core",
+                    "scope": "private",
+                    "confidence": record.confidence,
+                    "salience": record.salience,
+                    "source_memory_ids": [record.memory_id],
+                    "evidence_event_ids": [stored.event_id],
+                    "reason": reason,
+                },
+                identity=identity,
+                idempotency_key=f"demote:{record.memory_id}:{stored.event_id}",
+            )
+            if result.status == "succeeded":
+                demoted.append(record.memory_id)
+        return {"enabled": True, "eventId": stored.event_id, "memoryIds": demoted}
 
     def retrieve_memories(self, user_id: str, scene: str, *, limit: int = 12) -> list[RelevantMemory]:
         from agent_memory_runtime.domain.query import MemoryQuery
@@ -572,12 +694,48 @@ class AmemBridge:
             if memory_id:
                 memory_ids.append(memory_id)
 
+        persona_parts = []
+        if getattr(profile, "music_persona", ""):
+            persona_parts.append(f"music personality: {profile.music_persona}")
+        if getattr(profile, "mbti", ""):
+            persona_parts.append(f"tentative MBTI: {profile.mbti}")
+        if getattr(profile, "current_music_phase", ""):
+            persona_parts.append(f"current music phase: {profile.current_music_phase}")
+        if getattr(profile, "core_traits", None):
+            persona_parts.append("core traits: " + ", ".join(profile.core_traits))
+        if getattr(profile, "psychological_needs", None):
+            persona_parts.append("psychological needs: " + ", ".join(profile.psychological_needs))
+        if persona_parts:
+            persona_confidence = max(float(getattr(profile, "persona_confidence", 0.0) or 0.0), 0.55)
+            memory_id = self._save_memory(
+                user_id=user_id,
+                key="music:persona:current",
+                content="User inferred music persona (tentative): " + "; ".join(persona_parts),
+                event_kind="preference.updated",
+                layer="working",
+                source_event_id=source_event_id,
+                confidence=persona_confidence,
+                salience=max(persona_confidence, 0.65),
+                metadata={
+                    "signal": "profile_statement_persona",
+                    "mbti": str(getattr(profile, "mbti", ""))[:8],
+                    "musicPersona": str(getattr(profile, "music_persona", ""))[:500],
+                    "currentMusicPhase": str(getattr(profile, "current_music_phase", ""))[:300],
+                    "coreTraits": list(getattr(profile, "core_traits", []) or [])[:8],
+                    "psychologicalNeeds": list(getattr(profile, "psychological_needs", []) or [])[:8],
+                    "personaConfidence": persona_confidence,
+                    "source": source,
+                },
+            )
+            if memory_id:
+                memory_ids.append(memory_id)
+
         if description.strip():
             memory_id = self._save_memory(
                 user_id=user_id,
                 key=f"music:profile_statement:{source_event_id}",
                 content=f"User music profile statement: {description.strip()[:1000]}",
-                event_kind="observation.created",
+                event_kind="preference.updated",
                 layer="working",
                 source_event_id=source_event_id,
                 confidence=0.72,
@@ -668,7 +826,8 @@ class AmemBridge:
                 identity=identity,
                 idempotency_key=f"{key}:{source_event_id}:{uuid4()}",
             )
-        except Exception:
+        except Exception as exc:
+            LOGGER.warning("AMEM memory write failed for key %s: %s", key, exc)
             return None
         return result.memory_ids[0] if result.memory_ids else None
 

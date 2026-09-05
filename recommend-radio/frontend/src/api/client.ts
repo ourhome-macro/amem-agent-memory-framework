@@ -23,6 +23,7 @@ import type {
   ProfileStatementResult,
   RecommendationDebugTrace,
   RecommendationsResult,
+  RecommendationDiscoveryStatus,
   Track,
   TrackChapters,
   TrackComments,
@@ -554,6 +555,10 @@ export async function fetchRecommendations(scene = 'home', limit = 8): Promise<R
   return apiRequest<RecommendationsResult>(`/api/recommendations?${params.toString()}`)
 }
 
+export async function fetchRecommendationDiscovery(jobId: string): Promise<RecommendationDiscoveryStatus> {
+  return apiRequest<RecommendationDiscoveryStatus>(`/api/recommendations/discovery/${encodeURIComponent(jobId)}`)
+}
+
 export async function fetchMusicProfile(scene = 'home'): Promise<MusicProfileAnalysis> {
   const params = new URLSearchParams({ scene })
   return apiRequest<MusicProfileAnalysis>(`/api/profile/music?${params.toString()}`)
@@ -596,6 +601,7 @@ export async function sendAgentDialogueMessage(payload: {
   message: string
   sessionId?: string
   contextCardId?: string
+  contextTrackId?: string
 }): Promise<AgentDialogueResult> {
   return apiRequest<AgentDialogueResult>('/api/agent/dialogue/message', {
     method: 'POST',
@@ -620,6 +626,14 @@ export async function submitAgentDialogueCardFeedback(
   return apiRequest<AgentDialogueResult>(`/api/agent/dialogue/cards/${encodeURIComponent(cardId)}/feedback`, {
     method: 'POST',
     body: JSON.stringify({ action, reply }),
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+export async function refreshAgentDialogueRecommendationCard(cardId: string): Promise<AgentDialogueResult> {
+  return apiRequest<AgentDialogueResult>(`/api/agent/dialogue/cards/${encodeURIComponent(cardId)}/refresh`, {
+    method: 'POST',
+    body: JSON.stringify({}),
     headers: { 'Content-Type': 'application/json' },
   })
 }

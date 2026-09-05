@@ -983,11 +983,13 @@ def send_agent_dialogue_message():
     message = str(payload.get("message") or "")
     session_id = payload.get("sessionId")
     context_card_id = payload.get("contextCardId")
+    context_track_id = payload.get("contextTrackId")
     try:
         result = _dialogue_for_request().send_message(
             message,
             session_id=str(session_id) if session_id else None,
             context_card_id=str(context_card_id) if context_card_id else None,
+            context_track_id=str(context_track_id) if context_track_id else None,
         )
     except ValueError as exc:
         return Result.bad_request(str(exc))
@@ -1052,6 +1054,14 @@ def auth_qrcode_status():
     elif result.get('status') == 'expired':
         record_auth_event('bilibili_qr', 'expired')
     return Result.ok(result).json()
+
+
+@app.post("/api/agent/dialogue/cards/<path:card_id>/refresh")
+def refresh_agent_dialogue_recommendation_card(card_id: str):
+    try:
+        return Result.ok(_dialogue_for_request().refresh_recommendation_card(card_id)).json()
+    except KeyError:
+        return Result.not_found("dialogue card not found")
 
 
 @app.get("/api/auth/profile")

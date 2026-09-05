@@ -83,12 +83,21 @@
               {{ item.name }}
             </span>
           </div>
+          <div v-if="musicProfile?.profile.music_persona" class="persona-card">
+            <strong>{{ musicProfile.profile.mbti || '音乐人格' }}</strong>
+            <p>{{ musicProfile.profile.music_persona }}</p>
+            <small v-if="musicProfile.profile.current_music_phase">最近：{{ musicProfile.profile.current_music_phase }}</small>
+            <div class="signal-row">
+              <span v-for="trait in musicProfile.profile.core_traits ?? []" :key="`trait-${trait}`" class="signal-chip mood">{{ trait }}</span>
+              <span v-for="need in musicProfile.profile.psychological_needs ?? []" :key="`need-${need}`" class="signal-chip positive">{{ need }}</span>
+            </div>
+          </div>
           <form class="statement-form" @submit.prevent="saveProfileStatement">
             <textarea
               v-model="profileStatement"
               rows="4"
               maxlength="2000"
-              placeholder="直接说今天想怎么听：面试准备得很累，想安静一点；或者最近突然喜欢夜跑，想要轻律动。"
+              placeholder="只需描述你的音乐人格：喜欢的风格、舞台、旋律和听歌场景。MBTI、核心特质和心理需求会结合近期行为推断。"
             />
             <div class="statement-actions">
               <span>{{ statementStatus }}</span>
@@ -145,6 +154,7 @@ import { RouterLink } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import {
   fetchLatestRecommendationDebug,
+  fetchRecommendationDiscovery,
   fetchMusicProfile,
   fetchRecommendations,
   mediaUrl,
@@ -207,12 +217,31 @@ async function loadRecommendations() {
   try {
     const result = await fetchRecommendations('home', 8)
     recommendations.value = result.items
+    if (result.discoveryJobId && result.items.length < 8) {
+      statementStatus.value = '正在补充新的候选…'
+      const completed = await waitForDiscovery(result.discoveryJobId)
+      if (completed) {
+        const refreshed = await fetchRecommendations('home', 8)
+        recommendations.value = refreshed.items
+        statementStatus.value = ''
+      }
+    }
     await loadRecommendationInsights()
   } catch {
     recommendations.value = []
   } finally {
     recommendationLoading.value = false
   }
+}
+
+async function waitForDiscovery(jobId: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await new Promise(resolve => window.setTimeout(resolve, 1000))
+    const status = await fetchRecommendationDiscovery(jobId)
+    if (status.status === 'completed') return true
+    if (!status.available || status.status === 'failed') return false
+  }
+  return false
 }
 
 function playRecommendation(item: RecommendationItem) {

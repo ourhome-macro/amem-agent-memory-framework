@@ -392,6 +392,21 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
                 conn.execute('PRAGMA user_version = 17')
                 current_version = 17
 
+            if current_version < 18:
+                _ensure_profile_snapshot_table(conn)
+                conn.execute('PRAGMA user_version = 18')
+                current_version = 18
+
+            if current_version < 19:
+                _ensure_lifecycle_decay_column(conn)
+                conn.execute('PRAGMA user_version = 19')
+                current_version = 19
+
+            if current_version < 20:
+                _ensure_l3_demotion_outbox(conn)
+                conn.execute('PRAGMA user_version = 20')
+                current_version = 20
+
             _ensure_current_schema_columns(conn)
 
         _initialized_paths.add(path)
@@ -416,6 +431,9 @@ def _ensure_current_schema_columns(conn: sqlite3.Connection) -> None:
     _ensure_candidate_scope_columns(conn)
     _ensure_keyword_governance_tables(conn)
     _ensure_keyword_feedback_columns(conn)
+    _ensure_profile_snapshot_table(conn)
+    _ensure_lifecycle_decay_column(conn)
+    _ensure_l3_demotion_outbox(conn)
 
 
 def _ensure_recommendation_history_table(conn: sqlite3.Connection) -> None:
@@ -648,6 +666,46 @@ def _ensure_keyword_feedback_columns(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "discovery_keywords", "shown_count", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "discovery_keywords", "dismissed_count", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "discovery_keywords", "completed_count", "INTEGER NOT NULL DEFAULT 0")
+
+
+def _ensure_profile_snapshot_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS music_profile_snapshots (
+            user_id TEXT PRIMARY KEY,
+            profile_json TEXT NOT NULL,
+            source TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _ensure_lifecycle_decay_column(conn: sqlite3.Connection) -> None:
+    _add_column_if_missing(conn, "music_preference_lifecycle", "last_decay_at", "TEXT")
+
+
+def _ensure_l3_demotion_outbox(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS music_l3_demotion_outbox (
+            user_id TEXT NOT NULL,
+            polarity TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, polarity, topic),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_music_l3_demotion_pending
+            ON music_l3_demotion_outbox (user_id, status, updated_at);
+        """
+    )
 
 
 def _ensure_agent_dialogue_tables(conn: sqlite3.Connection) -> None:

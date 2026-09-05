@@ -325,6 +325,13 @@ export interface RecommendationItem {
 export interface MusicProfile {
   positive_topics: Record<string, number>
   negative_topics: Record<string, number>
+  mbti?: string
+  music_persona?: string
+  current_music_phase?: string
+  core_traits?: string[]
+  psychological_needs?: string[]
+  persona_evidence?: string[]
+  persona_confidence?: number
   preferred_uploaders: Record<string, number>
   avoid_uploaders: Record<string, number>
   blocked_uploaders: Record<string, number>
@@ -345,6 +352,16 @@ export interface RecommendationsResult {
   profileVersion?: string
   agentTraceId?: string
   debugTraceId?: string
+  discoveryJobId?: string | null
+  timing?: Record<string, unknown>
+}
+
+export interface RecommendationDiscoveryStatus {
+  jobId: string
+  available: boolean
+  status?: 'queued' | 'running' | 'completed' | 'failed'
+  result?: Record<string, unknown>
+  error?: string
 }
 
 export interface RelevantMemoryTrace {
@@ -402,6 +419,7 @@ export interface AgentDialogueContext {
   sourceText: string
   topic: string
   polarity: 'positive' | 'negative' | 'neutral'
+  trackId?: string
 }
 
 export interface AgentDialogueMessage {
@@ -433,6 +451,8 @@ export interface AgentDialogueCard {
   error?: string | null
   note?: string
   recommendations?: RecommendationItem[]
+  discoveryJobId?: string | null
+  discoveryStatus?: 'queued' | 'running' | 'completed' | 'failed' | null
   tracks?: Track[]
 }
 

@@ -10,6 +10,12 @@ from request_spec import RequestSpec
 
 DEFAULT_SEARCH_BUDGET = 3
 TAG_SEARCH_SUFFIX = "音乐"
+DEFAULT_FALLBACK_QUERIES = (
+    "欧美流行 英文 音乐",
+    "R&B 音乐",
+    "华语流行 音乐",
+    "摇滚音乐",
+)
 MOOD_QUERY_MODIFIERS = {
     "calm": ["calm", "chill", "治愈", "轻柔"],
     "chill": ["chill", "calm", "治愈", "轻柔"],
@@ -41,6 +47,7 @@ _GENRE_QUERY_LABELS = {"pop": "流行音乐", "rock": "摇滚音乐", "rap": "Ra
 @dataclass(frozen=True)
 class DiscoveryPlan:
     search_queries: list[str]
+    negative_queries: list[str]
     trace_id: str
     request_first: bool
 
@@ -59,9 +66,14 @@ class DiscoveryPlanner:
         }
         request_queries = self._request_queries(request_spec)
         profile_queries = self._profile_queries(profile, blocked_terms)
+        if not request_queries and not profile_queries:
+            profile_queries = [
+                query for query in DEFAULT_FALLBACK_QUERIES if not _contains_blocked(query, blocked_terms)
+            ]
         queries = list(dict.fromkeys([*request_queries, *profile_queries]))[: max(self.search_budget, 0)]
         trace = f"discovery:{scene}:{abs(hash((tuple(queries), request_spec.raw_text))) % 1000000}"
-        return DiscoveryPlan(search_queries=queries, trace_id=trace, request_first=bool(request_queries))
+        negative_queries = [] if request_spec.constrained else [f"{topic} {TAG_SEARCH_SUFFIX}" for topic, _ in sorted(profile.negative_topics.items(), key=lambda item: item[1], reverse=True)[:1]]
+        return DiscoveryPlan(search_queries=queries, negative_queries=negative_queries, trace_id=trace, request_first=bool(request_queries))
 
     def _request_queries(self, spec: RequestSpec) -> list[str]:
         labels = [*(_REGION_QUERY_LABELS.get(value, value) for value in spec.required_regions)]
@@ -80,7 +92,20 @@ class DiscoveryPlanner:
         if not labels:
             return []
         mood = spec.moods[0] if spec.moods else ""
-        return [f"{' '.join(labels)} {mood}".strip()]
+        queries = [f"{' '.join(labels)} {mood}".strip()]
+        if spec.required_genres:
+            genre = spec.required_genres[0]
+            genre_label = _GENRE_QUERY_LABELS.get(genre, genre)
+            if "english" in spec.required_languages or "western" in spec.required_regions:
+                queries.extend(
+                    [
+                        f"英文 {genre_label} 歌曲",
+                        f"English {genre} music playlist",
+                    ]
+                )
+            else:
+                queries.append(f"{genre_label} 歌曲 playlist")
+        return list(dict.fromkeys(query for query in queries if query))
 
     def _profile_queries(self, profile: MusicProfile, blocked_terms: set[str]) -> list[str]:
         intents = [intent for intent in profile.recent_intents if not _contains_blocked(intent, blocked_terms)]

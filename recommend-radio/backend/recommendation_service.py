@@ -198,13 +198,18 @@ class RecommendationService:
         if getattr(projection, "llm_latency_ms", 0):
             timings["profileLlmApiMs"] = round(float(projection.llm_latency_ms), 2)
         music_profile = projection.profile
+        negative_samples = self.candidate_pool.list_negative_sample_texts(limit=12)
         recommendation_request = RecommendationRequest(
             scene=normalized_scene,
             limit=bounded_limit,
             request_spec=resolved_request_spec,
             profile=music_profile,
             exclude_track_ids=(legacy_profile.recently_heard_track_ids | legacy_profile.recently_recommended_track_ids | legacy_profile.skipped_track_ids),
-            recent_context={"sceneMemories": scene_memories, "l1": music_profile.to_dict()},
+            recent_context={
+                "sceneMemories": scene_memories,
+                "l1": music_profile.to_dict(),
+                "negativeSamples": negative_samples,
+            },
         )
         profile_version = _profile_version(projection.trace_id, music_profile)
 
@@ -245,7 +250,7 @@ class RecommendationService:
         ]
         timings["candidateScoringMs"] = round((time.perf_counter() - span_started) * 1000, 2)
         span_started = time.perf_counter()
-        reranked, selected = self.recommendation_engine.rank_and_select(
+        reranked, selected, mmr_diagnostics = self.recommendation_engine.rank_and_select(
             candidates,
             request=recommendation_request,
             hard_filtered=lambda item: (
@@ -263,9 +268,11 @@ class RecommendationService:
                 values,
                 music_profile.same_uploader_limit,
                 bounded_limit,
+                request_scoped_limit=None if resolved_request_spec.constrained else 2,
             ),
         )
         timings["selectionMmrMs"] = round((time.perf_counter() - span_started) * 1000, 2)
+        timings["mmr"] = mmr_diagnostics
 
         self._upsert_candidate_tracks(selected)
         trace_id = self._store_recommendation_trace(
@@ -434,6 +441,16 @@ class RecommendationService:
         )
         if hasattr(self.profile_projector, "clear_cache"):
             self.profile_projector.clear_cache(user_id=self.user_id)
+        with get_connection(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO music_profile_snapshots (user_id, profile_json, source, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET profile_json = excluded.profile_json,
+                    source = excluded.source, updated_at = excluded.updated_at
+                """,
+                (self.user_id, json.dumps(result.get("profile") or {}, ensure_ascii=False), "profile_statement", _utc_now()),
+            )
         try:
             submitted_profile = MusicProfile.from_dict(result.get("profile") or {}, source="profile_statement")
             result["discovery"] = self.discovery_service.discover_now(
@@ -516,7 +533,12 @@ class RecommendationService:
         )
         filtered = [item for item in filtered if resolved_request_spec.matches_facets(item.facets)]
         selected = self._select_epsilon_greedy(filtered, limit, scene, legacy_profile, profile)
-        return self._apply_diversity_limits(selected, profile.same_uploader_limit, limit)
+        return self._apply_diversity_limits(
+            selected,
+            profile.same_uploader_limit,
+            limit,
+            request_scoped_limit=None if resolved_request_spec.constrained else 2,
+        )
 
     def record_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         events = self.record_events([payload])
@@ -802,6 +824,8 @@ class RecommendationService:
         candidates: list[RecommendationCandidate],
         same_uploader_limit: int,
         limit: int,
+        *,
+        request_scoped_limit: int | None = 2,
     ) -> list[RecommendationCandidate]:
         uploader_limit = (
             same_uploader_limit
@@ -822,7 +846,11 @@ class RecommendationService:
                 for artist in artist_keys
             ):
                 continue
-            if item.scope_kind == "request" and contextual_count >= 2:
+            if (
+                request_scoped_limit is not None
+                and item.scope_kind == "request"
+                and contextual_count >= request_scoped_limit
+            ):
                 continue
             selected.append(item)
             if uploader:
@@ -875,7 +903,9 @@ class RecommendationService:
         if has_gossip_exclusion(text):
             return False
         if item.source in SEARCH_BACKED_SOURCES:
-            return has_music_relevance_signal(text)
+            if has_non_music_context(text) and not has_music_relevance_signal(text):
+                return False
+            return has_music_relevance_signal(text) or bool(item.facets.get("genres"))
         if has_non_music_context(text) and not has_music_relevance_signal(text):
             return False
         owner_mid = _candidate_owner_mid(item)
@@ -1064,9 +1094,8 @@ class RecommendationService:
 
         return profile
 
-    @staticmethod
-    def _fallback_music_profile(profile: UserProfile) -> MusicProfile:
-        return MusicProfile(
+    def _fallback_music_profile(self, profile: UserProfile) -> MusicProfile:
+        fallback = MusicProfile(
             positive_topics={tag: 0.72 for tag in profile.common_tags},
             preferred_uploaders={
                 str(mid): 0.75 for mid in (profile.liked_owner_mids | profile.frequent_owner_mids)
@@ -1074,6 +1103,26 @@ class RecommendationService:
             confidence=0.45 if profile.common_tags or profile.liked_owner_mids else 0.0,
             source="fallback",
         )
+        with get_connection(self.db_path) as conn:
+            row = conn.execute("SELECT profile_json FROM music_profile_snapshots WHERE user_id = ?", (self.user_id,)).fetchone()
+        if row is None:
+            return fallback
+        stored = _json_loads(row["profile_json"])
+        snapshot = MusicProfile.from_dict(stored, source="profile_snapshot")
+        for name in ("positive_topics", "negative_topics", "preferred_uploaders", "avoid_uploaders", "blocked_uploaders", "mood_weights"):
+            getattr(fallback, name).update(getattr(snapshot, name))
+        for name in ("mbti", "music_persona", "current_music_phase", "core_traits", "psychological_needs", "persona_evidence", "persona_confidence"):
+            value = getattr(snapshot, name)
+            if value:
+                setattr(fallback, name, value)
+        fallback.recent_intents = list(snapshot.recent_intents)
+        fallback.positive_interest_texts = list(snapshot.positive_interest_texts)
+        fallback.negative_interest_texts = list(snapshot.negative_interest_texts)
+        fallback.same_uploader_limit = snapshot.same_uploader_limit
+        fallback.exploration_ratio = snapshot.exploration_ratio
+        fallback.confidence = max(fallback.confidence, snapshot.confidence)
+        fallback.source = "profile_snapshot"
+        return fallback
 
     def _safe_list_user_tracks(self, mid: int, order: str, page_size: int) -> list[Track]:
         try:

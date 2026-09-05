@@ -113,6 +113,28 @@ class CandidatePool:
                 admitted += 1
         return {"enqueued": enqueued, "admitted": admitted}
 
+    def record_negative_samples(self, tracks: Iterable[Track], *, query: str) -> int:
+        values = [track for track in tracks if track.track_id]
+        if values:
+            self.library.upsert_tracks(values)
+        now = _utc_now()
+        with get_connection(self.db_path) as conn:
+            for track in values:
+                facets, evidence = infer_facets(track, query=query)
+                conn.execute(
+                    """
+                    INSERT INTO discovery_candidates (
+                        user_id, track_id, source, query_text, request_spec_json,
+                        facets_json, evidence_json, status, created_at, updated_at
+                    ) VALUES (?, ?, 'negative_probe', ?, '{}', ?, ?, 'negative_sample', ?, ?)
+                    ON CONFLICT(user_id, track_id, query_text) DO UPDATE SET
+                        source='negative_probe', facets_json=excluded.facets_json,
+                        evidence_json=excluded.evidence_json, status='negative_sample', updated_at=excluded.updated_at
+                    """,
+                    (self.user_id, track.track_id, query[:240], json.dumps(facets, ensure_ascii=False), json.dumps(evidence, ensure_ascii=False), now, now),
+                )
+        return len(values)
+
     def list_ready(
         self,
         request_spec: RequestSpec,
@@ -160,12 +182,33 @@ class CandidatePool:
     def availability(self, request_spec: RequestSpec) -> int:
         return len(self.list_ready(request_spec))
 
+    def list_negative_sample_texts(self, *, limit: int = 12) -> list[str]:
+        with get_connection(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT t.title, t.owner, d.query_text
+                FROM discovery_candidates d
+                JOIN tracks t ON t.track_id=d.track_id
+                WHERE d.user_id=? AND d.status='negative_sample'
+                ORDER BY d.updated_at DESC
+                LIMIT ?
+                """,
+                (self.user_id, max(1, min(int(limit), 40))),
+            ).fetchall()
+        return [
+            " ".join(
+                part for part in (str(row["title"] or ""), str(row["owner"] or ""), str(row["query_text"] or "")) if part
+            )[:320]
+            for row in rows
+        ]
+
 
 def infer_facets(track: Track, *, query: str) -> tuple[dict[str, list[str]], list[str]]:
     text = f"{track.title} {track.page_title or ''} {track.owner}".casefold()
+    query_text = query.casefold()
     facets: dict[str, list[str]] = {"regions": [], "languages": [], "vocals": [], "topics": [], "genres": []}
     evidence: list[str] = []
-    western_query = _matches(query.casefold(), ("欧美", "英文", "english", "western"))
+    western_query = _matches(query_text, ("欧美", "英文", "english", "western"))
     if _matches(text, ("欧美", "英文", "english", "western", "taylor swift", "adele", "billie eilish", "lady gaga", "bruno mars", "ed sheeran", "the weeknd", "rihanna", "beyoncé", "beyonce", "ariana grande", "maroon 5", "coldplay", "linkin park", "imagine dragons", "lana del rey", "dua lipa")) or (western_query and _looks_english(track.title)):
         facets["regions"].append("western")
         facets["languages"].append("english")
@@ -193,10 +236,12 @@ def infer_facets(track: Track, *, query: str) -> tuple[dict[str, list[str]], lis
         "rnb": ("rnb", "r&b", "节奏布鲁斯"),
         "electronic": ("电音", "edm", "electronic"),
     }.items():
-        if _matches(text, terms):
+        if _matches(text, terms) or _matches(query_text, terms):
             facets["topics"].append(topic)
             facets["genres"].append(topic)
-            evidence.append(f"facet:topic:{topic}")
+            evidence.append(
+                f"facet:topic:{topic}:title" if _matches(text, terms) else f"facet:topic:{topic}:query"
+            )
     if query:
         evidence.append(f"discovery_query:{query[:120]}")
     return facets, evidence

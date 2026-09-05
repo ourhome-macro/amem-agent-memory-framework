@@ -36,6 +36,25 @@ class AmemGrpcService(amem_pb2_grpc.AmemServiceServicer):
     ) -> None:
         self.bridge = bridge if bridge is not None else AmemBridge.from_env()
         self.projector = projector if projector is not None else ProfileProjector(self.bridge)
+        self._embedding_stop = threading.Event()
+        self._embedding_thread: threading.Thread | None = None
+        if callable(getattr(self.bridge, "process_embedding_jobs", None)):
+            self._embedding_thread = threading.Thread(
+                target=self._run_embedding_worker,
+                name="amem-embedding-worker",
+                daemon=True,
+            )
+            self._embedding_thread.start()
+
+    def _run_embedding_worker(self) -> None:
+        while not self._embedding_stop.is_set():
+            try:
+                report = self.bridge.process_embedding_jobs(max_jobs=64)
+                processed = int(getattr(report, "processed", 0) or 0)
+            except Exception as exc:
+                LOGGER.warning("AMEM embedding worker iteration failed: %s", exc)
+                processed = 0
+            self._embedding_stop.wait(0.1 if processed else 1.0)
 
     def RecordBehavior(self, request: Any, context: grpc.ServicerContext) -> Any:
         payload = _payload_from_json(request.payload_json)
@@ -67,6 +86,12 @@ class AmemGrpcService(amem_pb2_grpc.AmemServiceServicer):
                 profile=profile,
                 support_counts=support_counts,
             )
+        elif source == "event_l3_demote":
+            result = self.bridge.demote_music_profile(
+                user_id=user_id,
+                profile=profile,
+                reasons=_demotion_reasons_from_description(description),
+            )
         else:
             result = self.bridge.record_profile_statement(
                 user_id=user_id,
@@ -74,7 +99,9 @@ class AmemGrpcService(amem_pb2_grpc.AmemServiceServicer):
                 profile=profile,
                 source=source,
             )
-        self.projector.clear_cache(user_id=user_id, scene=scene)
+        # A profile statement affects every recommendation scene. Clearing only
+        # the caller's scene left home/conversation projections disagreeing for the TTL.
+        self.projector.clear_cache(user_id=user_id)
         return amem_pb2.RecordProfileStatementResponse(
             accepted=True,
             amem_event_id=str(result.get("eventId") or ""),
@@ -174,6 +201,13 @@ def _profile_to_response(profile: MusicProfile, *, profile_llm_api_ms: float = 0
         negative_interest_texts=list(profile.negative_interest_texts),
         profile_llm_api_ms=profile_llm_api_ms,
         profile_total_ms=profile_total_ms,
+        mbti=profile.mbti,
+        music_persona=profile.music_persona,
+        current_music_phase=profile.current_music_phase,
+        core_traits=list(profile.core_traits),
+        psychological_needs=list(profile.psychological_needs),
+        persona_evidence=list(profile.persona_evidence),
+        persona_confidence=float(profile.persona_confidence),
     )
 
 
@@ -202,6 +236,21 @@ def _support_counts_from_description(value: str) -> dict[str, int]:
         except (TypeError, ValueError):
             continue
     return result
+
+
+def _demotion_reasons_from_description(value: str) -> dict[str, str]:
+    try:
+        payload = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    values = payload.get("reasons") if isinstance(payload, dict) else {}
+    if not isinstance(values, dict):
+        return {}
+    return {
+        str(key)[:180]: str(reason)[:300]
+        for key, reason in values.items()
+        if str(key).strip() and str(reason).strip()
+    }
 
 
 def _score_map(values: dict[str, float]) -> dict[str, float]:

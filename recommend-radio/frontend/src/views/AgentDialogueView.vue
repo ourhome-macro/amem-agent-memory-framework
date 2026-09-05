@@ -124,9 +124,14 @@
                         >
                           <AppIcon name="close" :size="15" />
                         </button>
+                        <button class="song-action muted" type="button" title="引用并聊聊" @click="discussRecommendation(message.card, item)">
+                          <AppIcon name="message" :size="15" />
+                        </button>
                       </div>
                     </article>
-                    <p v-if="!(message.card.recommendations?.length)" class="empty-text">这轮暂时没有拿到合适歌曲</p>
+                    <p v-if="!(message.card.recommendations?.length)" class="empty-text">
+                      {{ message.card.discoveryJobId && message.card.discoveryStatus !== 'failed' ? '正在补充候选，完成后会自动回填到这张卡片…' : '这轮暂时没有拿到合适歌曲' }}
+                    </p>
                   </div>
                   <div v-if="message.card.kind === 'memory_recall'" class="glass-song-list">
                     <article
@@ -214,6 +219,7 @@ import {
   fetchAgentDialogueSessions,
   mediaUrl,
   recordRecommendationEvent,
+  refreshAgentDialogueRecommendationCard,
   sendAgentDialogueMessage,
   submitAgentDialogueCardFeedback,
   undoAgentDialogueMessage,
@@ -246,6 +252,7 @@ const pendingIntent = ref<'chat' | 'recommend' | 'control'>('chat')
 const activeContext = ref<AgentDialogueContext | null>(null)
 const messageListRef = ref<HTMLDivElement | null>(null)
 const sessionHistory = ref<AgentDialogueSessionSummary[]>([])
+const refreshingCards = ref(false)
 
 onMounted(() => {
   void bootDialogue()
@@ -287,6 +294,7 @@ async function loadSession(sessionId?: string) {
   errorMessage.value = ''
   try {
     applySession(await fetchAgentDialogueSession(sessionId))
+    void refreshPendingRecommendationCards()
     void loadSessionHistory()
   } catch (error) {
     errorMessage.value = errorToMessage(error, '对话状态读取失败')
@@ -367,12 +375,50 @@ async function sendMessage() {
       message: text,
       sessionId: session.value?.sessionId,
       contextCardId: context?.cardId,
+      contextTrackId: context?.trackId,
     }))
+    void refreshPendingRecommendationCards()
     void loadSessionHistory()
   } catch (error) {
     errorMessage.value = errorToMessage(error, '消息发送失败')
   } finally {
     sending.value = false
+  }
+}
+
+function discussRecommendation(card: AgentDialogueCard, item: RecommendationItem) {
+  activeContext.value = {
+    ...cardToContext(card),
+    statement: `《${item.track.title}》${item.track.owner ? `（${item.track.owner}）` : ''}`,
+    sourceText: item.track.title,
+    topic: item.track.title,
+    polarity: 'neutral',
+    trackId: item.track.trackId,
+  }
+  messageText.value = `聊聊这首歌：`
+}
+
+async function refreshPendingRecommendationCards() {
+  if (refreshingCards.value) return
+  refreshingCards.value = true
+  try {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const pending = session.value?.cards.find(card => (
+        card.kind === 'recommendation_carousel'
+        && card.discoveryJobId
+        && !['completed', 'failed'].includes(card.discoveryStatus ?? '')
+        && (card.recommendations?.length ?? 0) < 8
+      ))
+      if (!pending) return
+      await new Promise(resolve => window.setTimeout(resolve, 1000))
+      try {
+        applySession(await refreshAgentDialogueRecommendationCard(pending.cardId))
+      } catch {
+        return
+      }
+    }
+  } finally {
+    refreshingCards.value = false
   }
 }
 

@@ -24,14 +24,13 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12\x61mem/v1/amem.proto\x12\x07\x61mem.v1\"\x80\x01\n\x15RecordBehaviorRequest\x12\x10\n\x08\x65vent_id\x18\x01 \x01(\t\x12\x0f\n\x07user_id\x18\x02 \x01(\t\x12\r\n\x05\x65vent\x18\x03 \x01(\t\x12\r\n\x05scene\x18\x04 \x01(\t\x12\x10\n\x08track_id\x18\x05 \x01(\t\x12\x14\n\x0cpayload_json\x18\x06 \x01(\x0c\"U\n\x16RecordBehaviorResponse\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\x12\x15\n\ramem_event_id\x18\x02 \x01(\t\x12\x12\n\nmemory_ids\x18\x03 \x03(\t\"z\n\x1dRecordProfileStatementRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\r\n\x05scene\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\x14\n\x0cprofile_json\x18\x04 \x01(\x0c\x12\x0e\n\x06source\x18\x05 \x01(\t\"]\n\x1eRecordProfileStatementResponse\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\x12\x15\n\ramem_event_id\x18\x02 \x01(\t\x12\x12\n\nmemory_ids\x18\x03 \x03(\t\"J\n\x16GetMusicProfileRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\r\n\x05scene\x18\x02 \x01(\t\x12\x10\n\x08trace_id\x18\x03 \x01(\t\"\xd8\x08\n\x14MusicProfileResponse\x12J\n\x0fpositive_topics\x18\x01 \x03(\x0b\x32\x31.amem.v1.MusicProfileResponse.PositiveTopicsEntry\x12J\n\x0fnegative_topics\x18\x02 \x03(\x0b\x32\x31.amem.v1.MusicProfileResponse.NegativeTopicsEntry\x12R\n\x13preferred_uploaders\x18\x03 \x03(\x0b\x32\x35.amem.v1.MusicProfileResponse.PreferredUploadersEntry\x12J\n\x0f\x61void_uploaders\x18\x04 \x03(\x0b\x32\x31.amem.v1.MusicProfileResponse.AvoidUploadersEntry\x12N\n\x11\x62locked_uploaders\x18\x05 \x03(\x0b\x32\x33.amem.v1.MusicProfileResponse.BlockedUploadersEntry\x12\x44\n\x0cmood_weights\x18\x06 \x03(\x0b\x32..amem.v1.MusicProfileResponse.MoodWeightsEntry\x12\x16\n\x0erecent_intents\x18\x07 \x03(\t\x12\x1b\n\x13same_uploader_limit\x18\x08 \x01(\x05\x12\x19\n\x11\x65xploration_ratio\x18\t \x01(\x01\x12\x1b\n\x13\x65vidence_memory_ids\x18\n \x03(\t\x12\x12\n\nconfidence\x18\x0b \x01(\x01\x12\x0e\n\x06source\x18\x0c \x01(\t\x12\x1f\n\x17positive_interest_texts\x18\r \x03(\t\x12\x1f\n\x17negative_interest_texts\x18\x0e \x03(\t\x12\x1a\n\x12profile_llm_api_ms\x18\x0f \x01(\x01\x12\x1c\n\x14profile_retrieval_ms\x18\x10 \x01(\x01\x12\x18\n\x10profile_total_ms\x18\x11 \x01(\x01\x1a\x35\n\x13PositiveTopicsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\x1a\x35\n\x13NegativeTopicsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\x1a\x39\n\x17PreferredUploadersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\x1a\x35\n\x13\x41voidUploadersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\x1a\x37\n\x15\x42lockedUploadersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\x1a\x32\n\x10MoodWeightsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\"m\n\x1c\x45xplainRecommendationRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\r\n\x05scene\x18\x02 \x01(\t\x12\x1b\n\x13\x63\x61ndidate_track_ids\x18\x03 \x03(\t\x12\x10\n\x08trace_id\x18\x04 \x01(\t\"\xc4\x01\n\x1d\x45xplainRecommendationResponse\x12\x10\n\x08trace_id\x18\x01 \x01(\t\x12\x44\n\x07reasons\x18\x02 \x03(\x0b\x32\x33.amem.v1.ExplainRecommendationResponse.ReasonsEntry\x12\x1b\n\x13\x65vidence_memory_ids\x18\x03 \x03(\t\x1a.\n\x0cReasonsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\x0f\n\rHealthRequest\" \n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t2\xc1\x03\n\x0b\x41memService\x12Q\n\x0eRecordBehavior\x12\x1e.amem.v1.RecordBehaviorRequest\x1a\x1f.amem.v1.RecordBehaviorResponse\x12i\n\x16RecordProfileStatement\x12&.amem.v1.RecordProfileStatementRequest\x1a\'.amem.v1.RecordProfileStatementResponse\x12Q\n\x0fGetMusicProfile\x12\x1f.amem.v1.GetMusicProfileRequest\x1a\x1d.amem.v1.MusicProfileResponse\x12\x66\n\x15\x45xplainRecommendation\x12%.amem.v1.ExplainRecommendationRequest\x1a&.amem.v1.ExplainRecommendationResponse\x12\x39\n\x06Health\x12\x16.amem.v1.HealthRequest\x1a\x17.amem.v1.HealthResponseB<Z:recommend-radio/backend-go/internal/amem/gen/amemv1;amemv1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x12\x61mem/v1/amem.proto\x12\x07\x61mem.v1\"\x80\x01\n\x15RecordBehaviorRequest\x12\x10\n\x08\x65vent_id\x18\x01 \x01(\t\x12\x0f\n\x07user_id\x18\x02 \x01(\t\x12\r\n\x05\x65vent\x18\x03 \x01(\t\x12\r\n\x05scene\x18\x04 \x01(\t\x12\x10\n\x08track_id\x18\x05 \x01(\t\x12\x14\n\x0cpayload_json\x18\x06 \x01(\x0c\"U\n\x16RecordBehaviorResponse\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\x12\x15\n\ramem_event_id\x18\x02 \x01(\t\x12\x12\n\nmemory_ids\x18\x03 \x03(\t\"z\n\x1dRecordProfileStatementRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\r\n\x05scene\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\x14\n\x0cprofile_json\x18\x04 \x01(\x0c\x12\x0e\n\x06source\x18\x05 \x01(\t\"]\n\x1eRecordProfileStatementResponse\x12\x10\n\x08\x61\x63\x63\x65pted\x18\x01 \x01(\x08\x12\x15\n\ramem_event_id\x18\x02 \x01(\t\x12\x12\n\nmemory_ids\x18\x03 \x03(\t\"J\n\x16GetMusicProfileRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\r\n\x05scene\x18\x02 \x01(\t\x12\x10\n\x08trace_id\x18\x03 \x01(\t\"\x82\n\n\x14MusicProfileResponse\x12J\n\x0fpositive_topics\x18\x01 \x03(\x0b\x32\x31.amem.v1.MusicProfileResponse.PositiveTopicsEntry\x12J\n\x0fnegative_topics\x18\x02 \x03(\x0b\x32\x31.amem.v1.MusicProfileResponse.NegativeTopicsEntry\x12R\n\x13preferred_uploaders\x18\x03 \x03(\x0b\x32\x35.amem.v1.MusicProfileResponse.PreferredUploadersEntry\x12J\n\x0f\x61void_uploaders\x18\x04 \x03(\x0b\x32\x31.amem.v1.MusicProfileResponse.AvoidUploadersEntry\x12N\n\x11\x62locked_uploaders\x18\x05 \x03(\x0b\x32\x33.amem.v1.MusicProfileResponse.BlockedUploadersEntry\x12\x44\n\x0cmood_weights\x18\x06 \x03(\x0b\x32..amem.v1.MusicProfileResponse.MoodWeightsEntry\x12\x16\n\x0erecent_intents\x18\x07 \x03(\t\x12\x1b\n\x13same_uploader_limit\x18\x08 \x01(\x05\x12\x19\n\x11\x65xploration_ratio\x18\t \x01(\x01\x12\x1b\n\x13\x65vidence_memory_ids\x18\n \x03(\t\x12\x12\n\nconfidence\x18\x0b \x01(\x01\x12\x0e\n\x06source\x18\x0c \x01(\t\x12\x1f\n\x17positive_interest_texts\x18\r \x03(\t\x12\x1f\n\x17negative_interest_texts\x18\x0e \x03(\t\x12\x1a\n\x12profile_llm_api_ms\x18\x0f \x01(\x01\x12\x1c\n\x14profile_retrieval_ms\x18\x10 \x01(\x01\x12\x18\n\x10profile_total_ms\x18\x11 \x01(\x01\x12\x0c\n\x04mbti\x18\x12 \x01(\t\x12\x15\n\rmusic_persona\x18\x13 \x01(\t\x12\x1b\n\x13\x63urrent_music_phase\x18\x14 \x01(\t\x12\x13\n\x0b\x63ore_traits\x18\x15 \x03(\t\x12\x1b\n\x13psychological_needs\x18\x16 \x03(\t\x12\x18\n\x10persona_evidence\x18\x17 \x03(\t\x12\x1a\n\x12persona_confidence\x18\x18 \x01(\x01\x1a\x35\n\x13PositiveTopicsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\x1a\x35\n\x13NegativeTopicsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\x1a\x39\n\x17PreferredUploadersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\x1a\x35\n\x13\x41voidUploadersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\x1a\x37\n\x15\x42lockedUploadersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\x1a\x32\n\x10MoodWeightsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x01:\x02\x38\x01\"m\n\x1c\x45xplainRecommendationRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\r\n\x05scene\x18\x02 \x01(\t\x12\x1b\n\x13\x63\x61ndidate_track_ids\x18\x03 \x03(\t\x12\x10\n\x08trace_id\x18\x04 \x01(\t\"\xc4\x01\n\x1d\x45xplainRecommendationResponse\x12\x10\n\x08trace_id\x18\x01 \x01(\t\x12\x44\n\x07reasons\x18\x02 \x03(\x0b\x32\x33.amem.v1.ExplainRecommendationResponse.ReasonsEntry\x12\x1b\n\x13\x65vidence_memory_ids\x18\x03 \x03(\t\x1a.\n\x0cReasonsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\x0f\n\rHealthRequest\" \n\x0eHealthResponse\x12\x0e\n\x06status\x18\x01 \x01(\t2\xc1\x03\n\x0b\x41memService\x12Q\n\x0eRecordBehavior\x12\x1e.amem.v1.RecordBehaviorRequest\x1a\x1f.amem.v1.RecordBehaviorResponse\x12i\n\x16RecordProfileStatement\x12&.amem.v1.RecordProfileStatementRequest\x1a\'.amem.v1.RecordProfileStatementResponse\x12Q\n\x0fGetMusicProfile\x12\x1f.amem.v1.GetMusicProfileRequest\x1a\x1d.amem.v1.MusicProfileResponse\x12\x66\n\x15\x45xplainRecommendation\x12%.amem.v1.ExplainRecommendationRequest\x1a&.amem.v1.ExplainRecommendationResponse\x12\x39\n\x06Health\x12\x16.amem.v1.HealthRequest\x1a\x17.amem.v1.HealthResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'amem.v1.amem_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-  _globals['DESCRIPTOR']._loaded_options = None
-  _globals['DESCRIPTOR']._serialized_options = b'Z:recommend-radio/backend-go/internal/amem/gen/amemv1;amemv1'
+  DESCRIPTOR._loaded_options = None
   _globals['_MUSICPROFILERESPONSE_POSITIVETOPICSENTRY']._loaded_options = None
   _globals['_MUSICPROFILERESPONSE_POSITIVETOPICSENTRY']._serialized_options = b'8\001'
   _globals['_MUSICPROFILERESPONSE_NEGATIVETOPICSENTRY']._loaded_options = None
@@ -57,29 +56,29 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_GETMUSICPROFILEREQUEST']._serialized_start=468
   _globals['_GETMUSICPROFILEREQUEST']._serialized_end=542
   _globals['_MUSICPROFILERESPONSE']._serialized_start=545
-  _globals['_MUSICPROFILERESPONSE']._serialized_end=1657
-  _globals['_MUSICPROFILERESPONSE_POSITIVETOPICSENTRY']._serialized_start=1326
-  _globals['_MUSICPROFILERESPONSE_POSITIVETOPICSENTRY']._serialized_end=1379
-  _globals['_MUSICPROFILERESPONSE_NEGATIVETOPICSENTRY']._serialized_start=1381
-  _globals['_MUSICPROFILERESPONSE_NEGATIVETOPICSENTRY']._serialized_end=1434
-  _globals['_MUSICPROFILERESPONSE_PREFERREDUPLOADERSENTRY']._serialized_start=1436
-  _globals['_MUSICPROFILERESPONSE_PREFERREDUPLOADERSENTRY']._serialized_end=1493
-  _globals['_MUSICPROFILERESPONSE_AVOIDUPLOADERSENTRY']._serialized_start=1495
-  _globals['_MUSICPROFILERESPONSE_AVOIDUPLOADERSENTRY']._serialized_end=1548
-  _globals['_MUSICPROFILERESPONSE_BLOCKEDUPLOADERSENTRY']._serialized_start=1550
-  _globals['_MUSICPROFILERESPONSE_BLOCKEDUPLOADERSENTRY']._serialized_end=1605
-  _globals['_MUSICPROFILERESPONSE_MOODWEIGHTSENTRY']._serialized_start=1607
-  _globals['_MUSICPROFILERESPONSE_MOODWEIGHTSENTRY']._serialized_end=1657
-  _globals['_EXPLAINRECOMMENDATIONREQUEST']._serialized_start=1659
-  _globals['_EXPLAINRECOMMENDATIONREQUEST']._serialized_end=1768
-  _globals['_EXPLAINRECOMMENDATIONRESPONSE']._serialized_start=1771
-  _globals['_EXPLAINRECOMMENDATIONRESPONSE']._serialized_end=1967
-  _globals['_EXPLAINRECOMMENDATIONRESPONSE_REASONSENTRY']._serialized_start=1921
-  _globals['_EXPLAINRECOMMENDATIONRESPONSE_REASONSENTRY']._serialized_end=1967
-  _globals['_HEALTHREQUEST']._serialized_start=1969
-  _globals['_HEALTHREQUEST']._serialized_end=1984
-  _globals['_HEALTHRESPONSE']._serialized_start=1986
-  _globals['_HEALTHRESPONSE']._serialized_end=2018
-  _globals['_AMEMSERVICE']._serialized_start=2021
-  _globals['_AMEMSERVICE']._serialized_end=2470
+  _globals['_MUSICPROFILERESPONSE']._serialized_end=1827
+  _globals['_MUSICPROFILERESPONSE_POSITIVETOPICSENTRY']._serialized_start=1496
+  _globals['_MUSICPROFILERESPONSE_POSITIVETOPICSENTRY']._serialized_end=1549
+  _globals['_MUSICPROFILERESPONSE_NEGATIVETOPICSENTRY']._serialized_start=1551
+  _globals['_MUSICPROFILERESPONSE_NEGATIVETOPICSENTRY']._serialized_end=1604
+  _globals['_MUSICPROFILERESPONSE_PREFERREDUPLOADERSENTRY']._serialized_start=1606
+  _globals['_MUSICPROFILERESPONSE_PREFERREDUPLOADERSENTRY']._serialized_end=1663
+  _globals['_MUSICPROFILERESPONSE_AVOIDUPLOADERSENTRY']._serialized_start=1665
+  _globals['_MUSICPROFILERESPONSE_AVOIDUPLOADERSENTRY']._serialized_end=1718
+  _globals['_MUSICPROFILERESPONSE_BLOCKEDUPLOADERSENTRY']._serialized_start=1720
+  _globals['_MUSICPROFILERESPONSE_BLOCKEDUPLOADERSENTRY']._serialized_end=1775
+  _globals['_MUSICPROFILERESPONSE_MOODWEIGHTSENTRY']._serialized_start=1777
+  _globals['_MUSICPROFILERESPONSE_MOODWEIGHTSENTRY']._serialized_end=1827
+  _globals['_EXPLAINRECOMMENDATIONREQUEST']._serialized_start=1829
+  _globals['_EXPLAINRECOMMENDATIONREQUEST']._serialized_end=1938
+  _globals['_EXPLAINRECOMMENDATIONRESPONSE']._serialized_start=1941
+  _globals['_EXPLAINRECOMMENDATIONRESPONSE']._serialized_end=2137
+  _globals['_EXPLAINRECOMMENDATIONRESPONSE_REASONSENTRY']._serialized_start=2091
+  _globals['_EXPLAINRECOMMENDATIONRESPONSE_REASONSENTRY']._serialized_end=2137
+  _globals['_HEALTHREQUEST']._serialized_start=2139
+  _globals['_HEALTHREQUEST']._serialized_end=2154
+  _globals['_HEALTHRESPONSE']._serialized_start=2156
+  _globals['_HEALTHRESPONSE']._serialized_end=2188
+  _globals['_AMEMSERVICE']._serialized_start=2191
+  _globals['_AMEMSERVICE']._serialized_end=2640
 # @@protoc_insertion_point(module_scope)

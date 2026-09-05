@@ -15,7 +15,7 @@ class KeywordGovernance:
         self.db_path = db_path
         self.user_id = user_id
 
-    def prepare(self, queries: list[str], *, source: str, preserve_order: bool) -> list[dict[str, str]]:
+    def prepare(self, queries: list[str], *, source: str, preserve_order: bool) -> list[dict[str, Any]]:
         now = _utc_now()
         prepared = []
         with get_connection(self.db_path) as conn:
@@ -30,11 +30,18 @@ class KeywordGovernance:
                     (keyword_id, self.user_id, query, source, now),
                 )
                 row = conn.execute(
-                    "SELECT keyword_id, keyword, quality_score, status FROM discovery_keywords WHERE keyword_id = ?",
+                    "SELECT keyword_id, keyword, quality_score, status, search_count FROM discovery_keywords WHERE keyword_id = ?",
                     (keyword_id,),
                 ).fetchone()
                 if row and row["status"] in {"active", "cooldown"}:
-                    prepared.append({"keywordId": row["keyword_id"], "query": row["keyword"], "quality": str(row["quality_score"])})
+                    prepared.append(
+                        {
+                            "keywordId": row["keyword_id"],
+                            "query": row["keyword"],
+                            "quality": str(row["quality_score"]),
+                            "searchCount": int(row["search_count"] or 0),
+                        }
+                    )
         if not preserve_order:
             prepared.sort(key=lambda item: float(item["quality"]), reverse=True)
         return prepared

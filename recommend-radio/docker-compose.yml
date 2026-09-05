@@ -48,7 +48,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - "python -c \"import sys, grpc; sys.path.insert(0, '/app/amem_gen'); from amem.v1 import amem_pb2, amem_pb2_grpc; channel=grpc.insecure_channel('127.0.0.1:9090'); response=amem_pb2_grpc.AmemServiceStub(channel).Health(amem_pb2.HealthRequest(), timeout=3); raise SystemExit(0 if response.status in ('serving','noop') else 1)\""
+        - "python -c \"import sys, grpc; sys.path.insert(0, '/app/amem_gen'); from amem.v1 import amem_pb2, amem_pb2_grpc; channel=grpc.insecure_channel('127.0.0.1:9090'); response=amem_pb2_grpc.AmemServiceStub(channel).Health(amem_pb2.HealthRequest(), timeout=3); raise SystemExit(0 if response.status == 'serving' else 1)\""
       interval: 15s
       timeout: 5s
       retries: 10

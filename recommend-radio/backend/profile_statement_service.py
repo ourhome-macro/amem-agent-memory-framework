@@ -53,6 +53,9 @@ class ProfileStatementService:
         client = self.llm_client or _default_llm_client()
         system_prompt = (
             "Extract a structured music profile from a user's free-form self description. "
+            "The user only needs to describe their music personality. Infer a best-effort four-letter MBTI, current music phase, "
+            "core traits and psychological needs conservatively from the supplied evidence. "
+            "Mark uncertainty in persona_confidence and persona_evidence; MBTI is tentative, not a psychometric fact. "
             "Return exactly one JSON object. No markdown. "
             "Use artist names, genres, language scenes, and music cultures as positive_topics. "
             "Use disliked genres/topics as negative_topics. "
@@ -64,6 +67,13 @@ class ProfileStatementService:
                 "output_schema": {
                     "positive_topics": {"topic_or_artist": 0.0},
                     "negative_topics": {"topic_or_genre": 0.0},
+                    "mbti": "best-effort four-letter tentative MBTI",
+                    "music_persona": "concise music personality narrative",
+                    "current_music_phase": "recent listening phase",
+                    "core_traits": ["inferred trait"],
+                    "psychological_needs": ["need music is serving"],
+                    "persona_evidence": ["evidence from user text"],
+                    "persona_confidence": 0.0,
                     "preferred_uploaders": {},
                     "avoid_uploaders": {},
                     "blocked_uploaders": {},
@@ -98,11 +108,13 @@ def _extract_with_rules(description: str) -> MusicProfile:
     moods: dict[str, float] = {}
 
     for topic, patterns in {
-        "华语流行": ("华语流行", "华语", "中文歌", "国语"),
+        "华语流行": ("华语流行", "华语", "中文歌", "中文流行", "国语"),
         "粤语": ("粤语", "港乐"),
         "R&B": ("rnb", "r&b", "节奏布鲁斯"),
         "欧美流行": ("欧美流行", "欧美", "western pop", "english pop"),
         "摇滚": ("摇滚", "rock"),
+        "布鲁斯摇滚": ("布鲁斯摇滚", "蓝调摇滚", "blues rock"),
+        "唱跳舞台": ("唱跳", "唱跳舞台", "舞台表演", "dance performance"),
         "J-Pop": ("j-pop", "jpop", "日语"),
         "K-Pop": ("k-pop", "kpop", "韩语"),
         "Vocaloid": ("vocaloid", "初音未来", "术力口"),
@@ -211,4 +223,13 @@ def _normalize_topic_name(value: str) -> str:
 
 
 def _has_statement_profile_signals(profile: MusicProfile) -> bool:
-    return bool(profile.positive_topics or profile.negative_topics or profile.mood_weights)
+    return bool(
+        profile.positive_topics
+        or profile.negative_topics
+        or profile.mood_weights
+        or profile.mbti
+        or profile.music_persona
+        or profile.current_music_phase
+        or profile.core_traits
+        or profile.psychological_needs
+    )

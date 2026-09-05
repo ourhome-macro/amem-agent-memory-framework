@@ -2,8 +2,6 @@ syntax = "proto3";
 
 package amem.v1;
 
-option go_package = "recommend-radio/backend-go/internal/amem/gen/amemv1;amemv1";
-
 service AmemService {
   rpc RecordBehavior(RecordBehaviorRequest) returns (RecordBehaviorResponse);
   rpc RecordProfileStatement(RecordProfileStatementRequest) returns (RecordProfileStatementResponse);
@@ -65,6 +63,13 @@ message MusicProfileResponse {
   double profile_llm_api_ms = 15;
   double profile_retrieval_ms = 16;
   double profile_total_ms = 17;
+  string mbti = 18;
+  string music_persona = 19;
+  string current_music_phase = 20;
+  repeated string core_traits = 21;
+  repeated string psychological_needs = 22;
+  repeated string persona_evidence = 23;
+  double persona_confidence = 24;
 }
 
 message ExplainRecommendationRequest {

@@ -4,12 +4,14 @@ import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Lock
 from typing import Any
 from uuid import uuid4
 
 import grpc
-from music_profile import MusicProfile, RelevantMemory
+from music_profile import MusicProfile, RelevantMemory, overlay_profile_snapshot
 from profile_projector import ProfileProjection
 from dataclasses import replace
 
@@ -18,6 +20,9 @@ if str(_GEN_DIR) not in sys.path:
     sys.path.insert(0, str(_GEN_DIR))
 
 from amem.v1 import amem_pb2, amem_pb2_grpc  # noqa: E402
+
+
+_PROFILE_REFRESH_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="profile-refresh")
 
 
 class AmemGrpcBridge:
@@ -116,6 +121,31 @@ class AmemGrpcBridge:
             "source": "amem-grpc",
         }
 
+    def demote_music_profile(
+        self,
+        *,
+        user_id: str,
+        profile: Any,
+        reasons: dict[str, str],
+    ) -> dict[str, Any]:
+        profile_dict = profile.to_dict() if hasattr(profile, "to_dict") else dict(profile or {})
+        response = self.client.RecordProfileStatement(
+            amem_pb2.RecordProfileStatementRequest(
+                user_id=str(user_id or "legacy-owner"),
+                scene="conversation",
+                description=json.dumps({"reasons": reasons}, ensure_ascii=False),
+                profile_json=json.dumps(profile_dict, ensure_ascii=False).encode("utf-8"),
+                source="event_l3_demote",
+            ),
+            timeout=self.timeout_seconds,
+        )
+        return {
+            "enabled": True,
+            "eventId": response.amem_event_id,
+            "memoryIds": list(response.memory_ids),
+            "source": "amem-grpc",
+        }
+
     def get_music_profile(self, *, user_id: str, scene: str) -> MusicProfile:
         response = self.client.GetMusicProfile(
             amem_pb2.GetMusicProfileRequest(
@@ -143,18 +173,27 @@ class GrpcProfileProjector:
             600,
         )
         self._cache: dict[tuple[str, str], tuple[float, ProfileProjection]] = {}
+        self._refreshing: set[tuple[str, str]] = set()
+        self._epochs: dict[tuple[str, str], int] = {}
+        self._lock = Lock()
 
     def clear_cache(self, user_id: str | None = None, scene: str | None = None) -> None:
         if user_id is None and scene is None:
             self._cache.clear()
+            with self._lock:
+                for key in set(self._epochs) | set(self._refreshing):
+                    self._epochs[key] = self._epochs.get(key, 0) + 1
             return
-        for key in list(self._cache):
+        keys = set(self._cache) | set(self._refreshing) | set(self._epochs)
+        for key in keys:
             key_user, key_scene = key
             if user_id is not None and key_user != user_id:
                 continue
             if scene is not None and key_scene != scene:
                 continue
             self._cache.pop(key, None)
+            with self._lock:
+                self._epochs[key] = self._epochs.get(key, 0) + 1
 
     def project(
         self,
@@ -168,19 +207,73 @@ class GrpcProfileProjector:
         if cached and time.time() - cached[0] < self.ttl_seconds:
             return replace(cached[1], llm_latency_ms=0.0, cache_hit=True)
 
-        try:
-            profile = self.bridge.get_music_profile(user_id=user_id, scene=scene)
-        except Exception:
-            profile = MusicProfile.from_dict(fallback_profile.to_dict(), source="grpc_unavailable")
+        profile = MusicProfile.from_dict(
+            fallback_profile.to_dict(),
+            source=f"{fallback_profile.source}_stable",
+        )
+        profile = overlay_profile_snapshot(profile, fallback_profile)
         memories = _evidence_memories(profile, limit=16)
         projection = ProfileProjection(
             profile=profile,
             memories=memories,
-            trace_id=f"profile:{user_id}:{scene}:{int(time.time())}:amem-grpc",
-            llm_latency_ms=float(self.bridge.last_profile_timing.get("profileLlmApiMs", 0.0)),
+            trace_id=f"profile:{user_id}:{scene}:{int(time.time())}:stable-snapshot",
         )
         self._cache[cache_key] = (time.time(), projection)
+        self._schedule_refresh(
+            cache_key=cache_key,
+            user_id=user_id,
+            scene=scene,
+            fallback_profile=fallback_profile,
+        )
         return projection
+
+    def _schedule_refresh(
+        self,
+        *,
+        cache_key: tuple[str, str],
+        user_id: str,
+        scene: str,
+        fallback_profile: MusicProfile,
+    ) -> None:
+        with self._lock:
+            if cache_key in self._refreshing:
+                return
+            self._refreshing.add(cache_key)
+            epoch = self._epochs.get(cache_key, 0)
+        _PROFILE_REFRESH_EXECUTOR.submit(
+            self._refresh,
+            cache_key,
+            user_id,
+            scene,
+            MusicProfile.from_dict(fallback_profile.to_dict(), source=fallback_profile.source),
+            epoch,
+        )
+
+    def _refresh(
+        self,
+        cache_key: tuple[str, str],
+        user_id: str,
+        scene: str,
+        fallback_profile: MusicProfile,
+        epoch: int,
+    ) -> None:
+        try:
+            profile = self.bridge.get_music_profile(user_id=user_id, scene=scene)
+            if not (profile.positive_topics or profile.negative_topics or profile.music_persona):
+                profile = MusicProfile.from_dict(fallback_profile.to_dict(), source="profile_snapshot_fallback")
+            profile = overlay_profile_snapshot(profile, fallback_profile)
+            projection = ProfileProjection(
+                profile=profile,
+                memories=_evidence_memories(profile, limit=16),
+                trace_id=f"profile:{user_id}:{scene}:{int(time.time())}:amem-grpc",
+                llm_latency_ms=float(self.bridge.last_profile_timing.get("profileLlmApiMs", 0.0)),
+            )
+            with self._lock:
+                if self._epochs.get(cache_key, 0) == epoch:
+                    self._cache[cache_key] = (time.time(), projection)
+        finally:
+            with self._lock:
+                self._refreshing.discard(cache_key)
 
 
 def _profile_from_response(response: Any) -> MusicProfile:
@@ -194,6 +287,13 @@ def _profile_from_response(response: Any) -> MusicProfile:
         "recent_intents": list(response.recent_intents),
         "positive_interest_texts": list(response.positive_interest_texts),
         "negative_interest_texts": list(response.negative_interest_texts),
+        "mbti": response.mbti,
+        "music_persona": response.music_persona,
+        "current_music_phase": response.current_music_phase,
+        "core_traits": list(response.core_traits),
+        "psychological_needs": list(response.psychological_needs),
+        "persona_evidence": list(response.persona_evidence),
+        "persona_confidence": float(response.persona_confidence or 0.0),
         "same_uploader_limit": int(response.same_uploader_limit or 0),
         "exploration_ratio": float(response.exploration_ratio or 0.0),
         "evidence_memory_ids": list(response.evidence_memory_ids),
