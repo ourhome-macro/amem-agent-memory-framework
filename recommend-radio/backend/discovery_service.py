@@ -44,14 +44,42 @@ class DiscoveryService:
                 INSERT INTO discovery_jobs (job_id, user_id, scene, request_spec_json, plan_json, status, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
                 """,
-                (job_id, self.user_id, scene, json.dumps(request_spec.to_dict(), ensure_ascii=False), json.dumps(plan.search_queries, ensure_ascii=False), now, now),
+                (
+                    job_id,
+                    self.user_id,
+                    scene,
+                    json.dumps(request_spec.to_dict(), ensure_ascii=False),
+                    json.dumps(
+                        {"queries": plan.search_queries, "keywordSpecs": plan.keyword_specs},
+                        ensure_ascii=False,
+                    ),
+                    now,
+                    now,
+                ),
             )
-        _EXECUTOR.submit(self._run_job, job_id, plan.search_queries, plan.negative_queries, request_spec, limit)
+        _EXECUTOR.submit(
+            self._run_job,
+            job_id,
+            plan.search_queries,
+            plan.negative_queries,
+            plan.keyword_specs,
+            plan.negative_keyword_specs,
+            request_spec,
+            limit,
+        )
         return job_id
 
     def discover_now(self, *, profile: MusicProfile, request_spec: RequestSpec, scene: str, limit: int) -> dict[str, Any]:
         plan = self.planner.plan(profile=profile, request_spec=request_spec, scene=scene)
-        return self._discover(plan.search_queries, request_spec, limit, trace_id=plan.trace_id, negative_queries=plan.negative_queries)
+        return self._discover(
+            plan.search_queries,
+            request_spec,
+            limit,
+            trace_id=plan.trace_id,
+            negative_queries=plan.negative_queries,
+            keyword_specs=plan.keyword_specs,
+            negative_keyword_specs=plan.negative_keyword_specs,
+        )
 
     def job_status(self, job_id: str) -> dict[str, Any]:
         with get_connection(self.db_path) as conn:
@@ -66,11 +94,28 @@ class DiscoveryService:
             "error": row["error"],
         }
 
-    def _run_job(self, job_id: str, queries: list[str], negative_queries: list[str], spec: RequestSpec, limit: int) -> None:
+    def _run_job(
+        self,
+        job_id: str,
+        queries: list[str],
+        negative_queries: list[str],
+        keyword_specs: dict[str, dict[str, object]],
+        negative_keyword_specs: dict[str, dict[str, object]],
+        spec: RequestSpec,
+        limit: int,
+    ) -> None:
         with get_connection(self.db_path) as conn:
             conn.execute("UPDATE discovery_jobs SET status = 'running', updated_at = ? WHERE job_id = ?", (_utc_now(), job_id))
         try:
-            result = self._discover(queries, spec, limit, trace_id=job_id, negative_queries=negative_queries)
+            result = self._discover(
+                queries,
+                spec,
+                limit,
+                trace_id=job_id,
+                negative_queries=negative_queries,
+                keyword_specs=keyword_specs,
+                negative_keyword_specs=negative_keyword_specs,
+            )
         except Exception as exc:
             with get_connection(self.db_path) as conn:
                 conn.execute("UPDATE discovery_jobs SET status = 'failed', error = ?, updated_at = ? WHERE job_id = ?", (str(exc)[:300], _utc_now(), job_id))
@@ -81,12 +126,24 @@ class DiscoveryService:
                 (json.dumps(result, ensure_ascii=False), _utc_now(), job_id),
             )
 
-    def _discover(self, queries: list[str], spec: RequestSpec, limit: int, *, trace_id: str, negative_queries: list[str] | None = None) -> dict[str, Any]:
+    def _discover(
+        self,
+        queries: list[str],
+        spec: RequestSpec,
+        limit: int,
+        *,
+        trace_id: str,
+        negative_queries: list[str] | None = None,
+        keyword_specs: dict[str, dict[str, object]] | None = None,
+        negative_keyword_specs: dict[str, dict[str, object]] | None = None,
+    ) -> dict[str, Any]:
         started = time.perf_counter()
         governed = self.keyword_governance.prepare(
             queries,
             source="request" if spec.constrained else "profile",
             preserve_order=spec.constrained,
+            family_specs=keyword_specs,
+            limit=self.planner.search_budget,
         )
         queries = [item["query"] for item in governed]
         keyword_ids = {item["query"]: item["keywordId"] for item in governed}
@@ -95,6 +152,8 @@ class DiscoveryService:
             negative_queries or [],
             source="negative_probe",
             preserve_order=True,
+            family_specs=negative_keyword_specs,
+            limit=1,
         )
         negative_queries = [item["query"] for item in negative_governed]
         negative_keyword_ids = {item["query"]: item["keywordId"] for item in negative_governed}

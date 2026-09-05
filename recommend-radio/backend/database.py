@@ -407,6 +407,11 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
                 conn.execute('PRAGMA user_version = 20')
                 current_version = 20
 
+            if current_version < 21:
+                _ensure_keyword_family_governance(conn)
+                conn.execute('PRAGMA user_version = 21')
+                current_version = 21
+
             _ensure_current_schema_columns(conn)
 
         _initialized_paths.add(path)
@@ -434,6 +439,7 @@ def _ensure_current_schema_columns(conn: sqlite3.Connection) -> None:
     _ensure_profile_snapshot_table(conn)
     _ensure_lifecycle_decay_column(conn)
     _ensure_l3_demotion_outbox(conn)
+    _ensure_keyword_family_governance(conn)
 
 
 def _ensure_recommendation_history_table(conn: sqlite3.Connection) -> None:
@@ -666,6 +672,50 @@ def _ensure_keyword_feedback_columns(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "discovery_keywords", "shown_count", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "discovery_keywords", "dismissed_count", "INTEGER NOT NULL DEFAULT 0")
     _add_column_if_missing(conn, "discovery_keywords", "completed_count", "INTEGER NOT NULL DEFAULT 0")
+
+
+def _ensure_keyword_family_governance(conn: sqlite3.Connection) -> None:
+    for column, definition in (
+        ("family_id", "TEXT NOT NULL DEFAULT ''"),
+        ("canonical_spec_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("exploration_axis", "TEXT NOT NULL DEFAULT 'base'"),
+        ("new_candidate_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("duplicate_candidate_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("last_marginal_yield", "REAL NOT NULL DEFAULT 0"),
+        ("last_result_overlap", "REAL NOT NULL DEFAULT 0"),
+        ("consecutive_low_novelty", "INTEGER NOT NULL DEFAULT 0"),
+        ("last_result_track_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("cooldown_until", "TEXT"),
+    ):
+        _add_column_if_missing(conn, "discovery_keywords", column, definition)
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_keyword_families (
+            family_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            platform TEXT NOT NULL DEFAULT 'bilibili',
+            canonical_spec_json TEXT NOT NULL,
+            exploration_axis TEXT NOT NULL DEFAULT 'base',
+            status TEXT NOT NULL DEFAULT 'active',
+            search_count INTEGER NOT NULL DEFAULT 0,
+            candidate_count INTEGER NOT NULL DEFAULT 0,
+            new_candidate_count INTEGER NOT NULL DEFAULT 0,
+            quality_score REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_used_at TEXT,
+            cooldown_until TEXT,
+            UNIQUE(user_id, platform, canonical_spec_json),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_keyword_families_rank
+            ON discovery_keyword_families (
+                user_id, platform, status, quality_score DESC, last_used_at DESC
+            );
+        CREATE INDEX IF NOT EXISTS idx_discovery_keywords_family
+            ON discovery_keywords (user_id, family_id, status, quality_score DESC);
+        """
+    )
 
 
 def _ensure_profile_snapshot_table(conn: sqlite3.Connection) -> None:
