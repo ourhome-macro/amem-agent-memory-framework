@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterable
 
 
@@ -33,6 +33,19 @@ _GENRE_ALIASES = {
 _NEGATION_PREFIX = r"(?:不要|不想|别|避开|少来点|不听)"
 
 
+_FOLLOW_UP_RECOMMENDATION_PHRASES = (
+    "再来一批",
+    "换一批",
+    "下一批",
+    "再来几首",
+    "再来点",
+    "继续来",
+    "继续推荐",
+    "同类再来",
+    "还是这个方向",
+)
+
+
 @dataclass(frozen=True)
 class RequestSpec:
     """Ephemeral, user-authored constraints for exactly one recommendation request."""
@@ -56,6 +69,24 @@ class RequestSpec:
             or self.required_vocals
             or self.required_genres
             or self.excluded_topics
+        )
+
+    @property
+    def has_explicit_preferences(self) -> bool:
+        """Whether this turn supplies a new direction instead of continuing one."""
+        return self.constrained or bool(self.moods)
+
+    @property
+    def should_restore_scene_context(self) -> bool:
+        """Only an explicit continuation command may inherit the active L2 scene.
+
+        A generic request remains profile-driven so the previous directed
+        request cannot pollute a later “recommend anything” interaction.
+        """
+        normalized = self.raw_text.casefold()
+        return (
+            not self.has_explicit_preferences
+            and any(phrase in normalized for phrase in _FOLLOW_UP_RECOMMENDATION_PHRASES)
         )
 
     @property

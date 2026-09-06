@@ -90,6 +90,7 @@ HIGH_CONFIDENCE_RECOMMEND_PHRASES = (
     "下一批",
     "换点别的",
     "再来点",
+    "再来几首",
     "再推荐",
     "歌单",
     "recommend some",

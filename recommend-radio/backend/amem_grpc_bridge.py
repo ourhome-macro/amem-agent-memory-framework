@@ -162,7 +162,7 @@ class AmemGrpcBridge:
 
     def retrieve_memories(self, user_id: str, scene: str, *, limit: int = 12) -> list[RelevantMemory]:
         profile = self.get_music_profile(user_id=user_id, scene=scene)
-        return _evidence_memories(profile, limit=limit)
+        return _profile_snapshot_memories(profile, limit=limit)
 
 
 class GrpcProfileProjector:
@@ -212,7 +212,7 @@ class GrpcProfileProjector:
             source=f"{fallback_profile.source}_stable",
         )
         profile = overlay_profile_snapshot(profile, fallback_profile)
-        memories = _evidence_memories(profile, limit=16)
+        memories = _profile_snapshot_memories(profile, limit=16)
         projection = ProfileProjection(
             profile=profile,
             memories=memories,
@@ -264,7 +264,7 @@ class GrpcProfileProjector:
             profile = overlay_profile_snapshot(profile, fallback_profile)
             projection = ProfileProjection(
                 profile=profile,
-                memories=_evidence_memories(profile, limit=16),
+                memories=_profile_snapshot_memories(profile, limit=16),
                 trace_id=f"profile:{user_id}:{scene}:{int(time.time())}:amem-grpc",
                 llm_latency_ms=float(self.bridge.last_profile_timing.get("profileLlmApiMs", 0.0)),
             )
@@ -302,7 +302,12 @@ def _profile_from_response(response: Any) -> MusicProfile:
     return MusicProfile.from_dict(value, source=str(response.source or "amem-grpc"))
 
 
-def _evidence_memories(profile: MusicProfile, *, limit: int) -> list[RelevantMemory]:
+def _profile_snapshot_memories(profile: MusicProfile, *, limit: int) -> list[RelevantMemory]:
+    """Expose only projected L3 references to the profile path.
+
+    Raw playback and feedback live in the event store and are intentionally
+    absent here. They become L1/L3 only through the update pipeline.
+    """
     memories: list[RelevantMemory] = []
     for memory_id in profile.evidence_memory_ids[:limit]:
         memories.append(
@@ -310,7 +315,7 @@ def _evidence_memories(profile: MusicProfile, *, limit: int) -> list[RelevantMem
                 memory_id=memory_id,
                 content="AMEM gRPC profile evidence",
                 layer="",
-                memory_type="evidence",
+                memory_type="l3_profile_snapshot",
                 tags=("music", "recommend-radio", "amem-grpc"),
                 salience=profile.confidence,
                 confidence=profile.confidence,

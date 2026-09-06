@@ -57,6 +57,28 @@ EXPLORE_SOURCES = {
     "popular_music",
     "discovery_search",
 }
+MEMORY_EVIDENCE_EVENTS = {
+    "played",
+    "accepted",
+    "dismissed",
+    "dislike",
+    "skipped",
+    "completed",
+    "liked",
+    "unliked",
+    "collection_added",
+    "track_reviewed",
+}
+PROFILE_LIFECYCLE_EVENTS = {
+    "played",
+    "accepted",
+    "dismissed",
+    "dislike",
+    "skipped",
+    "completed",
+    "liked",
+    "collection_added",
+}
 
 
 @dataclass
@@ -188,10 +210,14 @@ class RecommendationService:
         scene_memories = self.scene_memory_service.active(scene=normalized_scene)
         timings["l2SceneMemoryMs"] = round((time.perf_counter() - span_started) * 1000, 3)
         timings["l2SceneMemorySource"] = scene_memories[0].get("source") if scene_memories else "sqlite_empty"
-        resolved_request_spec = request_spec or (
+        active_scene_spec = (
             RequestSpec.from_dict(scene_memories[0]["requestSpec"])
             if scene_memories and isinstance(scene_memories[0].get("requestSpec"), dict)
-            else RequestSpec()
+            else None
+        )
+        resolved_request_spec, restore_scene_context = self._resolve_request_spec(
+            request_spec,
+            active_scene_spec,
         )
         bounded_limit = min(
             max(int(limit or DEFAULT_RECOMMENDATION_LIMIT), 1),
@@ -226,12 +252,8 @@ class RecommendationService:
         profile_version = _profile_version(projection.trace_id, music_profile)
 
         context_specs = []
-        if normalized_scene == "conversation" and not resolved_request_spec.constrained:
-            context_specs = [
-                RequestSpec.from_dict(item["requestSpec"])
-                for item in scene_memories[:1]
-                if isinstance(item.get("requestSpec"), dict)
-            ]
+        if normalized_scene == "conversation" and restore_scene_context and active_scene_spec is not None:
+            context_specs = [active_scene_spec]
         span_started = time.perf_counter()
         drafts = self._generate_candidates(legacy_profile, resolved_request_spec, context_specs=context_specs)
         timings["candidatePoolReadMs"] = round((time.perf_counter() - span_started) * 1000, 2)
@@ -285,8 +307,12 @@ class RecommendationService:
         )
         timings["selectionMmrMs"] = round((time.perf_counter() - span_started) * 1000, 2)
         timings["mmr"] = mmr_diagnostics
+        timings["servingMs"] = round((time.perf_counter() - started_at) * 1000, 2)
 
+        span_started = time.perf_counter()
         self._upsert_candidate_tracks(selected)
+        timings["candidatePersistenceMs"] = round((time.perf_counter() - span_started) * 1000, 2)
+        span_started = time.perf_counter()
         trace_id = self._store_recommendation_trace(
             scene=normalized_scene,
             profile_trace_id=projection.trace_id,
@@ -302,8 +328,10 @@ class RecommendationService:
             request_spec=resolved_request_spec,
             timing=timings,
         )
+        timings["tracePersistenceMs"] = round((time.perf_counter() - span_started) * 1000, 2)
         for item in selected:
             item.recommendation_trace_id = trace_id
+        span_started = time.perf_counter()
         self.record_events(
             [
                 {
@@ -319,7 +347,9 @@ class RecommendationService:
                 for item in selected
             ]
         )
+        timings["feedbackWriteMs"] = round((time.perf_counter() - span_started) * 1000, 2)
         timings["totalMs"] = round((time.perf_counter() - started_at) * 1000, 2)
+        self._update_recommendation_trace_timing(trace_id, timings)
         return {
             "scene": normalized_scene,
             "items": [item.to_dict() for item in selected],
@@ -332,6 +362,17 @@ class RecommendationService:
             "debugTraceId": trace_id,
             "timing": timings,
         }
+
+    @staticmethod
+    def _resolve_request_spec(
+        request_spec: RequestSpec | None,
+        active_scene_spec: RequestSpec | None,
+    ) -> tuple[RequestSpec, bool]:
+        """Resolve RequestSpec without allowing L2 to leak into fresh requests."""
+        restore_scene_context = request_spec is None or request_spec.should_restore_scene_context
+        if restore_scene_context and active_scene_spec is not None:
+            return active_scene_spec, True
+        return request_spec or RequestSpec(), False
 
     def latest_debug_trace(self, scene: str = "home") -> dict[str, Any]:
         normalized_scene = self._normalize_scene(scene)
@@ -643,21 +684,24 @@ class RecommendationService:
                     "skipped": item["skipped"],
                 }
             )
-            record_music_behavior(
-                self.amem_bridge,
-                user_id=self.user_id,
-                event=item["event"],
-                track=item["track"],
-                scene=item["scene"],
-                payload=behavior_payload,
-            )
+            # Exposure is stored locally for fatigue and keyword attribution,
+            # but it is not user-preference evidence and must not enter AMEM.
+            if item["event"] in MEMORY_EVIDENCE_EVENTS:
+                record_music_behavior(
+                    self.amem_bridge,
+                    user_id=self.user_id,
+                    event=item["event"],
+                    track=item["track"],
+                    scene=item["scene"],
+                    payload=behavior_payload,
+                )
             self.keyword_governance.record_feedback(
                 item["trackId"],
                 item["event"],
                 recommendation_trace_id=item["recommendationTraceId"],
                 source_keyword_ids=item["sourceKeywordIds"],
             )
-        if normalized:
+        if any(item["event"] in PROFILE_LIFECYCLE_EVENTS for item in normalized):
             self.profile_update_pipeline.process()
         return [
             {key: value for key, value in item.items() if key not in {"track", "behaviorPayload"}}
@@ -1279,6 +1323,22 @@ class RecommendationService:
                 continue
         if tracks:
             self.library.upsert_tracks(tracks)
+
+    def _update_recommendation_trace_timing(self, trace_id: str, timing: dict[str, Any]) -> None:
+        """Persist the final timing after shown events and keyword feedback are recorded."""
+        with get_connection(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT payload_json FROM recommendation_traces WHERE trace_id = ?",
+                (trace_id,),
+            ).fetchone()
+            if row is None:
+                return
+            payload = _json_loads(row["payload_json"])
+            payload["timing"] = timing
+            conn.execute(
+                "UPDATE recommendation_traces SET payload_json = ? WHERE trace_id = ?",
+                (json.dumps(payload, ensure_ascii=False), trace_id),
+            )
 
     def _store_recommendation_trace(
         self,
