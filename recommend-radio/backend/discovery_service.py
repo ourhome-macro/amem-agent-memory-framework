@@ -5,6 +5,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from threading import Lock
 from typing import Any
 from uuid import uuid4
 import requests
@@ -13,12 +14,14 @@ from candidate_pool import CandidatePool
 from database import get_connection
 from discovery_planner import DiscoveryPlanner
 from keyword_governance import KeywordGovernance
+from keyword_evolution import KeywordEvolutionService
 from models import Track
 from music_profile import MusicProfile
 from request_spec import RequestSpec
 
 
 _EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="music-discovery")
+_EVOLUTION_LOCK = Lock()
 
 
 class DiscoveryService:
@@ -31,6 +34,7 @@ class DiscoveryService:
         self.planner = planner or DiscoveryPlanner()
         self.pool = CandidatePool(db_path, user_id=user_id)
         self.keyword_governance = KeywordGovernance(db_path, user_id=user_id)
+        self.keyword_evolution = KeywordEvolutionService(self.keyword_governance)
 
     def enqueue(self, *, profile: MusicProfile, request_spec: RequestSpec, scene: str, limit: int) -> str | None:
         plan = self.planner.plan(profile=profile, request_spec=request_spec, scene=scene)
@@ -125,6 +129,19 @@ class DiscoveryService:
                 "UPDATE discovery_jobs SET status = 'completed', result_json = ?, updated_at = ? WHERE job_id = ?",
                 (json.dumps(result, ensure_ascii=False), _utc_now(), job_id),
             )
+        if self.keyword_governance.evolution_due():
+            _EXECUTOR.submit(self._run_evolution, list(spec.excluded_topics))
+
+    def _run_evolution(self, blocked_topics: list[str]) -> None:
+        if not _EVOLUTION_LOCK.acquire(blocking=False):
+            return
+        try:
+            self.keyword_evolution.run(blocked_topics=blocked_topics)
+        except Exception as exc:
+            self.keyword_governance.record_evolution_run(status="failed", error=str(exc))
+            return
+        finally:
+            _EVOLUTION_LOCK.release()
 
     def _discover(
         self,
@@ -138,6 +155,17 @@ class DiscoveryService:
         negative_keyword_specs: dict[str, dict[str, object]] | None = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
+        keyword_specs = dict(keyword_specs or {})
+        if not spec.constrained:
+            for reusable in self.keyword_governance.reusable_keywords(limit=32):
+                query = str(reusable.get("query") or "").strip()
+                if not query:
+                    continue
+                if query not in queries:
+                    queries.append(query)
+                canonical = reusable.get("canonicalSpec")
+                if isinstance(canonical, dict):
+                    keyword_specs.setdefault(query, canonical)
         governed = self.keyword_governance.prepare(
             queries,
             source="request" if spec.constrained else "profile",
@@ -183,7 +211,11 @@ class DiscoveryService:
             if kind == "negative":
                 recorded = self.pool.record_negative_samples(tracks, query=query)
                 self.keyword_governance.record_discovery(
-                    negative_keyword_ids[query], tracks=tracks, admitted_count=0
+                    negative_keyword_ids[query],
+                    tracks=tracks,
+                    admitted_count=0,
+                    discovery_job_id=trace_id,
+                    admitted_track_ids=[],
                 )
                 negative_sample_count += recorded
                 query_timings.append(
@@ -201,7 +233,15 @@ class DiscoveryService:
                 f"{track.title[:180]} {track.owner[:80]}" for track in tracks
             )
             result = self.pool.admit(tracks, source="discovery_search", request_spec=spec, query=query)
-            self.keyword_governance.record_discovery(keyword_ids[query], tracks=tracks, admitted_count=result["admitted"])
+            self.keyword_governance.record_discovery(
+                keyword_ids[query],
+                tracks=tracks,
+                admitted_count=result["admitted"],
+                discovery_job_id=trace_id,
+                admitted_track_ids=result.get("admittedTrackIds") or [],
+                scope_kind=str(result.get("scopeKind") or "default"),
+                scope_key=str(result.get("scopeKey") or ""),
+            )
             admit_ms = (time.perf_counter() - admit_started) * 1000
             total["enqueued"] += result["enqueued"]
             total["admitted"] += result["admitted"]

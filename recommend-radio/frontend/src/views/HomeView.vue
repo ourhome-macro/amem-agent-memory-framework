@@ -253,6 +253,8 @@ function playRecommendation(item: RecommendationItem) {
     source: item.source,
     reason: item.reason,
     score: item.score,
+    recommendationTraceId: item.recommendationTraceId,
+    sourceKeywordIds: item.sourceKeywordIds,
   })
 }
 
@@ -265,6 +267,8 @@ function dismissRecommendation(item: RecommendationItem) {
     source: item.source,
     reason: item.reason,
     score: item.score,
+    recommendationTraceId: item.recommendationTraceId,
+    sourceKeywordIds: item.sourceKeywordIds,
   })
 }
 

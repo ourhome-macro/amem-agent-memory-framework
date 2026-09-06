@@ -412,6 +412,11 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
                 conn.execute('PRAGMA user_version = 21')
                 current_version = 21
 
+            if current_version < 22:
+                _ensure_keyword_learning_tables(conn)
+                conn.execute('PRAGMA user_version = 22')
+                current_version = 22
+
             _ensure_current_schema_columns(conn)
 
         _initialized_paths.add(path)
@@ -440,6 +445,7 @@ def _ensure_current_schema_columns(conn: sqlite3.Connection) -> None:
     _ensure_lifecycle_decay_column(conn)
     _ensure_l3_demotion_outbox(conn)
     _ensure_keyword_family_governance(conn)
+    _ensure_keyword_learning_tables(conn)
 
 
 def _ensure_recommendation_history_table(conn: sqlite3.Connection) -> None:
@@ -716,6 +722,100 @@ def _ensure_keyword_family_governance(conn: sqlite3.Connection) -> None:
             ON discovery_keywords (user_id, family_id, status, quality_score DESC);
         """
     )
+
+
+def _ensure_keyword_learning_tables(conn: sqlite3.Connection) -> None:
+    for table in ("discovery_keywords", "discovery_keyword_families"):
+        for column, definition in (
+            ("keyword_kind", "TEXT NOT NULL DEFAULT 'probe'"),
+            ("origin", "TEXT NOT NULL DEFAULT 'legacy'"),
+            ("affinity_score", "REAL NOT NULL DEFAULT 0.5"),
+            ("yield_score", "REAL NOT NULL DEFAULT 0"),
+            ("evolution_action", "TEXT NOT NULL DEFAULT 'observe'"),
+        ):
+            _add_column_if_missing(conn, table, column, definition)
+    for column, definition in (
+        ("parent_keyword_id", "TEXT"),
+        ("affinity_exposure", "REAL NOT NULL DEFAULT 0"),
+        ("affinity_positive", "REAL NOT NULL DEFAULT 0"),
+        ("affinity_negative", "REAL NOT NULL DEFAULT 0"),
+    ):
+        _add_column_if_missing(conn, "discovery_keywords", column, definition)
+    _add_column_if_missing(conn, "recommendation_events", "recommendation_trace_id", "TEXT NOT NULL DEFAULT ''")
+    _add_column_if_missing(conn, "recommendation_events", "source_keyword_ids_json", "TEXT NOT NULL DEFAULT '[]'")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_item_sources (
+            discovery_job_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            keyword_id TEXT NOT NULL,
+            family_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            search_rank INTEGER NOT NULL,
+            admitted INTEGER NOT NULL DEFAULT 0,
+            scope_kind TEXT NOT NULL DEFAULT 'default',
+            scope_key TEXT NOT NULL DEFAULT '',
+            discovered_at TEXT NOT NULL,
+            PRIMARY KEY (discovery_job_id, keyword_id, track_id),
+            FOREIGN KEY(keyword_id) REFERENCES discovery_keywords(keyword_id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_item_sources_track
+            ON discovery_item_sources (user_id, track_id, discovered_at DESC);
+
+        CREATE TABLE IF NOT EXISTS recommendation_keyword_attributions (
+            recommendation_trace_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            keyword_id TEXT NOT NULL,
+            family_id TEXT NOT NULL,
+            credit_weight REAL NOT NULL,
+            shown INTEGER NOT NULL DEFAULT 1,
+            clicked INTEGER NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            liked INTEGER NOT NULL DEFAULT 0,
+            negative INTEGER NOT NULL DEFAULT 0,
+            shown_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (recommendation_trace_id, track_id, keyword_id),
+            FOREIGN KEY(recommendation_trace_id) REFERENCES recommendation_traces(trace_id) ON DELETE CASCADE,
+            FOREIGN KEY(keyword_id) REFERENCES discovery_keywords(keyword_id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_recommendation_keyword_attribution_track
+            ON recommendation_keyword_attributions (user_id, track_id, shown_at DESC);
+
+        CREATE TABLE IF NOT EXISTS discovery_keyword_proposals (
+            proposal_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            query_text TEXT NOT NULL,
+            canonical_spec_json TEXT NOT NULL DEFAULT '{}',
+            parent_keyword_id TEXT,
+            family_id TEXT NOT NULL DEFAULT '',
+            reason TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'accepted',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_keyword_proposals_user
+            ON discovery_keyword_proposals (user_id, status, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS discovery_keyword_evolution_runs (
+            run_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            proposed_count INTEGER NOT NULL DEFAULT 0,
+            accepted_count INTEGER NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_keyword_evolution_runs_user
+            ON discovery_keyword_evolution_runs (user_id, created_at DESC);
+        """
+    )
+    _add_column_if_missing(conn, "discovery_keyword_proposals", "evolution_run_id", "TEXT NOT NULL DEFAULT ''")
 
 
 def _ensure_profile_snapshot_table(conn: sqlite3.Connection) -> None:

@@ -6,6 +6,7 @@ import math
 import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import uuid4
 
 import requests
 
@@ -40,7 +41,13 @@ class KeywordGovernance:
         prepared: list[dict[str, Any]] = []
         with get_connection(self.db_path) as conn:
             for order, query in enumerate(dict.fromkeys(item.strip() for item in queries if item.strip())):
-                canonical_spec, exploration_axis = _canonical_spec(specs.get(query), query=query, source=source)
+                (
+                    canonical_spec,
+                    exploration_axis,
+                    keyword_kind,
+                    origin,
+                    parent_keyword_id,
+                ) = _canonical_spec(specs.get(query), query=query, source=source)
                 canonical_json = json.dumps(canonical_spec, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                 family_id = _family_id(self.user_id, canonical_json)
                 keyword_id = _keyword_id(self.user_id, query)
@@ -48,25 +55,52 @@ class KeywordGovernance:
                     """
                     INSERT INTO discovery_keyword_families (
                         family_id, user_id, canonical_spec_json, exploration_axis,
-                        created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        keyword_kind, origin, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(user_id, platform, canonical_spec_json) DO UPDATE SET
                         exploration_axis=excluded.exploration_axis,
+                        keyword_kind=CASE
+                            WHEN discovery_keyword_families.keyword_kind='anchor' THEN 'anchor'
+                            ELSE excluded.keyword_kind
+                        END,
+                        origin=CASE
+                            WHEN discovery_keyword_families.keyword_kind='anchor' THEN discovery_keyword_families.origin
+                            ELSE excluded.origin
+                        END,
                         updated_at=excluded.updated_at
                     """,
-                    (family_id, self.user_id, canonical_json, exploration_axis, now, now),
+                    (
+                        family_id,
+                        self.user_id,
+                        canonical_json,
+                        exploration_axis,
+                        keyword_kind,
+                        origin,
+                        now,
+                        now,
+                    ),
                 )
                 conn.execute(
                     """
                     INSERT INTO discovery_keywords (
                         keyword_id, user_id, keyword, source, family_id,
-                        canonical_spec_json, exploration_axis, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        canonical_spec_json, exploration_axis, keyword_kind,
+                        origin, parent_keyword_id, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(user_id, platform, keyword) DO UPDATE SET
                         source=excluded.source,
                         family_id=excluded.family_id,
                         canonical_spec_json=excluded.canonical_spec_json,
-                        exploration_axis=excluded.exploration_axis
+                        exploration_axis=excluded.exploration_axis,
+                        keyword_kind=CASE
+                            WHEN discovery_keywords.keyword_kind='anchor' THEN 'anchor'
+                            ELSE excluded.keyword_kind
+                        END,
+                        origin=CASE
+                            WHEN discovery_keywords.keyword_kind='anchor' THEN discovery_keywords.origin
+                            ELSE excluded.origin
+                        END,
+                        parent_keyword_id=COALESCE(excluded.parent_keyword_id, discovery_keywords.parent_keyword_id)
                     """,
                     (
                         keyword_id,
@@ -76,12 +110,17 @@ class KeywordGovernance:
                         family_id,
                         canonical_json,
                         exploration_axis,
+                        keyword_kind,
+                        origin,
+                        parent_keyword_id,
                         now,
                     ),
                 )
                 row = conn.execute(
                     """
                     SELECT k.*, f.quality_score AS family_quality,
+                           f.affinity_score AS family_affinity,
+                           f.yield_score AS family_yield,
                            f.status AS family_status, f.cooldown_until AS family_cooldown_until
                     FROM discovery_keywords k
                     JOIN discovery_keyword_families f ON f.family_id=k.family_id
@@ -108,12 +147,33 @@ class KeywordGovernance:
                         "status": row["status"],
                         "canonicalSpec": canonical_spec,
                         "explorationAxis": exploration_axis,
+                        "keywordKind": str(row["keyword_kind"] or keyword_kind),
+                        "origin": str(row["origin"] or origin),
+                        "affinity": max(
+                            float(row["affinity_score"] or 0.5),
+                            float(row["family_affinity"] or 0.5),
+                        ),
+                        "yield": max(
+                            float(row["yield_score"] or 0.0),
+                            float(row["family_yield"] or 0.0),
+                        ),
+                        "evolutionAction": str(row["evolution_action"] or "observe"),
                         "order": order,
                     }
                 )
         return self._select(prepared, limit=max(int(limit), 0), preserve_order=preserve_order)
 
-    def record_discovery(self, keyword_id: str, *, tracks: list[Track], admitted_count: int) -> None:
+    def record_discovery(
+        self,
+        keyword_id: str,
+        *,
+        tracks: list[Track],
+        admitted_count: int,
+        discovery_job_id: str = "",
+        admitted_track_ids: list[str] | None = None,
+        scope_kind: str = "default",
+        scope_key: str = "",
+    ) -> None:
         now = _utc_now()
         current_ids = list(dict.fromkeys(track.track_id for track in tracks if track.track_id))
         with get_connection(self.db_path) as conn:
@@ -198,6 +258,29 @@ class KeywordGovernance:
                     """,
                     (keyword_id, self.user_id, track_id, now),
                 )
+            admitted_ids = set(admitted_track_ids or [])
+            if discovery_job_id:
+                for rank, track_id in enumerate(current_ids, start=1):
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO discovery_item_sources (
+                            discovery_job_id, user_id, keyword_id, family_id,
+                            track_id, search_rank, admitted, scope_kind, scope_key, discovered_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            discovery_job_id,
+                            self.user_id,
+                            keyword_id,
+                            family_id,
+                            track_id,
+                            rank,
+                            int(track_id in admitted_ids),
+                            "request" if scope_kind == "request" else "default",
+                            scope_key if scope_kind == "request" else "",
+                            now,
+                        ),
+                    )
             conn.execute(
                 """
                 UPDATE discovery_keyword_families
@@ -212,20 +295,77 @@ class KeywordGovernance:
             self._recalculate(conn, keyword_id)
             self._recalculate_family(conn, family_id)
 
-    def record_feedback(self, track_id: str, event: str) -> None:
+    def record_feedback(
+        self,
+        track_id: str,
+        event: str,
+        *,
+        recommendation_trace_id: str = "",
+        source_keyword_ids: list[str] | None = None,
+    ) -> None:
         if event not in {"shown", "played", "accepted", "completed", "liked", "skipped", "dismissed", "dislike"}:
             return
         with get_connection(self.db_path) as conn:
+            trace_id = recommendation_trace_id.strip()
+            if not trace_id:
+                trace_row = conn.execute(
+                    """
+                    SELECT recommendation_trace_id
+                    FROM recommendation_keyword_attributions
+                    WHERE user_id=? AND track_id=?
+                    ORDER BY shown_at DESC LIMIT 1
+                    """,
+                    (self.user_id, track_id),
+                ).fetchone()
+                trace_id = "" if trace_row is None else str(trace_row["recommendation_trace_id"])
+            keyword_filter = list(dict.fromkeys(str(item) for item in source_keyword_ids or [] if str(item)))
+            parameters: list[object] = [self.user_id, track_id]
+            where = "user_id=? AND track_id=?"
+            if trace_id:
+                where += " AND recommendation_trace_id=?"
+                parameters.append(trace_id)
+            if keyword_filter:
+                placeholders = ",".join("?" for _ in keyword_filter)
+                where += f" AND keyword_id IN ({placeholders})"
+                parameters.extend(keyword_filter)
             rows = conn.execute(
-                """
-                SELECT DISTINCT c.keyword_id, k.family_id
-                FROM discovery_keyword_candidates c
-                JOIN discovery_keywords k ON k.keyword_id=c.keyword_id
-                WHERE c.user_id=? AND c.track_id=?
-                ORDER BY c.discovered_at DESC LIMIT 3
+                f"""
+                SELECT keyword_id, family_id
+                FROM recommendation_keyword_attributions
+                WHERE {where}
                 """,
-                (self.user_id, track_id),
+                tuple(parameters),
             ).fetchall()
+            if rows:
+                assignments = {
+                    "shown": "shown=1",
+                    "played": "clicked=1",
+                    "accepted": "clicked=1",
+                    "completed": "clicked=1, completed=1",
+                    "liked": "liked=1",
+                    "skipped": "negative=1",
+                    "dismissed": "negative=1",
+                    "dislike": "negative=1",
+                }[event]
+                conn.execute(
+                    f"""
+                    UPDATE recommendation_keyword_attributions
+                    SET {assignments}, updated_at=?
+                    WHERE {where}
+                    """,
+                    (_utc_now(), *parameters),
+                )
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT DISTINCT c.keyword_id, k.family_id
+                    FROM discovery_keyword_candidates c
+                    JOIN discovery_keywords k ON k.keyword_id=c.keyword_id
+                    WHERE c.user_id=? AND c.track_id=?
+                    ORDER BY c.discovered_at DESC LIMIT 3
+                    """,
+                    (self.user_id, track_id),
+                ).fetchall()
             families: set[str] = set()
             for row in rows:
                 increments = {
@@ -245,10 +385,279 @@ class KeywordGovernance:
                     f"UPDATE discovery_keywords SET {assignments}, last_evaluated_at=? WHERE keyword_id=?",
                     (_utc_now(), row["keyword_id"]),
                 )
+                self._refresh_affinity(conn, str(row["keyword_id"]))
                 self._recalculate(conn, row["keyword_id"])
                 families.add(str(row["family_id"] or ""))
             for family_id in families:
                 self._recalculate_family(conn, family_id)
+
+    def reusable_keywords(self, *, limit: int = 24) -> list[dict[str, Any]]:
+        now = _utc_now()
+        with get_connection(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT keyword, canonical_spec_json, keyword_kind, origin,
+                       parent_keyword_id, exploration_axis, affinity_score,
+                       yield_score, status, cooldown_until
+                FROM discovery_keywords
+                WHERE user_id=? AND status<>'retired' AND origin<>'negative_probe'
+                ORDER BY
+                    CASE keyword_kind WHEN 'anchor' THEN 0 ELSE 1 END,
+                    affinity_score DESC, yield_score DESC,
+                    COALESCE(last_used_at, '') ASC
+                LIMIT ?
+                """,
+                (self.user_id, max(1, min(int(limit), 80))),
+            ).fetchall()
+        return [
+            {
+                "query": str(row["keyword"]),
+                "canonicalSpec": {
+                    **_json_object(row["canonical_spec_json"]),
+                    "keyword_kind": str(row["keyword_kind"] or "probe"),
+                    "origin": str(row["origin"] or "legacy"),
+                    "parent_keyword_id": str(row["parent_keyword_id"] or ""),
+                    "exploration_axis": str(row["exploration_axis"] or "base"),
+                },
+                "cooldownActive": _is_future(row["cooldown_until"], now),
+            }
+            for row in rows
+        ]
+
+    def evolution_due(self) -> bool:
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+        with get_connection(self.db_path) as conn:
+            last = conn.execute(
+                "SELECT MAX(created_at) AS created_at FROM discovery_keyword_evolution_runs WHERE user_id=?",
+                (self.user_id,),
+            ).fetchone()
+            if last and last["created_at"] and str(last["created_at"]) > cutoff:
+                return False
+            actionable = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM discovery_keywords
+                WHERE user_id=? AND evolution_action IN ('rewrite', 'downweight', 'retire')
+                """,
+                (self.user_id,),
+            ).fetchone()[0]
+            completed_jobs = conn.execute(
+                "SELECT COUNT(*) FROM discovery_jobs WHERE user_id=? AND status='completed'",
+                (self.user_id,),
+            ).fetchone()[0]
+        return bool(actionable or (completed_jobs and completed_jobs % 3 == 0))
+
+    def record_evolution_run(
+        self,
+        *,
+        status: str,
+        proposed_count: int = 0,
+        accepted_count: int = 0,
+        error: str = "",
+        run_id: str = "",
+    ) -> str:
+        resolved_run_id = run_id or f"keyword-evolution:{uuid4().hex}"
+        with get_connection(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO discovery_keyword_evolution_runs (
+                    run_id, user_id, status, proposed_count, accepted_count, error, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    status=excluded.status,
+                    proposed_count=excluded.proposed_count,
+                    accepted_count=excluded.accepted_count,
+                    error=excluded.error
+                """,
+                (
+                    resolved_run_id,
+                    self.user_id,
+                    status[:32],
+                    max(int(proposed_count), 0),
+                    max(int(accepted_count), 0),
+                    str(error)[:300],
+                    _utc_now(),
+                ),
+            )
+        return resolved_run_id
+
+    def evolution_snapshot(self, *, limit: int = 24) -> dict[str, Any]:
+        with get_connection(self.db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT keyword_id, family_id, keyword, keyword_kind, origin,
+                       canonical_spec_json, affinity_score, yield_score,
+                       evolution_action, search_count, status
+                FROM discovery_keywords
+                WHERE user_id=?
+                ORDER BY
+                    CASE evolution_action
+                        WHEN 'rewrite' THEN 0 WHEN 'downweight' THEN 1
+                        WHEN 'retire' THEN 2 ELSE 3 END,
+                    affinity_score DESC, yield_score DESC
+                LIMIT ?
+                """,
+                (self.user_id, max(1, min(int(limit), 60))),
+            ).fetchall()
+        return {
+            "keywords": [
+                {
+                    "keywordId": row["keyword_id"],
+                    "familyId": row["family_id"],
+                    "query": row["keyword"],
+                    "kind": row["keyword_kind"],
+                    "origin": row["origin"],
+                    "canonicalSpec": _json_object(row["canonical_spec_json"]),
+                    "affinity": round(float(row["affinity_score"] or 0.5), 4),
+                    "yield": round(float(row["yield_score"] or 0.0), 4),
+                    "action": row["evolution_action"],
+                    "searchCount": int(row["search_count"] or 0),
+                    "status": row["status"],
+                }
+                for row in rows
+            ]
+        }
+
+    def register_evolution_proposals(
+        self,
+        proposals: list[dict[str, Any]],
+        *,
+        evolution_run_id: str = "",
+    ) -> dict[str, int]:
+        accepted = 0
+        rejected = 0
+        for proposal in proposals[:8]:
+            action = str(proposal.get("action") or "").strip().lower()
+            query = " ".join(str(proposal.get("query") or "").split())[:180]
+            parent_keyword_id = str(proposal.get("parentKeywordId") or "").strip()
+            reason = str(proposal.get("reason") or "")[:300]
+            spec = proposal.get("canonicalSpec") if isinstance(proposal.get("canonicalSpec"), dict) else {}
+            status = "accepted"
+            if action not in {"rewrite", "explore"} or len(query) < 3:
+                status = "rejected"
+            with get_connection(self.db_path) as conn:
+                parent = (
+                    conn.execute(
+                        """
+                        SELECT keyword_id, family_id, canonical_spec_json,
+                               evolution_action, affinity_score, yield_score
+                        FROM discovery_keywords
+                        WHERE keyword_id=? AND user_id=?
+                        """,
+                        (parent_keyword_id, self.user_id),
+                    ).fetchone()
+                    if parent_keyword_id
+                    else None
+                )
+                if action == "rewrite" and parent is None:
+                    status = "rejected"
+                if action == "rewrite" and parent is not None and parent["evolution_action"] != "rewrite":
+                    status = "rejected"
+                if action == "rewrite" and parent is not None:
+                    spec = _json_object(parent["canonical_spec_json"])
+                elif not spec and parent is not None:
+                    spec = _json_object(parent["canonical_spec_json"])
+                canonical, _axis, _kind, _origin, _parent = _canonical_spec(
+                    {
+                        **spec,
+                        "exploration_axis": "llm_rewrite" if action == "rewrite" else "llm_explore",
+                        "keyword_kind": "probe",
+                        "origin": "llm_evolution",
+                        "parent_keyword_id": parent_keyword_id,
+                    },
+                    query=query,
+                    source="llm_evolution",
+                )
+                canonical_json = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+                family_id = _family_id(self.user_id, canonical_json)
+                family = conn.execute(
+                    "SELECT status FROM discovery_keyword_families WHERE family_id=?",
+                    (family_id,),
+                ).fetchone()
+                duplicate = conn.execute(
+                    "SELECT 1 FROM discovery_keywords WHERE user_id=? AND keyword=?",
+                    (self.user_id, query),
+                ).fetchone()
+                if duplicate is not None or (family is not None and family["status"] == "retired"):
+                    status = "rejected"
+                if action == "explore" and family is not None:
+                    status = "rejected"
+                proposal_id = f"keyword-proposal:{uuid4().hex}"
+                conn.execute(
+                    """
+                    INSERT INTO discovery_keyword_proposals (
+                        proposal_id, user_id, action, query_text, canonical_spec_json,
+                        parent_keyword_id, family_id, reason, status, created_at, evolution_run_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        proposal_id,
+                        self.user_id,
+                        action or "invalid",
+                        query,
+                        canonical_json,
+                        parent_keyword_id or None,
+                        family_id,
+                        reason,
+                        status,
+                        _utc_now(),
+                        evolution_run_id,
+                    ),
+                )
+            if status == "accepted":
+                self.prepare(
+                    [query],
+                    source="llm_evolution",
+                    preserve_order=True,
+                    family_specs={
+                        query: {
+                            **canonical,
+                            "exploration_axis": "llm_rewrite" if action == "rewrite" else "llm_explore",
+                            "keyword_kind": "probe",
+                            "origin": "llm_evolution",
+                            "parent_keyword_id": parent_keyword_id,
+                        }
+                    },
+                    limit=0,
+                )
+                accepted += 1
+            else:
+                rejected += 1
+        return {"accepted": accepted, "rejected": rejected}
+
+    @staticmethod
+    def _refresh_affinity(conn: Any, keyword_id: str) -> None:
+        rows = conn.execute(
+            """
+            SELECT credit_weight, shown, clicked, completed, liked, negative
+            FROM recommendation_keyword_attributions
+            WHERE keyword_id=?
+            """,
+            (keyword_id,),
+        ).fetchall()
+        exposure = 0.0
+        positive = 0.0
+        negative = 0.0
+        for row in rows:
+            weight = float(row["credit_weight"] or 0.0)
+            exposure += weight * int(row["shown"] or 0)
+            reward = min(
+                1.0,
+                0.20 * int(row["clicked"] or 0)
+                + 0.80 * int(row["completed"] or 0)
+                + 1.00 * int(row["liked"] or 0),
+            )
+            positive += weight * reward
+            negative += weight * int(row["negative"] or 0)
+        affinity = (positive + 2.0) / max(positive + negative + 4.0, 1e-9)
+        conn.execute(
+            """
+            UPDATE discovery_keywords
+            SET affinity_exposure=?, affinity_positive=?, affinity_negative=?, affinity_score=?
+            WHERE keyword_id=?
+            """,
+            (round(exposure, 4), round(positive, 4), round(negative, 4), round(affinity, 4), keyword_id),
+        )
 
     def _select(
         self,
@@ -264,27 +673,35 @@ class KeywordGovernance:
         selected: list[int] = []
         family_counts: dict[str, int] = {}
         max_per_family = 2 if preserve_order else 1
+        anchor_target = limit if preserve_order else min(limit, round(limit * 0.75))
+        probe_target = 0 if preserve_order else max(limit - anchor_target, 0)
 
         def base_score(index: int) -> float:
             item = candidates[index]
             quality = max(float(item["quality"]), float(item["familyQuality"]))
-            novelty = float(item["marginalYield"])
-            unseen_bonus = 0.30 if int(item["searchCount"]) == 0 else 0.0
+            affinity = float(item["affinity"])
+            yield_score = float(item["yield"])
+            unseen_bonus = 0.20 if int(item["searchCount"]) == 0 else 0.0
             exploration_bonus = 0.08 if item["explorationAxis"] == "adjacent_genre" else 0.0
             cooldown_penalty = 0.55 if item["cooldownActive"] else 0.0
+            downweight_penalty = 0.25 if item["evolutionAction"] == "downweight" else 0.0
+            anchor_bonus = 0.08 if item["keywordKind"] == "anchor" else 0.0
             order_bonus = max(0.0, 0.08 - 0.01 * int(item["order"])) if preserve_order else 0.0
             return (
-                0.42 * quality
-                + 0.28 * novelty
+                0.45 * affinity
+                + 0.35 * yield_score
+                + 0.10 * quality
                 + unseen_bonus
                 + exploration_bonus
+                + anchor_bonus
                 + order_bonus
                 - 0.22 * float(item["resultOverlap"])
                 - cooldown_penalty
+                - downweight_penalty
             )
 
         while pending and len(selected) < limit:
-            eligible = [
+            eligible_all = [
                 index
                 for index in pending
                 if family_counts.get(str(candidates[index]["familyId"]), 0) < max_per_family
@@ -297,6 +714,19 @@ class KeywordGovernance:
                     )
                 )
             ]
+            if preserve_order:
+                eligible = eligible_all
+            else:
+                anchor_count = sum(candidates[index]["keywordKind"] == "anchor" for index in selected)
+                probe_count = sum(candidates[index]["keywordKind"] == "probe" for index in selected)
+                anchor_pool = [index for index in eligible_all if candidates[index]["keywordKind"] == "anchor"]
+                probe_pool = [index for index in eligible_all if candidates[index]["keywordKind"] == "probe"]
+                if anchor_count < anchor_target and anchor_pool:
+                    eligible = anchor_pool
+                elif probe_count < probe_target and probe_pool:
+                    eligible = probe_pool
+                else:
+                    eligible = eligible_all
             if not eligible:
                 break
 
@@ -358,6 +788,13 @@ class KeywordGovernance:
         dismiss_rate = dismissed / max(shown, 1)
         novelty = int(row["new_candidate_count"]) / candidates
         admission = int(row["admitted_count"]) / candidates
+        per_search_yield = min(
+            int(row["new_candidate_count"]) / max(int(row["search_count"]), 1) / 8.0,
+            1.0,
+        )
+        yield_score = min(max(0.45 * novelty + 0.35 * per_search_yield + 0.20 * admission, 0.0), 1.0)
+        affinity = float(row["affinity_score"] or 0.5)
+        feedback_evidence = float(row["affinity_positive"] or 0.0) + float(row["affinity_negative"] or 0.0)
         quality = max(
             0.0,
             min(
@@ -370,13 +807,51 @@ class KeywordGovernance:
             ),
         )
         status = str(row["status"])
-        if int(row["search_count"]) >= 5 and int(row["new_candidate_count"]) == 0:
-            status = "retired"
-        elif shown >= 8 and dismiss_rate >= 0.7 and completed == 0 and likes == 0:
+        keyword_kind = str(row["keyword_kind"] or "probe")
+        high_affinity = feedback_evidence >= 3 and affinity >= 0.62
+        low_affinity = feedback_evidence >= 3 and affinity <= 0.40
+        high_yield = yield_score >= 0.45
+        low_yield = int(row["search_count"]) >= 2 and yield_score <= 0.20
+        if high_affinity and high_yield:
+            evolution_action = "anchor"
+            if keyword_kind == "probe" and int(row["search_count"]) >= 3 and feedback_evidence >= 5:
+                keyword_kind = "anchor"
+            status = "active"
+        elif high_affinity and low_yield:
+            evolution_action = "rewrite"
+            status = "active" if keyword_kind == "anchor" else "cooldown"
+        elif low_affinity and high_yield:
+            evolution_action = "downweight"
             status = "cooldown"
+        elif low_affinity and low_yield:
+            evolution_action = "retire"
+            retire_ready = (
+                int(row["search_count"]) >= (12 if keyword_kind == "anchor" else 3)
+                and feedback_evidence >= (20 if keyword_kind == "anchor" else 5)
+            )
+            status = "retired" if retire_ready else "cooldown"
+        else:
+            evolution_action = "observe"
+            if int(row["search_count"]) >= (12 if keyword_kind == "anchor" else 5) and int(row["new_candidate_count"]) == 0:
+                status = "retired" if keyword_kind == "probe" else "cooldown"
+            elif shown >= 8 and dismiss_rate >= 0.7 and completed == 0 and likes == 0:
+                status = "cooldown"
         conn.execute(
-            "UPDATE discovery_keywords SET quality_score=?, status=? WHERE keyword_id=?",
-            (round(quality, 4), status, keyword_id),
+            """
+            UPDATE discovery_keywords
+            SET quality_score=?, affinity_score=?, yield_score=?,
+                keyword_kind=?, evolution_action=?, status=?
+            WHERE keyword_id=?
+            """,
+            (
+                round(quality, 4),
+                round(affinity, 4),
+                round(yield_score, 4),
+                keyword_kind,
+                evolution_action,
+                status,
+                keyword_id,
+            ),
         )
 
     @staticmethod
@@ -384,7 +859,12 @@ class KeywordGovernance:
         if not family_id:
             return
         rows = conn.execute(
-            "SELECT quality_score, status, cooldown_until FROM discovery_keywords WHERE family_id=?",
+            """
+            SELECT quality_score, status, cooldown_until, keyword_kind,
+                   affinity_exposure, affinity_positive, affinity_negative,
+                   admitted_count
+            FROM discovery_keywords WHERE family_id=?
+            """,
             (family_id,),
         ).fetchall()
         if not rows:
@@ -392,14 +872,52 @@ class KeywordGovernance:
         active = [row for row in rows if row["status"] == "active"]
         status = "active" if active else "cooldown" if any(row["status"] == "cooldown" for row in rows) else "retired"
         quality = max(float(row["quality_score"] or 0.0) for row in rows)
+        positive = sum(float(row["affinity_positive"] or 0.0) for row in rows)
+        negative = sum(float(row["affinity_negative"] or 0.0) for row in rows)
+        affinity = (positive + 2.0) / max(positive + negative + 4.0, 1e-9)
+        family = conn.execute(
+            "SELECT search_count, candidate_count, new_candidate_count FROM discovery_keyword_families WHERE family_id=?",
+            (family_id,),
+        ).fetchone()
+        candidate_count = max(int(family["candidate_count"] or 0), 1)
+        novelty = int(family["new_candidate_count"] or 0) / candidate_count
+        per_search = min(
+            int(family["new_candidate_count"] or 0) / max(int(family["search_count"] or 0), 1) / 8.0,
+            1.0,
+        )
+        admission = sum(int(row["admitted_count"] or 0) for row in rows) / candidate_count
+        yield_score = min(max(0.45 * novelty + 0.35 * per_search + 0.20 * admission, 0.0), 1.0)
+        keyword_kind = "anchor" if any(row["keyword_kind"] == "anchor" for row in rows) else "probe"
+        evidence = positive + negative
+        if evidence >= 3 and affinity >= 0.62 and yield_score >= 0.45:
+            action = "anchor"
+        elif evidence >= 3 and affinity >= 0.62 and yield_score <= 0.20:
+            action = "rewrite"
+        elif evidence >= 3 and affinity <= 0.40 and yield_score >= 0.45:
+            action = "downweight"
+        elif evidence >= 3 and affinity <= 0.40 and yield_score <= 0.20:
+            action = "retire"
+        else:
+            action = "observe"
         cooldowns = [str(row["cooldown_until"]) for row in rows if row["cooldown_until"]]
         conn.execute(
             """
             UPDATE discovery_keyword_families
-            SET quality_score=?, status=?, cooldown_until=?, updated_at=?
+            SET quality_score=?, affinity_score=?, yield_score=?, keyword_kind=?,
+                evolution_action=?, status=?, cooldown_until=?, updated_at=?
             WHERE family_id=?
             """,
-            (round(quality, 4), status, max(cooldowns) if cooldowns else None, _utc_now(), family_id),
+            (
+                round(quality, 4),
+                round(affinity, 4),
+                round(yield_score, 4),
+                keyword_kind,
+                action,
+                status,
+                max(cooldowns) if cooldowns else None,
+                _utc_now(),
+                family_id,
+            ),
         )
 
 
@@ -408,9 +926,13 @@ def _canonical_spec(
     *,
     query: str,
     source: str,
-) -> tuple[dict[str, object], str]:
+) -> tuple[dict[str, object], str, str, str, str | None]:
     raw = dict(value or _infer_query_spec(query))
     exploration_axis = str(raw.pop("exploration_axis", "") or source or "base")[:40]
+    keyword_kind = str(raw.pop("keyword_kind", "") or ("anchor" if source in {"profile", "explicit", "l3_profile"} else "probe"))
+    keyword_kind = "anchor" if keyword_kind == "anchor" else "probe"
+    origin = str(raw.pop("origin", "") or source or "unknown")[:40]
+    parent_keyword_id = str(raw.pop("parent_keyword_id", "") or "").strip() or None
     canonical: dict[str, object] = {}
     for key, item in sorted(raw.items()):
         if isinstance(item, (list, tuple, set)):
@@ -423,7 +945,7 @@ def _canonical_spec(
                 canonical[key] = text
     if not canonical:
         canonical["topic"] = " ".join(query.casefold().split())[:160]
-    return canonical, exploration_axis
+    return canonical, exploration_axis, keyword_kind, origin, parent_keyword_id
 
 
 def _infer_query_spec(query: str) -> dict[str, object]:
@@ -557,6 +1079,14 @@ def _json_strings(value: Any) -> list[str]:
     except (TypeError, ValueError):
         return []
     return [str(item) for item in parsed] if isinstance(parsed, list) else []
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value or "{}")
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _is_future(value: Any, now: str) -> bool:

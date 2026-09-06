@@ -8,7 +8,7 @@ from music_profile import MusicProfile
 from request_spec import RequestSpec
 
 
-DEFAULT_SEARCH_BUDGET = 3
+DEFAULT_SEARCH_BUDGET = 8
 TAG_SEARCH_SUFFIX = "音乐"
 DEFAULT_FALLBACK_QUERIES = (
     "欧美流行 英文 音乐",
@@ -103,21 +103,38 @@ class DiscoveryPlanner:
         request_spec_family = _request_family_spec(request_spec)
         keyword_specs = {
             query: (
-                dict(request_spec_family, exploration_axis="request")
+                dict(
+                    request_spec_family,
+                    exploration_axis="request",
+                    keyword_kind="probe",
+                    origin="request",
+                )
                 if query in request_queries
-                else _infer_family_spec(
-                    query,
-                    exploration_axis=(
-                        "adjacent_genre"
-                        if query in exploration_queries
-                        else "cold_start" if query in fallback_queries else "profile"
+                else dict(
+                    _infer_family_spec(
+                        query,
+                        exploration_axis=(
+                            "adjacent_genre"
+                            if query in exploration_queries
+                            else "cold_start" if query in fallback_queries else "profile"
+                        ),
+                    ),
+                    keyword_kind=("anchor" if query in profile_queries else "probe"),
+                    origin=(
+                        "l3_profile"
+                        if query in profile_queries
+                        else "adjacent_genre" if query in exploration_queries else "cold_start"
                     ),
                 )
             )
             for query in queries
         }
         negative_keyword_specs = {
-            query: _infer_family_spec(query, exploration_axis="negative_probe")
+            query: dict(
+                _infer_family_spec(query, exploration_axis="negative_probe"),
+                keyword_kind="probe",
+                origin="negative_probe",
+            )
             for query in negative_queries
         }
         return DiscoveryPlan(

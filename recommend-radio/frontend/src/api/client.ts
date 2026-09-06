@@ -140,6 +140,8 @@ export interface RecommendationEventPayload {
   playedSeconds?: number
   completed?: boolean
   skipped?: boolean
+  recommendationTraceId?: string
+  sourceKeywordIds?: string[]
 }
 
 export function setApiCsrfToken(token: string | null | undefined): void {

@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from amem_bridge import NoopAmemBridge, record_music_behavior
 from bili_client import BiliClient
@@ -81,6 +82,9 @@ class CandidateDraft:
     facets: dict[str, list[str]] = field(default_factory=dict)
     scope_evidence: list[str] = field(default_factory=list)
     scope_kind: str = "default"
+    source_keyword_ids: set[str] = field(default_factory=set)
+    source_keyword_family_ids: set[str] = field(default_factory=set)
+    source_discovery_job_ids: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -100,6 +104,10 @@ class RecommendationCandidate:
     facets: dict[str, list[str]] = field(default_factory=dict)
     scope_evidence: list[str] = field(default_factory=list)
     scope_kind: str = "default"
+    source_keyword_ids: list[str] = field(default_factory=list)
+    source_keyword_family_ids: list[str] = field(default_factory=list)
+    source_discovery_job_ids: list[str] = field(default_factory=list)
+    recommendation_trace_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         value = {
@@ -107,6 +115,10 @@ class RecommendationCandidate:
             "score": round(self.score, 2),
             "source": self.source,
             "reason": self.reason,
+            "sourceKeywordIds": self.source_keyword_ids,
+            "sourceKeywordFamilyIds": self.source_keyword_family_ids,
+            "sourceDiscoveryJobIds": self.source_discovery_job_ids,
+            "recommendationTraceId": self.recommendation_trace_id,
         }
         if self.llm_reason:
             value["llmReason"] = self.llm_reason
@@ -290,6 +302,8 @@ class RecommendationService:
             request_spec=resolved_request_spec,
             timing=timings,
         )
+        for item in selected:
+            item.recommendation_trace_id = trace_id
         self.record_events(
             [
                 {
@@ -299,6 +313,8 @@ class RecommendationService:
                     "source": item.source,
                     "reason": item.reason,
                     "score": item.score,
+                    "recommendationTraceId": trace_id,
+                    "sourceKeywordIds": item.source_keyword_ids,
                 }
                 for item in selected
             ]
@@ -562,6 +578,17 @@ class RecommendationService:
                     "source": str(payload.get("source") or "")[:64],
                     "reason": str(payload.get("reason") or "")[:240],
                     "score": float(payload.get("score") or 0),
+                    "recommendationTraceId": str(
+                        payload.get("recommendationTraceId")
+                        or payload.get("recommendation_trace_id")
+                        or ""
+                    )[:180],
+                    "sourceKeywordIds": _payload_string_list(
+                        payload,
+                        "sourceKeywordIds",
+                        "source_keyword_ids",
+                        limit=12,
+                    ),
                     "playedSeconds": max(
                         int(payload.get("playedSeconds") or payload.get("played_seconds") or 0),
                         0,
@@ -580,9 +607,10 @@ class RecommendationService:
                 conn.executemany(
                     """
                     INSERT INTO recommendation_events (
-                        user_id, track_id, event, scene, source, reason, score, created_at
+                        user_id, track_id, event, scene, source, reason, score,
+                        recommendation_trace_id, source_keyword_ids_json, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         (
@@ -593,6 +621,8 @@ class RecommendationService:
                             item["source"],
                             item["reason"],
                             item["score"],
+                            item["recommendationTraceId"],
+                            json.dumps(item["sourceKeywordIds"], ensure_ascii=False),
                             item["createdAt"],
                         )
                         for item in normalized
@@ -621,7 +651,12 @@ class RecommendationService:
                 scene=item["scene"],
                 payload=behavior_payload,
             )
-            self.keyword_governance.record_feedback(item["trackId"], item["event"])
+            self.keyword_governance.record_feedback(
+                item["trackId"],
+                item["event"],
+                recommendation_trace_id=item["recommendationTraceId"],
+                source_keyword_ids=item["sourceKeywordIds"],
+            )
         if normalized:
             self.profile_update_pipeline.process()
         return [
@@ -644,6 +679,9 @@ class RecommendationService:
             draft.facets = candidate.facets
             draft.scope_evidence = candidate.evidence
             draft.scope_kind = candidate.scope_kind
+            draft.source_keyword_ids.update(candidate.source_keyword_ids)
+            draft.source_keyword_family_ids.update(candidate.source_keyword_family_ids)
+            draft.source_discovery_job_ids.update(candidate.source_discovery_job_ids)
             draft.tags.update(
                 evidence.removeprefix("discovery_query:")
                 for evidence in candidate.evidence
@@ -758,6 +796,9 @@ class RecommendationService:
             facets=draft.facets,
             scope_evidence=draft.scope_evidence,
             scope_kind=draft.scope_kind,
+            source_keyword_ids=sorted(draft.source_keyword_ids),
+            source_keyword_family_ids=sorted(draft.source_keyword_family_ids),
+            source_discovery_job_ids=sorted(draft.source_discovery_job_ids),
         )
 
     def _select_epsilon_greedy(
@@ -1258,7 +1299,9 @@ class RecommendationService:
     ) -> str:
         created_at = _utc_now()
         timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        trace_id = f"recommend:{self.user_id}:{scene}:{timestamp_ms}"
+        trace_id = f"recommend:{self.user_id}:{scene}:{timestamp_ms}:{uuid4().hex[:8]}"
+        for candidate in selected:
+            candidate.recommendation_trace_id = trace_id
         payload = {
             "memoryRetrieval": {
                 "count": len(memories),
@@ -1312,6 +1355,39 @@ class RecommendationService:
                     created_at,
                 ),
             )
+            for candidate in selected:
+                keyword_ids = list(dict.fromkeys(candidate.source_keyword_ids))
+                if not keyword_ids:
+                    continue
+                placeholders = ",".join("?" for _ in keyword_ids)
+                family_rows = conn.execute(
+                    f"SELECT keyword_id, family_id FROM discovery_keywords WHERE keyword_id IN ({placeholders})",
+                    tuple(keyword_ids),
+                ).fetchall()
+                family_by_keyword = {
+                    str(row["keyword_id"]): str(row["family_id"] or "")
+                    for row in family_rows
+                }
+                credit_weight = 1.0 / max(len(keyword_ids), 1)
+                for keyword_id in keyword_ids:
+                    conn.execute(
+                        """
+                        INSERT OR REPLACE INTO recommendation_keyword_attributions (
+                            recommendation_trace_id, user_id, track_id, keyword_id,
+                            family_id, credit_weight, shown, shown_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+                        """,
+                        (
+                            trace_id,
+                            self.user_id,
+                            str(candidate.track.get("trackId") or ""),
+                            keyword_id,
+                            family_by_keyword.get(keyword_id, ""),
+                            credit_weight,
+                            created_at,
+                            created_at,
+                        ),
+                    )
         return trace_id
 
     def _write_history(self, conn: Any, item: dict[str, Any]) -> None:
@@ -1548,6 +1624,10 @@ def _candidate_to_trace(candidate: RecommendationCandidate) -> dict[str, Any]:
         "penalties": candidate.penalties,
         "facets": candidate.facets,
         "scopeEvidence": candidate.scope_evidence,
+        "sourceKeywordIds": candidate.source_keyword_ids,
+        "sourceKeywordFamilyIds": candidate.source_keyword_family_ids,
+        "sourceDiscoveryJobIds": candidate.source_discovery_job_ids,
+        "recommendationTraceId": candidate.recommendation_trace_id,
     }
 
 
@@ -1586,6 +1666,15 @@ def _json_loads(value: str) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _payload_string_list(payload: dict[str, Any], *keys: str, limit: int) -> list[str]:
+    for key in keys:
+        value = payload.get(key)
+        if not isinstance(value, list):
+            continue
+        return [str(item) for item in value if str(item).strip()][:limit]
+    return []
 
 
 def _utc_now() -> str:

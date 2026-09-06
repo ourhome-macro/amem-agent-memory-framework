@@ -320,6 +320,10 @@ export interface RecommendationItem {
   matchedPreferences?: string[]
   evidence?: string[]
   penalties?: string[]
+  sourceKeywordIds?: string[]
+  sourceKeywordFamilyIds?: string[]
+  sourceDiscoveryJobIds?: string[]
+  recommendationTraceId?: string
 }
 
 export interface MusicProfile {
@@ -519,6 +523,10 @@ export interface RecommendationTraceCandidate {
   scoreSignals?: Record<string, number>
   matchedPreferences?: string[]
   evidence?: string[]
+  sourceKeywordIds?: string[]
+  sourceKeywordFamilyIds?: string[]
+  sourceDiscoveryJobIds?: string[]
+  recommendationTraceId?: string
   penalties?: string[]
 }
 

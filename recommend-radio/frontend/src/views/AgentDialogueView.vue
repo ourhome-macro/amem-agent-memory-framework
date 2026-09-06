@@ -590,6 +590,8 @@ function playRecommendation(item: RecommendationItem) {
     source: item.source,
     reason: item.reason,
     score: item.score,
+    recommendationTraceId: item.recommendationTraceId,
+    sourceKeywordIds: item.sourceKeywordIds,
   })
 }
 
@@ -608,6 +610,8 @@ function dismissRecommendation(card: AgentDialogueCard, item: RecommendationItem
     source: item.source,
     reason: item.reason,
     score: item.score,
+    recommendationTraceId: item.recommendationTraceId,
+    sourceKeywordIds: item.sourceKeywordIds,
   }).catch((error) => {
     errorMessage.value = errorToMessage(error, '反馈记录失败')
   })

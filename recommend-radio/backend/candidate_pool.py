@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable
 
 from database import get_connection
@@ -23,6 +23,9 @@ class PoolCandidate:
     facets: dict[str, list[str]]
     evidence: list[str]
     scope_kind: str = "default"
+    source_keyword_ids: list[str] = field(default_factory=list)
+    source_keyword_family_ids: list[str] = field(default_factory=list)
+    source_discovery_job_ids: list[str] = field(default_factory=list)
 
 
 class CandidatePool:
@@ -40,7 +43,7 @@ class CandidatePool:
         source: str,
         request_spec: RequestSpec,
         query: str,
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         values = [track for track in tracks if track.track_id]
         scope_kind = "request" if request_spec.constrained else "default"
         scope_key = _scope_key(request_spec) if scope_kind == "request" else ""
@@ -48,6 +51,7 @@ class CandidatePool:
             self.library.upsert_tracks(values)
         enqueued = 0
         admitted = 0
+        admitted_track_ids: list[str] = []
         with get_connection(self.db_path) as conn:
             for track in values:
                 facets, evidence = infer_facets(track, query=query)
@@ -111,7 +115,14 @@ class CandidatePool:
                     ),
                 )
                 admitted += 1
-        return {"enqueued": enqueued, "admitted": admitted}
+                admitted_track_ids.append(str(track.track_id))
+        return {
+            "enqueued": enqueued,
+            "admitted": admitted,
+            "admittedTrackIds": admitted_track_ids,
+            "scopeKind": scope_kind,
+            "scopeKey": scope_key,
+        }
 
     def record_negative_samples(self, tracks: Iterable[Track], *, query: str) -> int:
         values = [track for track in tracks if track.track_id]
@@ -149,7 +160,7 @@ class CandidatePool:
             rows = conn.execute(
                 f"""
                 SELECT t.*, c.source AS cache_source, c.facets_json, c.evidence_json
-                       , c.scope_kind
+                       , c.scope_kind, c.scope_key
                 FROM content_cache c
                 JOIN tracks t ON t.track_id = c.track_id
                 WHERE c.user_id = ? AND c.status = ?
@@ -164,6 +175,7 @@ class CandidatePool:
                 (self.user_id, READY_STATUS, int(scoped), scope_key, int(bool(context_keys)), *context_keys),
             ).fetchall()
         result = []
+        provenance = self._provenance_for_tracks(rows)
         for row in rows:
             facets = _json_object(row["facets_json"])
             if not request_spec.matches_facets(facets):
@@ -175,8 +187,56 @@ class CandidatePool:
                     facets={key: [str(item) for item in value] for key, value in facets.items() if isinstance(value, list)},
                     evidence=_json_strings(row["evidence_json"]),
                     scope_kind=str(row["scope_kind"] or "default"),
+                    source_keyword_ids=list(provenance.get((str(row["track_id"]), str(row["scope_kind"]), str(row["scope_key"] or "")), {}).get("keywordIds", [])),
+                    source_keyword_family_ids=list(provenance.get((str(row["track_id"]), str(row["scope_kind"]), str(row["scope_key"] or "")), {}).get("familyIds", [])),
+                    source_discovery_job_ids=list(provenance.get((str(row["track_id"]), str(row["scope_kind"]), str(row["scope_key"] or "")), {}).get("jobIds", [])),
                 )
             )
+        return result
+
+    def _provenance_for_tracks(self, cache_rows: list[Any]) -> dict[tuple[str, str, str], dict[str, list[str]]]:
+        values = list(dict.fromkeys(str(row["track_id"]) for row in cache_rows if row["track_id"]))
+        if not values:
+            return {}
+        placeholders = ",".join("?" for _ in values)
+        with get_connection(self.db_path) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT track_id, keyword_id, family_id, discovery_job_id, scope_kind, scope_key
+                FROM discovery_item_sources
+                WHERE user_id=? AND admitted=1 AND track_id IN ({placeholders})
+                ORDER BY discovered_at DESC, search_rank ASC
+                """,
+                (self.user_id, *values),
+            ).fetchall()
+            legacy_rows = conn.execute(
+                f"""
+                SELECT c.track_id, c.keyword_id, k.family_id
+                FROM discovery_keyword_candidates c
+                JOIN discovery_keywords k ON k.keyword_id=c.keyword_id
+                WHERE c.user_id=? AND c.track_id IN ({placeholders})
+                ORDER BY c.discovered_at DESC
+                """,
+                (self.user_id, *values),
+            ).fetchall()
+        result: dict[tuple[str, str, str], dict[str, list[str]]] = {}
+        for row in rows:
+            key = (str(row["track_id"]), str(row["scope_kind"] or "default"), str(row["scope_key"] or ""))
+            item = result.setdefault(key, {"keywordIds": [], "familyIds": [], "jobIds": []})
+            _append_bounded(item["keywordIds"], str(row["keyword_id"]), 6)
+            _append_bounded(item["familyIds"], str(row["family_id"]), 6)
+            _append_bounded(item["jobIds"], str(row["discovery_job_id"]), 6)
+        for row in legacy_rows:
+            track_id = str(row["track_id"])
+            matching_keys = [key for key in result if key[0] == track_id]
+            if matching_keys:
+                continue
+            cache_row = next((item for item in cache_rows if str(item["track_id"]) == track_id), None)
+            scope_kind = "default" if cache_row is None else str(cache_row["scope_kind"] or "default")
+            fallback_scope_key = "" if cache_row is None else str(cache_row["scope_key"] or "")
+            item = result.setdefault((track_id, scope_kind, fallback_scope_key), {"keywordIds": [], "familyIds": [], "jobIds": []})
+            _append_bounded(item["keywordIds"], str(row["keyword_id"]), 6)
+            _append_bounded(item["familyIds"], str(row["family_id"] or ""), 6)
         return result
 
     def availability(self, request_spec: RequestSpec) -> int:
@@ -291,3 +351,8 @@ def _utc_now() -> str:
 def _scope_key(spec: RequestSpec) -> str:
     payload = json.dumps(spec.to_dict(), ensure_ascii=False, sort_keys=True)
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _append_bounded(values: list[str], value: str, limit: int) -> None:
+    if value and value not in values and len(values) < limit:
+        values.append(value)
