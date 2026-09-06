@@ -39,6 +39,81 @@ INTENT_RECOMMEND = "RECOMMEND"
 INTENT_PROFILE_UPDATE = "PROFILE_UPDATE"
 INTENT_CONTROL = "CONTROL"
 
+HIGH_CONFIDENCE_RECOMMEND_PHRASES = (
+    "给我推荐",
+    "给我推",
+    "帮我推荐",
+    "帮我找",
+    "推荐几首",
+    "推荐点",
+    "推荐一点",
+    "推荐一些",
+    "推荐一下",
+    "推荐下",
+    "推几首",
+    "推点",
+    "推一点",
+    "推一些",
+    "来几首",
+    "来点",
+    "来一点",
+    "来一些",
+    "来一批",
+    "来一轮",
+    "来一组",
+    "找几首",
+    "找点",
+    "找一点",
+    "找一些",
+    "放几首",
+    "放点",
+    "放一点",
+    "放一些",
+    "整点",
+    "整一点",
+    "整一些",
+    "我想听",
+    "想听点",
+    "想听一点",
+    "想听一些",
+    "我要听",
+    "现在想听",
+    "今晚想听",
+    "今天想听",
+    "随便推荐",
+    "随便来",
+    "随便放",
+    "随机推荐",
+    "随机来",
+    "换一批",
+    "再来一批",
+    "下一批",
+    "换点别的",
+    "再来点",
+    "再推荐",
+    "歌单",
+    "recommend some",
+    "recommend me",
+    "play some",
+)
+
+RECOMMEND_DISCUSSION_PHRASES = (
+    "推荐系统",
+    "推荐算法",
+    "推荐逻辑",
+    "推荐机制",
+    "推荐链路",
+    "推荐架构",
+    "怎么推荐",
+    "如何推荐",
+    "为什么推荐",
+    "为啥推荐",
+    "推荐得怎么样",
+    "推荐准确",
+    "推荐的时候",
+    "推荐音乐时",
+)
+
 CONFIRM_ACTIONS = {"confirm", "accurate"}
 REJECT_ACTIONS = {"reject", "inaccurate"}
 VALID_ACTIONS = CONFIRM_ACTIONS | REJECT_ACTIONS | {"discuss", "later"}
@@ -1728,11 +1803,30 @@ def _is_high_confidence_route(route: DialogueRoute, message: str) -> bool:
     if route.tool in {"control", "direct_chat", "explain_recommendation", "recall_memory", "confirm_signal", "profile_update"}:
         return True
     if route.tool == "recommend_music":
-        return _has_any(
-            _normalize_message(message).casefold(),
-            ("给我推荐", "推荐几首", "推几首", "来几首", "放几首", "来点", "歌单"),
-        )
+        return _is_high_confidence_recommendation_command(message)
     return False
+
+
+def _is_high_confidence_recommendation_command(message: str) -> bool:
+    normalized = _normalize_message(message).casefold()
+    if not normalized or _has_any(normalized, RECOMMEND_DISCUSSION_PHRASES):
+        return False
+
+    # Negated meta statements must continue through the semantic router. A
+    # scoped exclusion such as “不要中文，推荐欧美” is intentionally not blocked.
+    compact = re.sub(r"\s+", "", normalized)
+    if "不是让你推荐" in compact or "没让你推荐" in compact:
+        return False
+    if re.fullmatch(
+        r"(?:请)?(?:不要|别|不用|无需|不需要)(?:再)?(?:给我|帮我)?(?:推荐|推|放)(?:歌|音乐)?(?:了|啦|吧|呀|啊|[。！!])?",
+        compact,
+    ):
+        return False
+    if _has_any(normalized, HIGH_CONFIDENCE_RECOMMEND_PHRASES):
+        return True
+    if re.search(r"(?:推荐|推|来|找|放|整)\s*\d+\s*首", normalized):
+        return True
+    return normalized.startswith(("推荐", "请推荐", "能推荐", "可以推荐", "帮忙推荐"))
 
 
 _ROUTER_TOOL_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -2047,31 +2141,7 @@ def _is_recommendation_execution_request(text: str) -> bool:
     normalized = _normalize_message(text).casefold()
     if _is_profile_chat_request(normalized):
         return False
-    execution_words = (
-        "换一批",
-        "再来一批",
-        "下一批",
-        "来一轮",
-        "来一组",
-        "给我推荐",
-        "推荐 10",
-        "推荐10",
-        "推荐几首",
-        "推几首",
-        "来几首",
-        "找几首",
-        "放几首",
-        "找点",
-        "来点",
-        "歌单",
-        "现在就想听",
-        "我现在想听",
-        "今晚想听",
-        "今天想听",
-        "想听点",
-        "想听一点",
-    )
-    if _has_any(normalized, execution_words):
+    if _is_high_confidence_recommendation_command(normalized):
         return True
     if is_recommendation_request(normalized) and not _has_any(
         normalized,
