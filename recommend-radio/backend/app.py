@@ -21,9 +21,10 @@ from bili_client import BiliClient
 from constant import Server
 from database import LEGACY_OWNER_USER_ID, get_connection, init_db
 from dialogue_service import MusicDialogueService
+from dialogue_task_service import DialogueTaskService
 from env_loader import load_recommend_radio_env
 from error_code import APIError, ErrorCode
-from flask import Flask, Response, g, has_request_context, request
+from flask import Flask, Response, copy_current_request_context, g, has_request_context, request
 from flask_cors import CORS
 from identity_service import IdentityService
 from library_service import LibraryService
@@ -44,6 +45,7 @@ from requests.adapters import HTTPAdapter
 from result import Result
 from settings_service import SettingsService
 from stream_service import StreamService
+from sse_event_client import SSEEventPublisher
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -200,6 +202,7 @@ recommendation_service = RecommendationService(
     profile_projector=profile_projector,
 )
 dialogue_service = MusicDialogueService(recommendation_service=recommendation_service)
+dialogue_task_service = DialogueTaskService(SSEEventPublisher())
 stream_service = StreamService(bili_client)
 register_monitoring(app, user_stats_provider=admin_service.monitoring_user_stats)
 
@@ -221,7 +224,7 @@ _UNSAFE_METHODS = {'POST', 'PUT', 'PATCH', 'DELETE'}
 
 
 def _close_runtime_clients() -> None:
-    for client in (stream_service, _image_session, bili_client):
+    for client in (dialogue_task_service, stream_service, _image_session, bili_client):
         try:
             client.close()
         except Exception:
@@ -996,6 +999,42 @@ def send_agent_dialogue_message():
     except KeyError:
         return Result.not_found("dialogue card or session not found")
     return Result.ok(result).json_with_status(201)
+
+
+@app.post("/api/agent/dialogue/tasks")
+def submit_agent_dialogue_task():
+    payload = _json_body()
+    message = str(payload.get("message") or "")
+    session_id = payload.get("sessionId")
+    context_card_id = payload.get("contextCardId")
+    context_track_id = payload.get("contextTrackId")
+    captured_user = dict(g.current_user) if getattr(g, "current_user", None) else None
+    captured_session_token = getattr(g, "app_session_token", None)
+
+    def preserve_request_identity(callback):
+        @copy_current_request_context
+        def wrapped():
+            g.current_user = captured_user
+            g.app_session_token = captured_session_token
+            callback()
+
+        return wrapped
+
+    try:
+        result = dialogue_task_service.submit(
+            service=_dialogue_for_request(),
+            user_id=_request_user_id_or_legacy(),
+            message=message,
+            session_id=str(session_id) if session_id else None,
+            context_card_id=str(context_card_id) if context_card_id else None,
+            context_track_id=str(context_track_id) if context_track_id else None,
+            request_runner=preserve_request_identity,
+        )
+    except ValueError as exc:
+        return Result.bad_request(str(exc))
+    except KeyError:
+        return Result.not_found("dialogue card or session not found")
+    return Result.ok(result).json_with_status(202)
 
 
 @app.post("/api/agent/dialogue/undo")

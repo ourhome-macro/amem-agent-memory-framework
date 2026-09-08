@@ -492,6 +492,30 @@ export interface AgentDialogueResult extends AgentDialogueSession {
   eventId?: string | null
 }
 
+export interface AgentDialogueTaskAccepted {
+  taskId: string
+  sessionId: string
+  status: 'queued'
+}
+
+export interface AgentDialogueStreamEvent {
+  eventId: number
+  taskId: string
+  sessionId: string
+  userId: string
+  type: 'task' | 'progress' | 'session' | 'discovery' | 'done' | 'error'
+  status?: string
+  payload: {
+    stage?: string
+    label?: string
+    message?: string
+    session?: AgentDialogueResult
+    discoveryPending?: boolean
+    [key: string]: unknown
+  }
+  createdAt: string
+}
+
 export interface AgentDialogueUndoResult extends AgentDialogueResult {
   undone: boolean
   message?: string

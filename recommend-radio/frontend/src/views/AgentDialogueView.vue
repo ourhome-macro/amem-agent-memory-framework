@@ -212,15 +212,15 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
+  apiUrl,
   createAgentDialogueSession,
   fetchAgentDialogueSession,
   fetchAgentDialogueSessions,
   mediaUrl,
   recordRecommendationEvent,
-  refreshAgentDialogueRecommendationCard,
-  sendAgentDialogueMessage,
+  submitAgentDialogueTask,
   submitAgentDialogueCardFeedback,
   undoAgentDialogueMessage,
 } from '@/api/client'
@@ -235,6 +235,7 @@ import type {
   AgentDialogueResult,
   AgentDialogueSession,
   AgentDialogueSessionSummary,
+  AgentDialogueStreamEvent,
   RecommendationItem,
   Track,
 } from '@/types'
@@ -252,10 +253,20 @@ const pendingIntent = ref<'chat' | 'recommend' | 'control'>('chat')
 const activeContext = ref<AgentDialogueContext | null>(null)
 const messageListRef = ref<HTMLDivElement | null>(null)
 const sessionHistory = ref<AgentDialogueSessionSummary[]>([])
-const refreshingCards = ref(false)
+const activeTaskId = ref('')
+const taskStage = ref('')
+let eventSource: EventSource | null = null
+let taskTimeout: number | null = null
+const lastEventIds = new Map<string, string>()
+const completedTaskIds = new Set<string>()
 
 onMounted(() => {
   void bootDialogue()
+})
+
+onBeforeUnmount(() => {
+  closeEventStream()
+  clearTaskTimeout()
 })
 
 const messages = computed(() => session.value?.messages ?? [])
@@ -275,6 +286,7 @@ const canUndo = computed(() => (
   && !undoing.value
 ))
 const thinkingLabel = computed(() => {
+  if (taskStage.value) return taskStage.value
   if (pendingIntent.value === 'recommend') return '正在找歌'
   if (pendingIntent.value === 'control') return '正在处理'
   return '正在思考'
@@ -294,7 +306,7 @@ async function loadSession(sessionId?: string) {
   errorMessage.value = ''
   try {
     applySession(await fetchAgentDialogueSession(sessionId))
-    void refreshPendingRecommendationCards()
+    connectEventStream(session.value?.sessionId)
     void loadSessionHistory()
   } catch (error) {
     errorMessage.value = errorToMessage(error, '对话状态读取失败')
@@ -322,6 +334,7 @@ async function startNewSession() {
   errorMessage.value = ''
   try {
     applySession(await createAgentDialogueSession())
+    connectEventStream(session.value?.sessionId)
     await loadSessionHistory()
   } catch (error) {
     errorMessage.value = errorToMessage(error, '新聊天创建失败')
@@ -370,19 +383,28 @@ async function sendMessage() {
   await nextTick()
   scrollToBottom()
 
+  let accepted = false
   try {
-    applySession(await sendAgentDialogueMessage({
+    const task = await submitAgentDialogueTask({
       message: text,
       sessionId: session.value?.sessionId,
       contextCardId: context?.cardId,
       contextTrackId: context?.trackId,
-    }))
-    void refreshPendingRecommendationCards()
-    void loadSessionHistory()
+    })
+    accepted = true
+    connectEventStream(task.sessionId)
+    if (completedTaskIds.has(task.taskId)) {
+      completedTaskIds.delete(task.taskId)
+      sending.value = false
+    } else {
+      activeTaskId.value = task.taskId
+      taskStage.value = pendingIntent.value === 'recommend' ? '正在理解你的听歌需求' : '正在理解你的消息'
+      armTaskTimeout(task.taskId)
+    }
   } catch (error) {
     errorMessage.value = errorToMessage(error, '消息发送失败')
   } finally {
-    sending.value = false
+    if (!accepted) sending.value = false
   }
 }
 
@@ -398,28 +420,91 @@ function discussRecommendation(card: AgentDialogueCard, item: RecommendationItem
   messageText.value = `聊聊这首歌：`
 }
 
-async function refreshPendingRecommendationCards() {
-  if (refreshingCards.value) return
-  refreshingCards.value = true
-  try {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      const pending = session.value?.cards.find(card => (
-        card.kind === 'recommendation_carousel'
-        && card.discoveryJobId
-        && !['completed', 'failed'].includes(card.discoveryStatus ?? '')
-        && (card.recommendations?.length ?? 0) < 8
-      ))
-      if (!pending) return
-      await new Promise(resolve => window.setTimeout(resolve, 1000))
-      try {
-        applySession(await refreshAgentDialogueRecommendationCard(pending.cardId))
-      } catch {
-        return
-      }
-    }
-  } finally {
-    refreshingCards.value = false
+function connectEventStream(sessionId?: string) {
+  if (!sessionId) return
+  closeEventStream()
+  const params = new URLSearchParams({ sessionId })
+  const lastEventId = lastEventIds.get(sessionId)
+  if (lastEventId) params.set('lastEventId', lastEventId)
+  const source = new EventSource(apiUrl(`/api/agent/events?${params.toString()}`), {
+    withCredentials: true,
+  })
+  eventSource = source
+  for (const eventType of ['task', 'progress', 'session', 'discovery', 'done', 'error']) {
+    source.addEventListener(eventType, handleStreamEvent as EventListener)
   }
+  source.onerror = () => {
+    // Native EventSource reconnects and sends Last-Event-ID automatically.
+    taskStage.value = activeTaskId.value ? '连接恢复中' : ''
+  }
+}
+
+function closeEventStream() {
+  eventSource?.close()
+  eventSource = null
+}
+
+function handleStreamEvent(raw: Event) {
+  const message = raw as MessageEvent<string>
+  let event: AgentDialogueStreamEvent
+  try {
+    event = JSON.parse(message.data) as AgentDialogueStreamEvent
+  } catch {
+    return
+  }
+  if (!session.value || event.sessionId !== session.value.sessionId) return
+  if (message.lastEventId) lastEventIds.set(event.sessionId, message.lastEventId)
+
+  const nextSession = event.payload.session
+  if (nextSession) applySession(nextSession)
+  if (event.type === 'task' && event.status === 'queued' && sending.value && !activeTaskId.value) {
+    activeTaskId.value = event.taskId
+  }
+  if (event.type === 'progress') {
+    taskStage.value = streamStageLabel(event.payload.stage, event.payload.label)
+  }
+  if (event.type === 'error' && (!activeTaskId.value || event.taskId === activeTaskId.value)) {
+    errorMessage.value = String(event.payload.message || '任务执行失败')
+    finishActiveTask(event.taskId)
+  }
+  if (event.type === 'done') {
+    completedTaskIds.add(event.taskId)
+    finishActiveTask(event.taskId)
+    void loadSessionHistory()
+  }
+}
+
+function streamStageLabel(stage?: string, label?: string): string {
+  if (label) return label
+  return {
+    routing: '正在理解你的需求',
+    route: '已确定处理方式',
+    memory: '正在读取相关记忆',
+    recommendation: '正在整理候选歌曲',
+    discovery: '正在补充新的候选',
+  }[stage ?? ''] ?? '正在处理'
+}
+
+function armTaskTimeout(taskId: string) {
+  clearTaskTimeout()
+  taskTimeout = window.setTimeout(() => {
+    if (activeTaskId.value !== taskId) return
+    errorMessage.value = '任务响应超时，请稍后刷新会话查看结果'
+    finishActiveTask(taskId)
+  }, 120_000)
+}
+
+function clearTaskTimeout() {
+  if (taskTimeout != null) window.clearTimeout(taskTimeout)
+  taskTimeout = null
+}
+
+function finishActiveTask(taskId: string) {
+  if (activeTaskId.value && taskId !== activeTaskId.value) return
+  clearTaskTimeout()
+  activeTaskId.value = ''
+  taskStage.value = ''
+  sending.value = false
 }
 
 async function undoLastMessage() {

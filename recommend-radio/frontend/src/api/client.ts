@@ -6,6 +6,7 @@ import type {
   AgentDialogueResult,
   AgentDialogueSession,
   AgentDialogueSessionsResult,
+  AgentDialogueTaskAccepted,
   AgentDialogueUndoResult,
   AppSettings,
   AppSession,
@@ -606,6 +607,19 @@ export async function sendAgentDialogueMessage(payload: {
   contextTrackId?: string
 }): Promise<AgentDialogueResult> {
   return apiRequest<AgentDialogueResult>('/api/agent/dialogue/message', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+export async function submitAgentDialogueTask(payload: {
+  message: string
+  sessionId?: string
+  contextCardId?: string
+  contextTrackId?: string
+}): Promise<AgentDialogueTaskAccepted> {
+  return apiRequest<AgentDialogueTaskAccepted>('/api/agent/dialogue/tasks', {
     method: 'POST',
     body: JSON.stringify(payload),
     headers: { 'Content-Type': 'application/json' },

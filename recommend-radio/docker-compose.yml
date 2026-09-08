@@ -114,6 +114,8 @@ services:
       RECOMMEND_LLM_JSON_RESPONSE: "${RECOMMEND_LLM_JSON_RESPONSE:-true}"
       RECOMMEND_LLM_ATTEMPTS: "${RECOMMEND_LLM_ATTEMPTS:-2}"
       RECOMMEND_PROFILE_TTL_SECONDS: "${RECOMMEND_PROFILE_TTL_SECONDS:-600}"
+      SSE_GATEWAY_INTERNAL_URL: "http://sse-gateway:8080/internal/events"
+      SSE_INTERNAL_TOKEN: "${SSE_INTERNAL_TOKEN:-local-sse-token}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
     volumes:
       - ./server-data:/app/data
@@ -140,6 +142,39 @@ services:
         max-size: "20m"
         max-file: "5"
 
+  sse-gateway:
+    build:
+      context: ./sse-gateway
+      dockerfile: Dockerfile
+    container_name: bilibili-radio-sse-gateway
+    restart: unless-stopped
+    environment:
+      SSE_BIND: "0.0.0.0:8080"
+      SSE_DB_PATH: "/app/data/sse-events.sqlite3"
+      SSE_INTERNAL_TOKEN: "${SSE_INTERNAL_TOKEN:-local-sse-token}"
+      SSE_AUTH_VERIFY_URL: "http://backend:5000/api/session/me"
+      SSE_EVENT_RETENTION_DAYS: "${SSE_EVENT_RETENTION_DAYS:-7}"
+      AUTH_MODE: "${AUTH_MODE:-disabled}"
+      TZ: Asia/Shanghai
+    volumes:
+      - ./server-data:/app/data
+    ports:
+      - "${SSE_GATEWAY_BIND_ADDRESS:-127.0.0.1}:${SSE_GATEWAY_PORT:-18080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   frontend:
     build:
       context: ./frontend
@@ -148,10 +183,13 @@ services:
     restart: unless-stopped
     environment:
       BACKEND_URL: "http://backend:5000"
+      SSE_GATEWAY_URL: "http://sse-gateway:8080"
       STATIC_ROOT: "/app/dist"
       PORT: "3000"
     depends_on:
       backend:
+        condition: service_healthy
+      sse-gateway:
         condition: service_healthy
     ports:
       - "${HTTP_BIND_ADDRESS:-127.0.0.1}:${HTTP_PORT:-3000}:3000"

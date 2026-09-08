@@ -6,11 +6,20 @@ services:
       APP_TRUSTED_HOSTS: ${APP_DOMAIN:?Set APP_DOMAIN in .env}
       SESSION_COOKIE_SECURE: "true"
       GRAFANA_PUBLIC_URL: https://${APP_DOMAIN:?Set APP_DOMAIN in .env}/grafana/
+      SSE_INTERNAL_TOKEN: ${SSE_INTERNAL_TOKEN:?Set SSE_INTERNAL_TOKEN in .env}
 
   frontend:
     ports: !reset []
     expose:
       - "80"
+
+  sse-gateway:
+    environment:
+      AUTH_MODE: oidc
+      SSE_INTERNAL_TOKEN: ${SSE_INTERNAL_TOKEN:?Set SSE_INTERNAL_TOKEN in .env}
+    ports: !reset []
+    expose:
+      - "8080"
 
   grafana:
     environment:

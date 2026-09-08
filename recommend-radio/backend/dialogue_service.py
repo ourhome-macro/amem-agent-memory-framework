@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from amem_bridge import record_music_behavior
@@ -197,6 +197,12 @@ class MusicDialogueService:
             session = self._get_or_create_session(conn, session_id=session_id)
             return self._serialize_session(conn, session)
 
+    def resolve_session_id(self, session_id: str | None = None) -> str:
+        """Resolve or create a session without running profile analysis."""
+        with get_connection(self.db_path) as conn:
+            session = self._get_or_create_session(conn, session_id=session_id)
+            return str(session["session_id"])
+
     def list_sessions(self, limit: int = 30) -> dict[str, Any]:
         bounded_limit = min(max(int(limit or 30), 1), 80)
         with get_connection(self.db_path) as conn:
@@ -267,6 +273,7 @@ class MusicDialogueService:
         session_id: str | None = None,
         context_card_id: str | None = None,
         context_track_id: str | None = None,
+        progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         normalized = _normalize_message(message)
         if not normalized:
@@ -298,6 +305,15 @@ class MusicDialogueService:
 
         self.conversation_memory.append(session_id=resolved_session_id, role="user", content=normalized)
         route = self._route_message(normalized, context_card, session_id=resolved_session_id)
+        _emit_progress(
+            progress,
+            "route",
+            {
+                "tool": route.tool,
+                "source": route.route_source,
+                "confidence": route.confidence,
+            },
+        )
         warm_topic = (
             route.signal.topic if route.signal else route.request_spec.primary_label if route.request_spec else route.emotion
         )
@@ -512,6 +528,15 @@ class MusicDialogueService:
                 scene="conversation",
                 request_spec=request_spec,
             )
+            _emit_progress(
+                progress,
+                "memory",
+                {
+                    "sceneMemoryId": scene_memory_id,
+                    "requestSpec": request_spec.to_dict(),
+                },
+            )
+            _emit_progress(progress, "recommendation", {"status": "ranking"})
             recommendations = self._safe_recommendations(request_spec)
             discovery_job_id = (
                 self._schedule_discovery(request_spec)
@@ -523,6 +548,15 @@ class MusicDialogueService:
                 "jobId": discovery_job_id,
                 "initialCount": len(recommendations),
             }
+            _emit_progress(
+                progress,
+                "discovery",
+                {
+                    "status": discovery_result["status"],
+                    "jobId": discovery_job_id,
+                    "initialCount": len(recommendations),
+                },
+            )
             title_topic = (
                 signal.topic
                 if signal
@@ -2999,6 +3033,20 @@ def _escape_like(value: str) -> str:
         .replace("%", "\\%")
         .replace("_", "\\_")
     )
+
+
+def _emit_progress(
+    callback: Callable[[str, dict[str, Any]], None] | None,
+    stage: str,
+    payload: dict[str, Any],
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(stage, payload)
+    except Exception:
+        # Progress delivery is observational and must never fail the task.
+        return
 
 
 def _normalize_message(value: str) -> str:

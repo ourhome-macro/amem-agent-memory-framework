@@ -103,7 +103,7 @@ function Start-DockerEngine {
 function Start-ComposeStack {
     Push-Location $appRoot
     try {
-        $services = @('amem', 'backend')
+        $services = @('amem', 'backend', 'sse-gateway')
         if (-not $NoFrontend) { $services += 'frontend' }
         if ($Rebuild) {
             if (-not $NoFrontend) {
@@ -116,7 +116,7 @@ function Start-ComposeStack {
                     Pop-Location
                 }
             }
-            & docker compose build amem backend
+            & docker compose build amem backend sse-gateway
             if ($LASTEXITCODE -ne 0) { throw "docker compose build failed with exit code $LASTEXITCODE" }
             if (-not $NoFrontend) {
                 & docker build --file frontend/Dockerfile.local --tag recommend-radio-frontend:latest frontend
@@ -139,9 +139,12 @@ Start-ComposeStack
 
 $backend = Wait-HttpReady -Url 'http://127.0.0.1:5000/health/ready' -TimeoutSeconds 90
 if ($backend.data.status -ne 'ready') { throw 'Recommend Radio backend did not become ready.' }
+$sseGateway = Wait-HttpReady -Url 'http://127.0.0.1:18080/health/ready' -TimeoutSeconds 60
+if ($sseGateway.status -ne 'ready') { throw 'Recommend Radio SSE gateway did not become ready.' }
 
 Write-Host ''
 Write-Host 'Recommend Radio is ready.' -ForegroundColor Green
 Write-Host '  UI:       http://localhost:3000' -ForegroundColor Green
 Write-Host '  Backend:  http://127.0.0.1:5000' -ForegroundColor Green
+Write-Host '  SSE:      http://127.0.0.1:18080/health/ready' -ForegroundColor Green
 Write-Host "  Embedding: http://127.0.0.1:$embeddingPort/health" -ForegroundColor Green
