@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from music_profile import MusicProfile
 from request_spec import RequestSpec
 
-
 DEFAULT_SEARCH_BUDGET = 8
 TAG_SEARCH_SUFFIX = "音乐"
 DEFAULT_FALLBACK_QUERIES = (
@@ -52,12 +51,19 @@ _LANGUAGE_QUERY_LABELS = {
     "japanese": "日语歌",
     "korean": "韩语歌",
 }
-_GENRE_QUERY_LABELS = {"pop": "流行音乐", "rock": "摇滚音乐", "rap": "Rap 说唱音乐", "reggae": "雷鬼 Reggae 音乐", "rnb": "R&B 音乐"}
+_GENRE_QUERY_LABELS = {
+    "pop": "流行音乐",
+    "rock": "摇滚音乐",
+    "rap": "Rap 说唱音乐",
+    "reggae": "雷鬼 Reggae 音乐",
+    "rnb": "R&B 音乐",
+}
 
 
 @dataclass(frozen=True)
 class DiscoveryPlan:
     search_queries: list[str]
+    semantic_queries: list[str]
     negative_queries: list[str]
     keyword_specs: dict[str, dict[str, object]]
     negative_keyword_specs: dict[str, dict[str, object]]
@@ -69,11 +75,15 @@ class DiscoveryPlanner:
     """Builds bounded search plans. It has no network or recommendation-serving responsibility."""
 
     def __init__(self, *, search_budget: int | None = None) -> None:
-        self.search_budget = search_budget if search_budget is not None else _env_int(
-            "RECOMMEND_DISCOVERY_SEARCH_BUDGET", DEFAULT_SEARCH_BUDGET
+        self.search_budget = (
+            search_budget
+            if search_budget is not None
+            else _env_int("RECOMMEND_DISCOVERY_SEARCH_BUDGET", DEFAULT_SEARCH_BUDGET)
         )
 
-    def plan(self, *, profile: MusicProfile, request_spec: RequestSpec, scene: str) -> DiscoveryPlan:
+    def plan(
+        self, *, profile: MusicProfile, request_spec: RequestSpec, scene: str
+    ) -> DiscoveryPlan:
         blocked_terms = {topic.casefold() for topic in profile.negative_topics} | {
             topic.casefold() for topic in request_spec.excluded_topics
         }
@@ -83,7 +93,9 @@ class DiscoveryPlanner:
         fallback_queries: list[str] = []
         if not request_queries and not profile_queries:
             fallback_queries = [
-                query for query in DEFAULT_FALLBACK_QUERIES if not _contains_blocked(query, blocked_terms)
+                query
+                for query in DEFAULT_FALLBACK_QUERIES
+                if not _contains_blocked(query, blocked_terms)
             ]
         candidate_limit = max(self.search_budget * 8, 16)
         profile_head = max(self.search_budget * 2, 4)
@@ -97,9 +109,24 @@ class DiscoveryPlanner:
                 *fallback_queries,
             ]
         )
-        queries = list(dict.fromkeys(source_queries))[:candidate_limit]
+        planned_queries = list(dict.fromkeys(source_queries))[:candidate_limit]
+        semantic_queries = [query for query in planned_queries if _is_semantic_query(query)]
+        entity_queries = [query for query in planned_queries if query not in semantic_queries]
+        # Bilibili text search is strongest for entities. Keep at most one
+        # semantic probe for supply discovery; the full semantic intent is used
+        # by local vector ranking instead of consuming the search budget.
+        queries = [*entity_queries, *semantic_queries[:1]][:candidate_limit]
         trace = f"discovery:{scene}:{abs(hash((tuple(queries), request_spec.raw_text))) % 1000000}"
-        negative_queries = [] if request_spec.constrained else [f"{topic} {TAG_SEARCH_SUFFIX}" for topic, _ in sorted(profile.negative_topics.items(), key=lambda item: item[1], reverse=True)[:1]]
+        negative_queries = (
+            []
+            if request_spec.constrained
+            else [
+                f"{topic} {TAG_SEARCH_SUFFIX}"
+                for topic, _ in sorted(
+                    profile.negative_topics.items(), key=lambda item: item[1], reverse=True
+                )[:1]
+            ]
+        )
         request_spec_family = _request_family_spec(request_spec)
         keyword_specs = {
             query: (
@@ -108,6 +135,7 @@ class DiscoveryPlanner:
                     exploration_axis="request",
                     keyword_kind="probe",
                     origin="request",
+                    query_mode=("semantic" if query in semantic_queries else "entity"),
                 )
                 if query in request_queries
                 else dict(
@@ -116,15 +144,20 @@ class DiscoveryPlanner:
                         exploration_axis=(
                             "adjacent_genre"
                             if query in exploration_queries
-                            else "cold_start" if query in fallback_queries else "profile"
+                            else "cold_start"
+                            if query in fallback_queries
+                            else "profile"
                         ),
                     ),
                     keyword_kind=("anchor" if query in profile_queries else "probe"),
                     origin=(
                         "l3_profile"
                         if query in profile_queries
-                        else "adjacent_genre" if query in exploration_queries else "cold_start"
+                        else "adjacent_genre"
+                        if query in exploration_queries
+                        else "cold_start"
                     ),
+                    query_mode=("semantic" if query in semantic_queries else "entity"),
                 )
             )
             for query in queries
@@ -139,6 +172,7 @@ class DiscoveryPlanner:
         }
         return DiscoveryPlan(
             search_queries=queries,
+            semantic_queries=semantic_queries,
             negative_queries=negative_queries,
             keyword_specs=keyword_specs,
             negative_keyword_specs=negative_keyword_specs,
@@ -179,10 +213,16 @@ class DiscoveryPlanner:
         return list(dict.fromkeys(query for query in queries if query))
 
     def _profile_queries(self, profile: MusicProfile, blocked_terms: set[str]) -> list[str]:
-        intents = [intent for intent in profile.recent_intents if not _contains_blocked(intent, blocked_terms)]
+        intents = [
+            intent
+            for intent in profile.recent_intents
+            if not _contains_blocked(intent, blocked_terms)
+        ]
         topics = [
             topic
-            for topic, _weight in sorted(profile.positive_topics.items(), key=lambda item: item[1], reverse=True)
+            for topic, _weight in sorted(
+                profile.positive_topics.items(), key=lambda item: item[1], reverse=True
+            )
             if topic.casefold() not in blocked_terms
         ]
         modifiers = _mood_modifiers(profile)
@@ -191,13 +231,19 @@ class DiscoveryPlanner:
                 if not _contains_blocked(query, blocked_terms):
                     intents.append(query)
         if not topics:
-            intents.extend(f"{mood} {TAG_SEARCH_SUFFIX}" for mood in profile.mood_weights if mood.casefold() not in blocked_terms)
+            intents.extend(
+                f"{mood} {TAG_SEARCH_SUFFIX}"
+                for mood in profile.mood_weights
+                if mood.casefold() not in blocked_terms
+            )
         return list(dict.fromkeys(item.strip() for item in intents if item.strip()))
 
     @staticmethod
     def _exploration_queries(profile: MusicProfile, blocked_terms: set[str]) -> list[str]:
         result: list[str] = []
-        for topic, _weight in sorted(profile.positive_topics.items(), key=lambda item: item[1], reverse=True)[:4]:
+        for topic, _weight in sorted(
+            profile.positive_topics.items(), key=lambda item: item[1], reverse=True
+        )[:4]:
             for query in ADJACENT_EXPLORATION_QUERIES.get(topic.strip().casefold(), ()):
                 if not _contains_blocked(query, blocked_terms):
                     result.append(query)
@@ -206,7 +252,9 @@ class DiscoveryPlanner:
 
 def _mood_modifiers(profile: MusicProfile) -> list[str]:
     values = []
-    for mood, _weight in sorted(profile.mood_weights.items(), key=lambda item: item[1], reverse=True):
+    for mood, _weight in sorted(
+        profile.mood_weights.items(), key=lambda item: item[1], reverse=True
+    ):
         values.extend(MOOD_QUERY_MODIFIERS.get(mood.strip().casefold(), [mood.strip()]))
     return list(dict.fromkeys(value for value in values if value))
 
@@ -224,6 +272,43 @@ def _topic_queries(topic: str, modifiers: list[str]) -> list[str]:
 def _contains_blocked(value: str, blocked_terms: set[str]) -> bool:
     normalized = value.casefold()
     return any(_contains_term(normalized, term) for term in blocked_terms if term)
+
+
+def _is_semantic_query(value: str) -> bool:
+    normalized = value.casefold()
+    semantic_markers = (
+        "舒缓",
+        "安静",
+        "放松",
+        "温柔",
+        "治愈",
+        "氛围",
+        "calm",
+        "chill",
+        "relax",
+        "轻柔",
+    )
+    entity_markers = (
+        "r&b",
+        "rnb",
+        "rock",
+        "摇滚",
+        "流行",
+        "pop",
+        "rap",
+        "reggae",
+        "jazz",
+        "vocaloid",
+        "初音未来",
+        "女声",
+        "英文",
+        "日语",
+        "韩语",
+        "华语",
+    )
+    return any(marker in normalized for marker in semantic_markers) and not any(
+        marker in normalized for marker in entity_markers
+    )
 
 
 def _contains_term(value: str, term: str) -> bool:

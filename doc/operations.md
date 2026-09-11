@@ -29,3 +29,31 @@
 - Discovery job 记录每条 B站搜索和候选准入耗时。
 - 画像缓存命中不再调用 LLM；默认候选库存低于 32 条时后台预热。
 - 首轮主要关注画像 LLM 与 Discovery 延迟，排序路径通常不是瓶颈。
+
+## Recommend Radio 内容向量
+
+候选文本向量回填和可选音频任务使用：
+
+```powershell
+python .\recommend-radio\scripts\process_content_embeddings.py --mode text --limit 256
+python .\recommend-radio\scripts\process_content_embeddings.py --mode audio --limit 8
+```
+
+未配置 `AMEM_EMBEDDING_BASE_URL` 时，文本任务保留 pending，线上自动降级为 lexical MMR。未配置 `RECOMMEND_AUDIO_EMBEDDING_BASE_URL` 时不创建音频任务。
+
+## 推荐评测
+
+受控基准：
+
+```powershell
+python .\recommend-radio\scripts\evaluate_memory_runtime.py
+```
+
+真实 logged-slate 评测：
+
+```powershell
+python .\recommend-radio\scripts\evaluate_memory_runtime.py `
+  --db-path .\recommend-radio\backend\data\bili_radio.sqlite3
+```
+
+开启 user-level A/B 前先确认样本量、实验互斥和指标窗口。assignment 会落库；关闭开关不会改变正常推荐行为。

@@ -36,6 +36,14 @@ embedding job 按 level 调度：
 - `L2` scenario 不默认 embedding，依赖元数据、文本和时间召回。
 - `L3` profile 不 embedding，profile-aware 查询直接加载。
 
+Recommend Radio 的内容向量与 AMEM 记忆向量分开：
+
+- `content_embeddings` 按 Recording、modality、model/version 保存候选向量；
+- `content_embedding_jobs` 保存可重试的文本/音频增量任务；
+- 文本向量在 Discovery 准入阶段生成；
+- 音频向量只覆盖喜欢、完播或高 Yield 候选；
+- model version 或 content hash 变化时重算，不复用不兼容向量。
+
 向量发布只能通过 embedding outbox。Qdrant 故障不影响 SQLite 写入。
 
 ## 冷热分层
@@ -43,3 +51,13 @@ embedding job 按 level 调度：
 - `hot`：仍在热队列中，优先服务低延迟上下文，普通查询可见，但默认不发布向量。
 - `warm`：主索引层，承载 FTS、keywords、metadata 和 embedding。
 - `cold`：归档和历史层，保留在 SQLite 和 FTS 中，默认不进入普通检索。
+
+## 推荐应用实体与评测存储
+
+- `song_works`：作品级规范化实体；
+- `song_recordings`：原版、Live、Cover、Remix 等录音版本；
+- `tracks`：BVID/CID 视频资源；
+- `track_entity_links`：带 resolver version、confidence、evidence 的资源映射；
+- `recommendation_impressions`：不可变的线上展示 slate 与策略快照；
+- `discovery_search_observations`：用于时间衰减 Yield 的逐次搜索观测；
+- `conversation_warm_memories`：按场景作用域和内容类型保存温上下文。

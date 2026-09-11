@@ -36,8 +36,16 @@
 
 ## 优化优先级
 
-1. 候选准入时预计算并持久化歌曲向量，在线只计算 query 向量并在进程内完成 MMR。
-2. 将 shown、关键词曝光和 Trace 写入合并成批量事务或 Outbox，移出响应热路径。
-3. SSE 从完整 session 快照改为 message/card patch，减少序列化和网络负载。
-4. CandidatePool 将 300 条全量读取改为索引粗排后的 32–64 条候选。
-5. 对 LLM Router 使用更短 Prompt、结果缓存和超时后的规则降级。
+截至 2026-09-11：
+
+- 已完成：候选准入时预计算并持久化文本向量，在线只计算 query 向量；向量覆盖不足时走 lexical MMR。
+- 已完成：SongWork/Recording/VideoAsset 实体归一化和 work-level 结果去重。
+- 已完成：不可变 impression 与实验 assignment，为真实 logged-slate 评测保留策略快照。
+
+剩余优先级：
+
+1. 将 shown、关键词曝光和 Trace 写入合并成批量事务或 Outbox，移出响应热路径。
+2. SSE 从完整 session 快照改为 message/card patch，减少序列化和网络负载。
+3. CandidatePool 将 300 条全量读取改为索引粗排后的 32–64 条候选。
+4. 对 LLM Router 使用更短 Prompt、结果缓存和超时后的规则降级。
+5. 积累真实 impression 后再评估 CLAP 音频相关性，不以向量覆盖率替代推荐收益。

@@ -8,9 +8,12 @@ Recommend Radio 是 AMEM 的 B 站音乐推荐应用：Vue 前端、Flask API、
 - 对话和首页共享同一个 RecommendationEngine；
 - RequestSpec 支持语言、地区、流派、声线、情绪和排除条件；
 - Discovery 负责 B 站补货，CandidatePool 只保留可服务候选；
+- SongWork/Recording/VideoAsset 三级实体避免把原版、现场和翻唱错误合并；
+- 候选文本向量在准入阶段持久化，可选 CLAP 音频任务只处理高价值增量候选；
 - L0-L3 和记忆温度驱动长期画像、近期上下文、去重和疲劳控制；
 - 推荐 trace 输出画像、请求约束、候选来源和性能耗时；
 - 本地 bge-m3 embedding 支持 AMEM 语义检索。
+- impression、稳定用户分桶和 logged-slate 评测支持可证伪的线上/离线实验。
 
 ## 启动
 

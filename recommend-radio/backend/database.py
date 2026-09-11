@@ -72,9 +72,9 @@ def get_connection(db_path: Optional[Path | str] = None) -> sqlite3.Connection:
         factory=ClosingConnection,
     )
     conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA foreign_keys = ON')
-    conn.execute(f'PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}')
-    conn.execute('PRAGMA synchronous = NORMAL')
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
@@ -85,8 +85,8 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
             return
 
         with get_connection(path) as conn:
-            conn.execute('PRAGMA journal_mode = WAL')
-            current_version = int(conn.execute('PRAGMA user_version').fetchone()[0])
+            conn.execute("PRAGMA journal_mode = WAL")
+            current_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
             if current_version < 1:
                 conn.executescript(
                     """
@@ -233,7 +233,7 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
             );
                     """
                 )
-                conn.execute('PRAGMA user_version = 1')
+                conn.execute("PRAGMA user_version = 1")
                 current_version = 1
 
             if current_version < 2:
@@ -259,7 +259,7 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
                         ON analysis_events (track_id, created_at DESC);
                     """
                 )
-                conn.execute('PRAGMA user_version = 2')
+                conn.execute("PRAGMA user_version = 2")
                 current_version = 2
 
             if current_version < 3:
@@ -269,7 +269,7 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
                         ON playlist_items (playlist_id, position)
                     """
                 )
-                conn.execute('PRAGMA user_version = 3')
+                conn.execute("PRAGMA user_version = 3")
                 current_version = 3
 
             if current_version < 4:
@@ -301,7 +301,7 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
                         ON track_reviews (track_id, updated_at DESC);
                     """
                 )
-                conn.execute('PRAGMA user_version = 5')
+                conn.execute("PRAGMA user_version = 5")
                 current_version = 5
 
             if current_version < 6:
@@ -327,7 +327,7 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
                         ON recommendation_events (user_id, track_id, event, created_at DESC);
                     """
                 )
-                conn.execute('PRAGMA user_version = 6')
+                conn.execute("PRAGMA user_version = 6")
                 current_version = 6
 
             if current_version < 7:
@@ -339,83 +339,90 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
                     "TEXT NOT NULL DEFAULT 'user-created'",
                 )
                 _add_column_if_missing(conn, "playlists", "source_bvid", "TEXT")
-                conn.execute('PRAGMA user_version = 7')
+                conn.execute("PRAGMA user_version = 7")
                 current_version = 7
 
             if current_version < 8:
                 _ensure_recommendation_history_table(conn)
-                conn.execute('PRAGMA user_version = 8')
+                conn.execute("PRAGMA user_version = 8")
                 current_version = 8
 
             if current_version < 9:
                 _ensure_recommendation_traces_table(conn)
-                conn.execute('PRAGMA user_version = 9')
+                conn.execute("PRAGMA user_version = 9")
                 current_version = 9
 
             if current_version < 10:
                 _ensure_agent_dialogue_tables(conn)
-                conn.execute('PRAGMA user_version = 10')
+                conn.execute("PRAGMA user_version = 10")
                 current_version = 10
 
             if current_version < 11:
                 _ensure_discovery_pool_tables(conn)
-                conn.execute('PRAGMA user_version = 11')
+                conn.execute("PRAGMA user_version = 11")
                 current_version = 11
 
             if current_version < 12:
                 _ensure_music_profile_update_state(conn)
-                conn.execute('PRAGMA user_version = 12')
+                conn.execute("PRAGMA user_version = 12")
                 current_version = 12
 
             if current_version < 13:
                 _ensure_memory_lifecycle_tables(conn)
-                conn.execute('PRAGMA user_version = 13')
+                conn.execute("PRAGMA user_version = 13")
                 current_version = 13
 
             if current_version < 14:
                 _ensure_conversation_memory_tables(conn)
-                conn.execute('PRAGMA user_version = 14')
+                conn.execute("PRAGMA user_version = 14")
                 current_version = 14
 
             if current_version < 15:
                 _ensure_candidate_scope_columns(conn)
-                conn.execute('PRAGMA user_version = 15')
+                conn.execute("PRAGMA user_version = 15")
                 current_version = 15
 
             if current_version < 16:
                 _ensure_keyword_governance_tables(conn)
-                conn.execute('PRAGMA user_version = 16')
+                conn.execute("PRAGMA user_version = 16")
                 current_version = 16
 
             if current_version < 17:
                 _ensure_keyword_feedback_columns(conn)
-                conn.execute('PRAGMA user_version = 17')
+                conn.execute("PRAGMA user_version = 17")
                 current_version = 17
 
             if current_version < 18:
                 _ensure_profile_snapshot_table(conn)
-                conn.execute('PRAGMA user_version = 18')
+                conn.execute("PRAGMA user_version = 18")
                 current_version = 18
 
             if current_version < 19:
                 _ensure_lifecycle_decay_column(conn)
-                conn.execute('PRAGMA user_version = 19')
+                conn.execute("PRAGMA user_version = 19")
                 current_version = 19
 
             if current_version < 20:
                 _ensure_l3_demotion_outbox(conn)
-                conn.execute('PRAGMA user_version = 20')
+                conn.execute("PRAGMA user_version = 20")
                 current_version = 20
 
             if current_version < 21:
                 _ensure_keyword_family_governance(conn)
-                conn.execute('PRAGMA user_version = 21')
+                conn.execute("PRAGMA user_version = 21")
                 current_version = 21
 
             if current_version < 22:
                 _ensure_keyword_learning_tables(conn)
-                conn.execute('PRAGMA user_version = 22')
+                conn.execute("PRAGMA user_version = 22")
                 current_version = 22
+
+            if current_version < 23:
+                _ensure_music_entity_tables(conn)
+                _ensure_content_embedding_tables(conn)
+                _ensure_recommendation_evaluation_tables(conn)
+                conn.execute("PRAGMA user_version = 23")
+                current_version = 23
 
             _ensure_current_schema_columns(conn)
 
@@ -439,6 +446,7 @@ def _ensure_current_schema_columns(conn: sqlite3.Connection) -> None:
     _ensure_memory_lifecycle_tables(conn)
     _ensure_conversation_memory_tables(conn)
     _ensure_candidate_scope_columns(conn)
+    _ensure_content_cache_scope_identity(conn)
     _ensure_keyword_governance_tables(conn)
     _ensure_keyword_feedback_columns(conn)
     _ensure_profile_snapshot_table(conn)
@@ -446,6 +454,173 @@ def _ensure_current_schema_columns(conn: sqlite3.Connection) -> None:
     _ensure_l3_demotion_outbox(conn)
     _ensure_keyword_family_governance(conn)
     _ensure_keyword_learning_tables(conn)
+    _ensure_music_entity_tables(conn)
+    _ensure_content_embedding_tables(conn)
+    _ensure_recommendation_evaluation_tables(conn)
+
+
+def _ensure_music_entity_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS song_works (
+            work_id TEXT PRIMARY KEY,
+            canonical_title TEXT NOT NULL,
+            canonical_artist TEXT NOT NULL DEFAULT '',
+            normalized_title TEXT NOT NULL,
+            normalized_artist TEXT NOT NULL DEFAULT '',
+            resolver_version TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_song_works_identity
+            ON song_works(normalized_title, normalized_artist);
+
+        CREATE TABLE IF NOT EXISTS song_recordings (
+            recording_id TEXT PRIMARY KEY,
+            work_id TEXT NOT NULL,
+            performer TEXT NOT NULL DEFAULT '',
+            version_type TEXT NOT NULL DEFAULT 'studio_or_unknown',
+            duration_bucket INTEGER NOT NULL DEFAULT 0,
+            resolver_version TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(work_id) REFERENCES song_works(work_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_song_recordings_work
+            ON song_recordings(work_id, version_type, duration_bucket);
+
+        CREATE TABLE IF NOT EXISTS track_entity_links (
+            track_id TEXT PRIMARY KEY,
+            recording_id TEXT NOT NULL,
+            resolver_version TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0,
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE,
+            FOREIGN KEY(recording_id) REFERENCES song_recordings(recording_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_track_entity_recording
+            ON track_entity_links(recording_id, confidence DESC);
+        """
+    )
+    for column, definition in (
+        ("description", "TEXT NOT NULL DEFAULT ''"),
+        ("tags_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("type_name", "TEXT NOT NULL DEFAULT ''"),
+        ("hit_columns_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("work_id", "TEXT"),
+        ("recording_id", "TEXT"),
+        ("canonical_title", "TEXT NOT NULL DEFAULT ''"),
+        ("canonical_artist", "TEXT NOT NULL DEFAULT ''"),
+        ("version_type", "TEXT NOT NULL DEFAULT 'studio_or_unknown'"),
+        ("entity_confidence", "REAL NOT NULL DEFAULT 0"),
+    ):
+        _add_column_if_missing(conn, "tracks", column, definition)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_work_id ON tracks(work_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_recording_id ON tracks(recording_id)")
+    from music_entity import backfill_track_entities
+
+    backfill_track_entities(conn)
+
+
+def _ensure_content_embedding_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS content_embeddings (
+            recording_id TEXT NOT NULL,
+            modality TEXT NOT NULL,
+            model_name TEXT NOT NULL,
+            model_version TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            vector_json TEXT NOT NULL,
+            dimension INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ready',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(recording_id, modality, model_name, model_version),
+            FOREIGN KEY(recording_id) REFERENCES song_recordings(recording_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_content_embeddings_lookup
+            ON content_embeddings(modality, model_name, model_version, status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS content_embedding_jobs (
+            job_id TEXT PRIMARY KEY,
+            recording_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            modality TEXT NOT NULL,
+            model_name TEXT NOT NULL,
+            model_version TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(recording_id, modality, model_name, model_version, content_hash),
+            FOREIGN KEY(recording_id) REFERENCES song_recordings(recording_id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_content_embedding_jobs_ready
+            ON content_embedding_jobs(status, modality, updated_at);
+        """
+    )
+
+
+def _ensure_recommendation_evaluation_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS recommendation_impressions (
+            recommendation_trace_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            rank_position INTEGER NOT NULL,
+            score REAL NOT NULL DEFAULT 0,
+            score_signals_json TEXT NOT NULL DEFAULT '{}',
+            candidate_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            policy_json TEXT NOT NULL DEFAULT '{}',
+            selection_propensity REAL,
+            shown_at TEXT NOT NULL,
+            PRIMARY KEY(recommendation_trace_id, track_id),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_recommendation_impressions_user_time
+            ON recommendation_impressions(user_id, shown_at, rank_position);
+
+        CREATE TABLE IF NOT EXISTS recommendation_experiment_assignments (
+            user_id TEXT NOT NULL,
+            experiment_name TEXT NOT NULL,
+            variant TEXT NOT NULL,
+            assigned_at TEXT NOT NULL,
+            PRIMARY KEY(user_id, experiment_name),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS discovery_search_observations (
+            observation_id TEXT PRIMARY KEY,
+            keyword_id TEXT NOT NULL,
+            family_id TEXT NOT NULL DEFAULT '',
+            user_id TEXT NOT NULL,
+            candidate_count INTEGER NOT NULL DEFAULT 0,
+            new_candidate_count INTEGER NOT NULL DEFAULT 0,
+            admitted_count INTEGER NOT NULL DEFAULT 0,
+            result_overlap REAL NOT NULL DEFAULT 0,
+            observed_at TEXT NOT NULL,
+            FOREIGN KEY(keyword_id) REFERENCES discovery_keywords(keyword_id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_search_observations_keyword_time
+            ON discovery_search_observations(keyword_id, observed_at DESC);
+        """
+    )
+    _add_column_if_missing(conn, "recommendation_impressions", "selection_propensity", "REAL")
+    _add_column_if_missing(
+        conn, "recommendation_events", "played_seconds", "INTEGER NOT NULL DEFAULT 0"
+    )
+    _add_column_if_missing(conn, "recommendation_events", "completed", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "recommendation_events", "negative", "INTEGER NOT NULL DEFAULT 0")
 
 
 def _ensure_recommendation_history_table(conn: sqlite3.Connection) -> None:
@@ -530,9 +705,11 @@ def _ensure_discovery_pool_tables(conn: sqlite3.Connection) -> None:
             facets_json TEXT NOT NULL DEFAULT '{}',
             evidence_json TEXT NOT NULL DEFAULT '[]',
             status TEXT NOT NULL DEFAULT 'ready',
+            scope_kind TEXT NOT NULL DEFAULT 'default',
+            scope_key TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            PRIMARY KEY (user_id, track_id),
+            PRIMARY KEY (user_id, track_id, scope_kind, scope_key),
             FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
             FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
         );
@@ -622,6 +799,38 @@ def _ensure_conversation_memory_tables(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_conversation_warm_topics_active
             ON conversation_warm_topics (session_id, status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS conversation_warm_memories (
+            memory_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            scope_type TEXT NOT NULL,
+            scope_key TEXT NOT NULL,
+            memory_type TEXT NOT NULL,
+            memory_key TEXT NOT NULL,
+            source_session_id TEXT,
+            summary TEXT NOT NULL,
+            keywords_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'active',
+            updated_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            UNIQUE(user_id, scope_type, scope_key, memory_type, memory_key),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(source_session_id) REFERENCES agent_dialogue_sessions(session_id)
+                ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_conversation_warm_memories_active
+            ON conversation_warm_memories (
+                user_id, scope_type, scope_key, memory_type, status, updated_at DESC
+            );
+
+        INSERT OR IGNORE INTO conversation_warm_memories (
+            memory_id, user_id, scope_type, scope_key, memory_type, memory_key,
+            source_session_id, summary, keywords_json, status, updated_at, expires_at
+        )
+        SELECT 'warm-legacy:' || lower(hex(randomblob(16))), user_id,
+               'session', session_id, 'topic_summary', topic_key,
+               session_id, summary, keywords_json, status, updated_at, expires_at
+        FROM conversation_warm_topics;
         """
     )
 
@@ -631,6 +840,53 @@ def _ensure_candidate_scope_columns(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "content_cache", "scope_key", "TEXT NOT NULL DEFAULT ''")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_content_cache_scope ON content_cache (user_id, status, scope_kind, scope_key, updated_at DESC)"
+    )
+
+
+def _ensure_content_cache_scope_identity(conn: sqlite3.Connection) -> None:
+    primary_key = [
+        str(row["name"])
+        for row in sorted(
+            conn.execute("PRAGMA table_info(content_cache)").fetchall(),
+            key=lambda row: int(row["pk"] or 0),
+        )
+        if int(row["pk"] or 0) > 0
+    ]
+    expected = ["user_id", "track_id", "scope_kind", "scope_key"]
+    if primary_key == expected:
+        return
+    conn.executescript(
+        """
+        CREATE TABLE content_cache_v23 (
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            facets_json TEXT NOT NULL DEFAULT '{}',
+            evidence_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'ready',
+            scope_kind TEXT NOT NULL DEFAULT 'default',
+            scope_key TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, track_id, scope_kind, scope_key),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        INSERT OR IGNORE INTO content_cache_v23 (
+            user_id, track_id, source, facets_json, evidence_json, status,
+            scope_kind, scope_key, created_at, updated_at
+        )
+        SELECT user_id, track_id, source, facets_json, evidence_json, status,
+               COALESCE(scope_kind, 'default'), COALESCE(scope_key, ''),
+               created_at, updated_at
+        FROM content_cache;
+        DROP TABLE content_cache;
+        ALTER TABLE content_cache_v23 RENAME TO content_cache;
+        CREATE INDEX idx_content_cache_user_status
+            ON content_cache (user_id, status, updated_at DESC);
+        CREATE INDEX idx_content_cache_scope
+            ON content_cache (user_id, status, scope_kind, scope_key, updated_at DESC);
+        """
     )
 
 
@@ -676,8 +932,12 @@ def _ensure_keyword_governance_tables(conn: sqlite3.Connection) -> None:
 
 def _ensure_keyword_feedback_columns(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "discovery_keywords", "shown_count", "INTEGER NOT NULL DEFAULT 0")
-    _add_column_if_missing(conn, "discovery_keywords", "dismissed_count", "INTEGER NOT NULL DEFAULT 0")
-    _add_column_if_missing(conn, "discovery_keywords", "completed_count", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(
+        conn, "discovery_keywords", "dismissed_count", "INTEGER NOT NULL DEFAULT 0"
+    )
+    _add_column_if_missing(
+        conn, "discovery_keywords", "completed_count", "INTEGER NOT NULL DEFAULT 0"
+    )
 
 
 def _ensure_keyword_family_governance(conn: sqlite3.Connection) -> None:
@@ -741,8 +1001,12 @@ def _ensure_keyword_learning_tables(conn: sqlite3.Connection) -> None:
         ("affinity_negative", "REAL NOT NULL DEFAULT 0"),
     ):
         _add_column_if_missing(conn, "discovery_keywords", column, definition)
-    _add_column_if_missing(conn, "recommendation_events", "recommendation_trace_id", "TEXT NOT NULL DEFAULT ''")
-    _add_column_if_missing(conn, "recommendation_events", "source_keyword_ids_json", "TEXT NOT NULL DEFAULT '[]'")
+    _add_column_if_missing(
+        conn, "recommendation_events", "recommendation_trace_id", "TEXT NOT NULL DEFAULT ''"
+    )
+    _add_column_if_missing(
+        conn, "recommendation_events", "source_keyword_ids_json", "TEXT NOT NULL DEFAULT '[]'"
+    )
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS discovery_item_sources (
@@ -815,7 +1079,9 @@ def _ensure_keyword_learning_tables(conn: sqlite3.Connection) -> None:
             ON discovery_keyword_evolution_runs (user_id, created_at DESC);
         """
     )
-    _add_column_if_missing(conn, "discovery_keyword_proposals", "evolution_run_id", "TEXT NOT NULL DEFAULT ''")
+    _add_column_if_missing(
+        conn, "discovery_keyword_proposals", "evolution_run_id", "TEXT NOT NULL DEFAULT ''"
+    )
 
 
 def _ensure_profile_snapshot_table(conn: sqlite3.Connection) -> None:
@@ -954,10 +1220,7 @@ def _add_column_if_missing(
     column_name: str,
     column_definition: str,
 ) -> None:
-    columns = {
-        row["name"]
-        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-    }
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
     if column_name not in columns:
         conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
 

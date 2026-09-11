@@ -23,7 +23,6 @@ from music_keyword_pool import (
     topic_phrase,
 )
 from profile_projector import _default_llm_client, _parse_json_object
-from profile_statement_service import ProfileStatementService
 from recommendation_service import RecommendationService
 from request_spec import RequestInterpreter, RequestSpec
 
@@ -190,7 +189,9 @@ class MusicDialogueService:
             user_id=self.user_id,
         )
         self.router_llm_client = router_llm_client
-        self.conversation_memory = ConversationMemoryService(str(self.db_path), user_id=self.user_id)
+        self.conversation_memory = ConversationMemoryService(
+            str(self.db_path), user_id=self.user_id
+        )
 
     def get_session(self, session_id: str | None = None) -> dict[str, Any]:
         with get_connection(self.db_path) as conn:
@@ -303,7 +304,9 @@ class MusicDialogueService:
             )
             resolved_session_id = session["session_id"]
 
-        self.conversation_memory.append(session_id=resolved_session_id, role="user", content=normalized)
+        self.conversation_memory.append(
+            session_id=resolved_session_id, role="user", content=normalized
+        )
         route = self._route_message(normalized, context_card, session_id=resolved_session_id)
         _emit_progress(
             progress,
@@ -315,15 +318,30 @@ class MusicDialogueService:
             },
         )
         warm_topic = (
-            route.signal.topic if route.signal else route.request_spec.primary_label if route.request_spec else route.emotion
+            route.signal.topic
+            if route.signal
+            else route.request_spec.primary_label
+            if route.request_spec
+            else route.emotion
         )
-        self.conversation_memory.refresh_warm(session_id=resolved_session_id, topic=warm_topic)
+        warm_memory_type = (
+            "preference_context"
+            if route.signal is not None
+            else "request_summary"
+            if route.request_spec is not None
+            else "emotion_state"
+        )
+        self.conversation_memory.refresh_warm(
+            session_id=resolved_session_id,
+            topic=warm_topic,
+            memory_type=warm_memory_type,
+            scope_type="scene",
+            scope_key="music_conversation",
+        )
         if route.signal is not None:
             self._record_conversation_signal(resolved_session_id, normalized, route.signal)
             referenced_track_id = (
-                str(context_card.get("track_id") or "")
-                if isinstance(context_card, dict)
-                else ""
+                str(context_card.get("track_id") or "") if isinstance(context_card, dict) else ""
             )
             if referenced_track_id and (
                 _has_positive_preference_intent(normalized)
@@ -334,7 +352,9 @@ class MusicDialogueService:
                         [
                             {
                                 "trackId": referenced_track_id,
-                                "event": "liked" if route.signal.polarity == "positive" else "dislike",
+                                "event": "liked"
+                                if route.signal.polarity == "positive"
+                                else "dislike",
                                 "scene": "conversation",
                                 "source": "quoted_recommendation_dialogue",
                                 "reason": normalized,
@@ -560,7 +580,10 @@ class MusicDialogueService:
             title_topic = (
                 signal.topic
                 if signal
-                else request_spec.primary_label or route.emotion or _topic_from_text(normalized) or "这轮"
+                else request_spec.primary_label
+                or route.emotion
+                or _topic_from_text(normalized)
+                or "这轮"
             )
             memory_ids = [] if write_result is None else write_result.get("memoryIds") or []
             analysis = self._safe_analysis()
@@ -873,7 +896,11 @@ class MusicDialogueService:
                     session = self._load_session(conn, card["session_id"])
                     return self._serialize_session(conn, session)
             spec = RequestSpec.from_dict(payload.get("requestSpec") or {})
-            existing = payload.get("recommendations") if isinstance(payload.get("recommendations"), list) else []
+            existing = (
+                payload.get("recommendations")
+                if isinstance(payload.get("recommendations"), list)
+                else []
+            )
             payload["recommendations"] = _merge_recommendations(
                 existing,
                 self._safe_recommendations(spec),
@@ -1268,7 +1295,9 @@ class MusicDialogueService:
             ).fetchall()
         return [str(row["content"]) for row in reversed(rows)]
 
-    def _recent_turn_context(self, session_id: str, limit: int = CHAT_LLM_HISTORY_LIMIT) -> list[dict[str, str]]:
+    def _recent_turn_context(
+        self, session_id: str, limit: int = CHAT_LLM_HISTORY_LIMIT
+    ) -> list[dict[str, str]]:
         bounded_limit = min(max(int(limit or CHAT_LLM_HISTORY_LIMIT), 2), 20)
         with get_connection(self.db_path) as conn:
             rows = conn.execute(
@@ -1349,7 +1378,9 @@ class MusicDialogueService:
                 return trace
         return {"available": False}
 
-    def _safe_recommendations(self, request_spec: RequestSpec | None = None) -> list[dict[str, Any]]:
+    def _safe_recommendations(
+        self, request_spec: RequestSpec | None = None
+    ) -> list[dict[str, Any]]:
         try:
             result = self.recommendation_service.list_recommendations(
                 scene="conversation",
@@ -1639,7 +1670,9 @@ class MusicDialogueService:
         except Exception:
             return _empty_analysis()
 
-    def _route_message(self, message: str, context_card: Any | None, *, session_id: str) -> DialogueRoute:
+    def _route_message(
+        self, message: str, context_card: Any | None, *, session_id: str
+    ) -> DialogueRoute:
         rule_route = _route_message(message, context_card)
         if _is_high_confidence_route(rule_route, message):
             return _canonical_route(rule_route, message, source="rule", confidence=1.0)
@@ -1825,7 +1858,9 @@ def _route_template(route: DialogueRoute) -> dict[str, Any]:
     }
 
 
-def _canonical_route(route: DialogueRoute, message: str, *, source: str, confidence: float) -> DialogueRoute:
+def _canonical_route(
+    route: DialogueRoute, message: str, *, source: str, confidence: float
+) -> DialogueRoute:
     return replace(
         route,
         request_spec=RequestInterpreter().interpret(message),
@@ -1835,7 +1870,14 @@ def _canonical_route(route: DialogueRoute, message: str, *, source: str, confide
 
 
 def _is_high_confidence_route(route: DialogueRoute, message: str) -> bool:
-    if route.tool in {"control", "direct_chat", "explain_recommendation", "recall_memory", "confirm_signal", "profile_update"}:
+    if route.tool in {
+        "control",
+        "direct_chat",
+        "explain_recommendation",
+        "recall_memory",
+        "confirm_signal",
+        "profile_update",
+    }:
         return True
     if route.tool == "recommend_music":
         return _is_high_confidence_recommendation_command(message)
@@ -1865,12 +1907,27 @@ def _is_high_confidence_recommendation_command(message: str) -> bool:
 
 
 _ROUTER_TOOL_DEFAULTS: dict[str, dict[str, Any]] = {
-    "recommend_music": {"intent": INTENT_RECOMMEND, "profile": True, "memory": True, "search": True},
+    "recommend_music": {
+        "intent": INTENT_RECOMMEND,
+        "profile": True,
+        "memory": True,
+        "search": True,
+    },
     "profile_chat": {"intent": INTENT_CHAT, "profile": True, "memory": True, "search": False},
-    "profile_update": {"intent": INTENT_PROFILE_UPDATE, "profile": True, "memory": False, "search": False},
+    "profile_update": {
+        "intent": INTENT_PROFILE_UPDATE,
+        "profile": True,
+        "memory": False,
+        "search": False,
+    },
     "chat_with_signal": {"intent": INTENT_CHAT, "profile": False, "memory": True, "search": False},
     "casual_chat": {"intent": INTENT_CHAT, "profile": True, "memory": True, "search": False},
-    "explain_recommendation": {"intent": INTENT_CHAT, "profile": True, "memory": True, "search": False},
+    "explain_recommendation": {
+        "intent": INTENT_CHAT,
+        "profile": True,
+        "memory": True,
+        "search": False,
+    },
     "recall_memory": {"intent": INTENT_CHAT, "profile": False, "memory": True, "search": False},
 }
 
@@ -1909,8 +1966,18 @@ def _llm_route_message(
                         "properties": {
                             "polarity": {"type": "string", "enum": ["positive", "negative"]},
                             "topic": {"type": "string", "maxLength": 80},
-                            "kind": {"type": "string", "enum": ["stable_preference", "preference_hypothesis", "recent_state"]},
-                            "commitPolicy": {"type": "string", "enum": ["commit", "shadow", "confirm"]},
+                            "kind": {
+                                "type": "string",
+                                "enum": [
+                                    "stable_preference",
+                                    "preference_hypothesis",
+                                    "recent_state",
+                                ],
+                            },
+                            "commitPolicy": {
+                                "type": "string",
+                                "enum": ["commit", "shadow", "confirm"],
+                            },
                         },
                     },
                 },
@@ -1957,7 +2024,12 @@ def _signal_from_tool_args(value: Any, message: str) -> ExtractedSignal | None:
     polarity = str(value.get("polarity") or "")
     kind = str(value.get("kind") or "")
     policy = str(value.get("commitPolicy") or "")
-    if not topic or polarity not in {"positive", "negative"} or kind not in {"stable_preference", "preference_hypothesis", "recent_state"} or policy not in {"commit", "shadow", "confirm"}:
+    if (
+        not topic
+        or polarity not in {"positive", "negative"}
+        or kind not in {"stable_preference", "preference_hypothesis", "recent_state"}
+        or policy not in {"commit", "shadow", "confirm"}
+    ):
         return None
     return ExtractedSignal(
         polarity=polarity,
@@ -2086,11 +2158,7 @@ def _route_message(message: str, context_card: Any | None) -> DialogueRoute:
 
 def _route_intents(primary: str, signal: ExtractedSignal | None) -> tuple[str, ...]:
     intents = [primary]
-    if (
-        signal is not None
-        and signal.kind != "recent_state"
-        and primary != INTENT_PROFILE_UPDATE
-    ):
+    if signal is not None and signal.kind != "recent_state" and primary != INTENT_PROFILE_UPDATE:
         intents.append(INTENT_PROFILE_UPDATE)
     return tuple(dict.fromkeys(intents))
 
@@ -2377,7 +2445,7 @@ def _extract_topic_after_marker(text: str, marker: str) -> str:
     index = lowered.find(marker)
     if index < 0:
         return ""
-    fragment = text[index + len(marker):]
+    fragment = text[index + len(marker) :]
     fragment = re.split(r"[，,。.!！?？；;\n\r]", fragment, maxsplit=1)[0]
     return _clean_topic(fragment) or topic_phrase(text)
 
@@ -2541,8 +2609,7 @@ def _trace_matched_preferences(items: list[Any]) -> list[str]:
         for value in _clean_trace_list(item.get("matchedPreferences")):
             counts[value] = counts.get(value, 0) + 1
     return [
-        name
-        for name, _count in sorted(counts.items(), key=lambda value: value[1], reverse=True)
+        name for name, _count in sorted(counts.items(), key=lambda value: value[1], reverse=True)
     ]
 
 
@@ -2661,7 +2728,7 @@ def _llm_chat_reply(
         "如果用户问'我是怎么样的人'这类问题，只能基于已知聊天和听歌线索温和推断，"
         "要承认信息有限，并给出有内容的观察。"
         "回复要像真人聊天，2 到 5 句，中文，不要列表，不要 markdown。"
-        "返回且只返回 JSON：{\"reply\":\"...\"}"
+        '返回且只返回 JSON：{"reply":"..."}'
     )
     user_prompt = json.dumps(
         {
@@ -2698,7 +2765,9 @@ def _compact_profile_for_chat(analysis: dict[str, Any]) -> dict[str, Any]:
         "music_persona": str(profile.get("music_persona") or "")[:300],
         "current_music_phase": str(profile.get("current_music_phase") or "")[:180],
         "core_traits": [str(item)[:60] for item in profile.get("core_traits") or []][:6],
-        "psychological_needs": [str(item)[:80] for item in profile.get("psychological_needs") or []][:6],
+        "psychological_needs": [
+            str(item)[:80] for item in profile.get("psychological_needs") or []
+        ][:6],
         "persona_confidence": profile.get("persona_confidence"),
         "source": str(profile.get("source") or ""),
         "confidence": profile.get("confidence"),
@@ -2719,8 +2788,7 @@ def _top_score_items(value: Any, *, limit: int) -> list[dict[str, Any]]:
         reverse=True,
     )
     return [
-        {"name": name[:40], "weight": round(float(score or 0), 3)}
-        for name, score in items[:limit]
+        {"name": name[:40], "weight": round(float(score or 0), 3)} for name, score in items[:limit]
     ]
 
 
@@ -2740,7 +2808,9 @@ def _summary_names(value: Any, *, limit: int) -> list[str]:
     return names
 
 
-def _compact_recent_turns(turns: list[dict[str, str]], *, limit: int = CHAT_LLM_HISTORY_LIMIT) -> list[dict[str, str]]:
+def _compact_recent_turns(
+    turns: list[dict[str, str]], *, limit: int = CHAT_LLM_HISTORY_LIMIT
+) -> list[dict[str, str]]:
     compacted: list[dict[str, str]] = []
     for turn in turns[-limit:]:
         role = str(turn.get("role") or "").strip()
@@ -2810,8 +2880,7 @@ def _profile_chat_reply(
         suited = _suited_artist_names(positives, moods, artists)
         extra = ""
         has_work_context = any(
-            _has_any(item, ("面试", "写代码", "加班", "复习"))
-            for item in recent_context
+            _has_any(item, ("面试", "写代码", "加班", "复习")) for item in recent_context
         )
         if recent_context and has_work_context:
             extra = "你最近如果处在高负荷状态，我会优先选更稳、更少打扰的作品。"
@@ -2828,8 +2897,7 @@ def _profile_chat_reply(
             "不把一句话当成永久口味。"
         )
     return (
-        "如果只按当前聊天看，我会先从旋律舒服、情绪稳定、不太吵的方向理解你，"
-        "再用后续反馈慢慢校准。"
+        "如果只按当前聊天看，我会先从旋律舒服、情绪稳定、不太吵的方向理解你，再用后续反馈慢慢校准。"
     )
 
 
@@ -2865,8 +2933,7 @@ def _signal_reply(signal: ExtractedSignal, *, profile_hint: str, stored: bool) -
                 f"{suffix}这只是当前状态，不会被当成永久偏好。"
             )
         return (
-            f"听起来这轮更适合 {signal.topic}。"
-            f"我会先按当前状态处理，不直接改成长期口味。{suffix}"
+            f"听起来这轮更适合 {signal.topic}。我会先按当前状态处理，不直接改成长期口味。{suffix}"
         )
     if signal.kind == "preference_hypothesis":
         return (
@@ -2888,8 +2955,7 @@ def _casual_reply(message: str, *, profile_hint: str, recent_context: list[str])
     context_hint = ""
     if recent_context and len(recent_context) >= 2:
         context_hint = (
-            f"刚才你提到“{_compact_text(recent_context[-1], 28)}”，"
-            "我可以顺着这个状态聊。"
+            f"刚才你提到“{_compact_text(recent_context[-1], 28)}”，我可以顺着这个状态聊。"
         )
     if _is_greeting(message):
         return "在。"
@@ -3027,12 +3093,7 @@ def _compact_text(value: str, limit: int) -> str:
 
 
 def _escape_like(value: str) -> str:
-    return (
-        value
-        .replace("\\", "\\\\")
-        .replace("%", "\\%")
-        .replace("_", "\\_")
-    )
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _emit_progress(

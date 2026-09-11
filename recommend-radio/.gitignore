@@ -24,7 +24,8 @@ __pycache__/
 # Local backend runtime data
 backend/data/
 server-data/
-backend/tests/
+!backend/tests/
+!backend/tests/*.py
 agent/
 *.tar
 *.tar.gz

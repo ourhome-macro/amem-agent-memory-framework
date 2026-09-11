@@ -4,9 +4,9 @@ import re
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import uuid4
 
 from database import get_connection
-
 
 HOT_TURN_LIMIT = 8
 WARM_TOPIC_TTL_HOURS = 24
@@ -40,10 +40,21 @@ class ConversationMemoryService:
             _HOT[key] = buffer
         return list(buffer)
 
-    def refresh_warm(self, *, session_id: str, topic: str) -> None:
+    def refresh_warm(
+        self,
+        *,
+        session_id: str,
+        topic: str,
+        memory_type: str = "topic_summary",
+        scope_type: str = "session",
+        scope_key: str | None = None,
+    ) -> None:
         normalized_topic = _topic_key(topic)
         if not normalized_topic:
             return
+        normalized_memory_type = _bounded_key(memory_type, default="topic_summary")
+        normalized_scope_type = _bounded_key(scope_type, default="session")
+        normalized_scope_key = _bounded_key(scope_key or session_id, default=session_id)
         hot = self.hot(session_id=session_id)
         user_lines = [item["content"] for item in hot if item["role"] == "user"][-4:]
         if not user_lines:
@@ -51,40 +62,115 @@ class ConversationMemoryService:
         summary = "；".join(user_lines)[-900:]
         keywords = _keywords(" ".join(user_lines))
         now = _utc_now()
-        expires_at = (datetime.now(timezone.utc) + timedelta(hours=WARM_TOPIC_TTL_HOURS)).isoformat()
+        expires_at = (
+            datetime.now(timezone.utc) + timedelta(hours=WARM_TOPIC_TTL_HOURS)
+        ).isoformat()
         with get_connection(self.db_path) as conn:
             conn.execute(
-                "UPDATE conversation_warm_topics SET status = 'inactive' WHERE session_id = ? AND topic_key <> ? AND status = 'active'",
-                (session_id, normalized_topic),
+                """
+                UPDATE conversation_warm_memories SET status='inactive'
+                WHERE user_id=? AND scope_type=? AND scope_key=? AND memory_type=?
+                  AND memory_key<>? AND status='active'
+                """,
+                (
+                    self.user_id,
+                    normalized_scope_type,
+                    normalized_scope_key,
+                    normalized_memory_type,
+                    normalized_topic,
+                ),
             )
             conn.execute(
                 """
-                INSERT INTO conversation_warm_topics (
-                    session_id, user_id, topic_key, summary, keywords_json, status, updated_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
-                ON CONFLICT(session_id, topic_key) DO UPDATE SET
+                INSERT INTO conversation_warm_memories (
+                    memory_id, user_id, scope_type, scope_key, memory_type,
+                    memory_key, source_session_id, summary, keywords_json,
+                    status, updated_at, expires_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                ON CONFLICT(user_id, scope_type, scope_key, memory_type, memory_key)
+                DO UPDATE SET
+                    source_session_id=excluded.source_session_id,
                     summary = excluded.summary, keywords_json = excluded.keywords_json,
                     status = 'active', updated_at = excluded.updated_at, expires_at = excluded.expires_at
                 """,
-                (session_id, self.user_id, normalized_topic, summary, _json(keywords), now, expires_at),
+                (
+                    f"warm:{uuid4().hex}",
+                    self.user_id,
+                    normalized_scope_type,
+                    normalized_scope_key,
+                    normalized_memory_type,
+                    normalized_topic,
+                    session_id,
+                    summary,
+                    _json(keywords),
+                    now,
+                    expires_at,
+                ),
             )
 
-    def warm(self, *, session_id: str) -> dict[str, Any] | None:
+    def warm(
+        self,
+        *,
+        session_id: str,
+        scope_type: str = "session",
+        scope_key: str | None = None,
+        memory_types: tuple[str, ...] = (),
+    ) -> dict[str, Any] | None:
         now = _utc_now()
+        normalized_scope_type = _bounded_key(scope_type, default="session")
+        normalized_scope_key = _bounded_key(scope_key or session_id, default=session_id)
+        type_sql = ""
+        parameters: list[Any] = [
+            self.user_id,
+            normalized_scope_type,
+            normalized_scope_key,
+            now,
+        ]
+        if memory_types:
+            placeholders = ",".join("?" for _ in memory_types)
+            type_sql = f" AND memory_type IN ({placeholders})"
+            parameters.extend(memory_types)
         with get_connection(self.db_path) as conn:
-            conn.execute("UPDATE conversation_warm_topics SET status = 'expired' WHERE session_id = ? AND expires_at <= ?", (session_id, now))
+            conn.execute(
+                """
+                UPDATE conversation_warm_memories SET status='expired'
+                WHERE user_id=? AND scope_type=? AND scope_key=? AND expires_at<=?
+                """,
+                (self.user_id, normalized_scope_type, normalized_scope_key, now),
+            )
             row = conn.execute(
-                "SELECT topic_key, summary, keywords_json, updated_at, expires_at FROM conversation_warm_topics WHERE session_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT 1",
-                (session_id,),
+                f"""
+                SELECT memory_type, memory_key, summary, keywords_json,
+                       source_session_id, updated_at, expires_at
+                FROM conversation_warm_memories
+                WHERE user_id=? AND scope_type=? AND scope_key=?
+                  AND expires_at>? AND status='active'{type_sql}
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                tuple(parameters),
             ).fetchone()
         if row is None:
             return None
-        return {"topic": row["topic_key"], "summary": row["summary"], "keywords": _json_load(row["keywords_json"]), "updatedAt": row["updated_at"], "expiresAt": row["expires_at"]}
+        return {
+            "memoryType": row["memory_type"],
+            "memoryKey": row["memory_key"],
+            "topic": row["memory_key"],
+            "summary": row["summary"],
+            "keywords": _json_load(row["keywords_json"]),
+            "sourceSessionId": row["source_session_id"],
+            "updatedAt": row["updated_at"],
+            "expiresAt": row["expires_at"],
+        }
 
 
 def _topic_key(value: str) -> str:
     text = re.sub(r"\s+", " ", str(value or "").strip().casefold())
     return text[:80]
+
+
+def _bounded_key(value: str, *, default: str) -> str:
+    normalized = re.sub(r"\s+", "_", str(value or "").strip().casefold())
+    return normalized[:80] or default
 
 
 def _keywords(value: str) -> list[str]:
@@ -94,13 +180,17 @@ def _keywords(value: str) -> list[str]:
 
 def _json(value: list[str]) -> str:
     import json
+
     return json.dumps(value, ensure_ascii=False)
 
 
 def _json_load(value: str) -> list[str]:
     import json
-    try: data = json.loads(value)
-    except (TypeError, ValueError): return []
+
+    try:
+        data = json.loads(value)
+    except (TypeError, ValueError):
+        return []
     return [str(item) for item in data] if isinstance(data, list) else []
 
 

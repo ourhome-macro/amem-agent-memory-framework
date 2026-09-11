@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -33,6 +34,16 @@ class Track:
     page: Optional[int] = None
     page_title: Optional[str] = None
     source: str = "bili"
+    description: str = ""
+    tags: tuple[str, ...] = ()
+    type_name: str = ""
+    hit_columns: tuple[str, ...] = ()
+    work_id: Optional[str] = None
+    recording_id: Optional[str] = None
+    canonical_title: str = ""
+    canonical_artist: str = ""
+    version_type: str = "studio_or_unknown"
+    entity_confidence: float = 0.0
 
     def __post_init__(self) -> None:
         self.bvid = normalize_bvid(self.bvid)
@@ -61,6 +72,26 @@ class Track:
             page=payload.get("page"),
             page_title=payload.get("pageTitle") or payload.get("page_title"),
             source=payload.get("source") or "bili",
+            description=str(payload.get("description") or payload.get("desc") or "").strip(),
+            tags=_string_tuple(payload.get("tags") or payload.get("tag")),
+            type_name=str(
+                payload.get("typeName") or payload.get("type_name") or payload.get("typename") or ""
+            ).strip(),
+            hit_columns=_string_tuple(payload.get("hitColumns") or payload.get("hit_columns")),
+            work_id=_optional_text(payload.get("workId") or payload.get("work_id")),
+            recording_id=_optional_text(payload.get("recordingId") or payload.get("recording_id")),
+            canonical_title=str(
+                payload.get("canonicalTitle") or payload.get("canonical_title") or ""
+            ).strip(),
+            canonical_artist=str(
+                payload.get("canonicalArtist") or payload.get("canonical_artist") or ""
+            ).strip(),
+            version_type=str(
+                payload.get("versionType") or payload.get("version_type") or "studio_or_unknown"
+            ),
+            entity_confidence=float(
+                payload.get("entityConfidence") or payload.get("entity_confidence") or 0.0
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,7 +109,34 @@ class Track:
             "page": self.page,
             "pageTitle": self.page_title,
             "source": self.source,
+            "description": self.description,
+            "tags": list(self.tags),
+            "typeName": self.type_name,
+            "hitColumns": list(self.hit_columns),
+            "workId": self.work_id,
+            "recordingId": self.recording_id,
+            "canonicalTitle": self.canonical_title,
+            "canonicalArtist": self.canonical_artist,
+            "versionType": self.version_type,
+            "entityConfidence": round(float(self.entity_confidence), 4),
         }
+
+
+def _optional_text(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
+
+
+def _string_tuple(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        values = re.split(r"[,，]", value)
+    elif isinstance(value, (list, tuple, set)):
+        values = value
+    else:
+        values = ()
+    return tuple(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
 
 
 @dataclass

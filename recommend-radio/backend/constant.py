@@ -51,11 +51,10 @@ class BilibiliAPI:
     FAVORITE_RESOURCE_URL = "https://api.bilibili.com/x/v3/fav/resource/list"
     SPACE_INFO_URL = "https://api.bilibili.com/x/space/wbi/acc/info"
     SPACE_ARCHIVE_URL = "https://api.bilibili.com/x/space/wbi/arc/search"
+    RELATED_VIDEOS_URL = "https://api.bilibili.com/x/web-interface/archive/related"
 
     BV_PATTERN = re.compile(r"^(BV|bv)[0-9A-Za-z]{10}$")
-    URL_PATTERN = re.compile(
-        r"^(https?://)?(www\.)?bilibili\.com/video/(BV[0-9A-Za-z]{10})"
-    )
+    URL_PATTERN = re.compile(r"^(https?://)?(www\.)?bilibili\.com/video/(BV[0-9A-Za-z]{10})")
 
 
 class Server:
