@@ -49,6 +49,9 @@ class AmemGrpcBridge:
         )
         return str(response.status or "")
 
+    def close(self) -> None:
+        self.channel.close()
+
     def record_behavior(self, payload: dict[str, Any]) -> dict[str, Any]:
         values = dict(payload or {})
         event_id = str(values.get("event_id") or values.get("eventId") or uuid4())
@@ -63,6 +66,8 @@ class AmemGrpcBridge:
             ),
             timeout=self.timeout_seconds,
         )
+        if not response.accepted or not response.amem_event_id:
+            raise RuntimeError('AMEM did not persist the behavior event')
         return {
             "enabled": True,
             "eventId": response.amem_event_id,

@@ -9,14 +9,15 @@ from typing import Any, Optional
 from database import DEFAULT_DB_PATH, LEGACY_OWNER_USER_ID, get_connection, init_db
 from error_code import APIError
 from models import Track, make_track_id, normalize_bvid
-
+from music_entity import persist_track_entity
 
 _TRACK_UPSERT_SQL = """
     INSERT INTO tracks (
         track_id, bvid, cid, title, owner, owner_mid, cover, duration, play_count,
-        published_at, page, page_title, source, raw_json, updated_at
+        published_at, page, page_title, source, raw_json, updated_at,
+        description, tags_json, type_name, hit_columns_json
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(track_id) DO UPDATE SET
         bvid = excluded.bvid,
         cid = excluded.cid,
@@ -31,7 +32,11 @@ _TRACK_UPSERT_SQL = """
         page_title = excluded.page_title,
         source = excluded.source,
         raw_json = excluded.raw_json,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        description = excluded.description,
+        tags_json = excluded.tags_json,
+        type_name = excluded.type_name,
+        hit_columns_json = excluded.hit_columns_json
 """
 
 
@@ -54,6 +59,7 @@ class LibraryService:
         now = utc_now()
         with get_connection(self.db_path) as conn:
             conn.execute(_TRACK_UPSERT_SQL, self._track_upsert_values(track, raw, now))
+            persist_track_entity(conn, track, updated_at=now)
         return track
 
     def upsert_tracks(self, tracks: list[Track]) -> list[Track]:
@@ -67,6 +73,8 @@ class LibraryService:
                 _TRACK_UPSERT_SQL,
                 [self._track_upsert_values(track, None, now) for track in tracks],
             )
+            for track in tracks:
+                persist_track_entity(conn, track, updated_at=now)
         return tracks
 
     def get_track(self, track_id: str) -> Optional[Track]:
@@ -200,15 +208,14 @@ class LibraryService:
                 (self.user_id,),
             ).fetchall()
         return [
-            {**self._track_from_row(row).to_dict(), "likedAt": row["created_at"]}
-            for row in rows
+            {**self._track_from_row(row).to_dict(), "likedAt": row["created_at"]} for row in rows
         ]
 
     def add_like(self, track: Track) -> dict[str, Any]:
         self.upsert_track(track)
         now = utc_now()
         with get_connection(self.db_path) as conn:
-            conn.execute(
+            inserted = conn.execute(
                 """
                 INSERT INTO likes (user_id, track_id, created_at)
                 VALUES (?, ?, ?)
@@ -216,6 +223,10 @@ class LibraryService:
                 """,
                 (self.user_id, track.track_id, now),
             )
+            if inserted.rowcount:
+                from durable_jobs import enqueue_behavior
+                enqueue_behavior(conn, user_id=self.user_id, event='liked',
+                                 scene='library', track=track)
         return {"track": track.to_dict(), "likedAt": now}
 
     def is_liked(self, bvid: str, cid: Optional[int] = None) -> bool:
@@ -240,6 +251,10 @@ class LibraryService:
 
     def remove_like(self, bvid: str, cid: Optional[int] = None) -> int:
         with get_connection(self.db_path) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            liked = conn.execute("""SELECT t.* FROM tracks t JOIN likes l ON t.track_id=l.track_id
+                WHERE l.user_id=? AND t.bvid=? AND (? IS NULL OR t.cid=?)""",
+                (self.user_id,normalize_bvid(bvid),cid,cid)).fetchall()
             if cid is None:
                 rows = conn.execute(
                     """
@@ -254,7 +269,12 @@ class LibraryService:
                     "DELETE FROM likes WHERE user_id = ? AND track_id = ?",
                     (self.user_id, make_track_id(bvid, cid)),
                 )
-            return rows.rowcount
+            removed = rows.rowcount
+            from durable_jobs import enqueue_behavior
+            for item in liked:
+                enqueue_behavior(conn, user_id=self.user_id, event='unliked',
+                                 scene='library', track=self._track_from_row(item))
+            return removed
 
     def get_review(self, bvid: str, cid: Optional[int] = None) -> Optional[dict[str, Any]]:
         track_id = make_track_id(bvid, cid)
@@ -287,6 +307,10 @@ class LibraryService:
 
         now = utc_now()
         with get_connection(self.db_path) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            previous = conn.execute('SELECT rating,mood,note FROM track_reviews '
+                                    'WHERE user_id=? AND track_id=?',
+                                    (self.user_id,track.track_id)).fetchone()
             conn.execute(
                 """
                 INSERT INTO track_reviews (
@@ -310,6 +334,14 @@ class LibraryService:
                     now,
                 ),
             )
+            if previous is None or tuple(previous) != (
+                normalized_rating, normalized_mood, normalized_note
+            ):
+                from durable_jobs import enqueue_behavior
+                enqueue_behavior(conn, user_id=self.user_id, event='track_reviewed',
+                                 scene='review', track=track,
+                                 payload={'rating': normalized_rating, 'mood': normalized_mood,
+                                          'hasNote': bool(normalized_note)})
             row = conn.execute(
                 """
                 SELECT tr.*, t.bvid, t.cid, t.title, t.owner, t.cover, t.duration
@@ -576,9 +608,7 @@ class LibraryService:
                     f"SELECT * FROM tracks WHERE track_id IN ({placeholders})",
                     chunk,
                 ).fetchall()
-                tracks_by_id.update(
-                    (row["track_id"], self._track_from_row(row)) for row in rows
-                )
+                tracks_by_id.update((row["track_id"], self._track_from_row(row)) for row in rows)
 
             for track_id in requested_track_ids:
                 track = tracks_by_id.get(track_id)
@@ -663,14 +693,15 @@ class LibraryService:
         item_rows: list[Any],
     ) -> dict[str, Any]:
         tracks = [
-            {**self._track_from_row(row).to_dict(), "addedAt": row["added_at"]}
-            for row in item_rows
+            {**self._track_from_row(row).to_dict(), "addedAt": row["added_at"]} for row in item_rows
         ]
         return {
             "id": playlist["id"],
             "name": playlist["name"],
             "cover": playlist["cover"],
-            "sourceType": playlist["source_type"] if "source_type" in playlist.keys() else "user-created",
+            "sourceType": playlist["source_type"]
+            if "source_type" in playlist.keys()
+            else "user-created",
             "sourceBvid": playlist["source_bvid"] if "source_bvid" in playlist.keys() else None,
             "tracks": tracks,
             "createdAt": playlist["created_at"],
@@ -704,10 +735,23 @@ class LibraryService:
             track.source,
             json.dumps(raw or track.to_dict(), ensure_ascii=False),
             now,
+            track.description,
+            json.dumps(list(track.tags), ensure_ascii=False),
+            track.type_name,
+            json.dumps(list(track.hit_columns), ensure_ascii=False),
         )
 
     @staticmethod
     def _track_from_row(row: Any) -> Track:
+        def json_strings(column: str) -> tuple[str, ...]:
+            if column not in row.keys():
+                return ()
+            try:
+                value = json.loads(row[column] or "[]")
+            except (TypeError, ValueError):
+                return ()
+            return tuple(str(item) for item in value) if isinstance(value, list) else ()
+
         return Track(
             track_id=row["track_id"],
             bvid=row["bvid"],
@@ -722,6 +766,20 @@ class LibraryService:
             page=row["page"],
             page_title=row["page_title"],
             source=row["source"],
+            description=row["description"] if "description" in row.keys() else "",
+            tags=json_strings("tags_json"),
+            type_name=row["type_name"] if "type_name" in row.keys() else "",
+            hit_columns=json_strings("hit_columns_json"),
+            work_id=row["work_id"] if "work_id" in row.keys() else None,
+            recording_id=row["recording_id"] if "recording_id" in row.keys() else None,
+            canonical_title=row["canonical_title"] if "canonical_title" in row.keys() else "",
+            canonical_artist=row["canonical_artist"] if "canonical_artist" in row.keys() else "",
+            version_type=row["version_type"]
+            if "version_type" in row.keys()
+            else "studio_or_unknown",
+            entity_confidence=(
+                float(row["entity_confidence"] or 0.0) if "entity_confidence" in row.keys() else 0.0
+            ),
         )
 
     def _track_payload_with_meta(self, row: Any) -> dict[str, Any]:

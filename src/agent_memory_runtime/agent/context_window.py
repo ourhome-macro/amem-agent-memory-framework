@@ -71,6 +71,27 @@ def compact_checkpoint(
         return replace(checkpoint, last_estimated_input_tokens=before), None
 
     system_prefix, original_task, groups = _split_messages(checkpoint.messages)
+    # Upgrade checkpoints written before compaction state was stored separately.
+    legacy_pins: tuple[ModelMessage, ...] = ()
+    if checkpoint.compaction_count and not checkpoint.compaction_summary:
+        legacy_pins = tuple(
+            ModelMessage(role="user", content=line.removeprefix("- role=user: "))
+            for message in checkpoint.messages
+            if message.content.startswith(_PINNED_OPEN)
+            for line in message.content.splitlines()
+            if line.startswith("- role=user: ")
+        )
+        initial = next((
+            line.removeprefix("initial_task_context: ")
+            for message in checkpoint.messages
+            if message.content.startswith(_TASK_STATE_OPEN)
+            for line in message.content.splitlines()
+            if line.startswith("initial_task_context: ")
+        ), None)
+        if initial is not None:
+            if original_task:
+                groups.insert(0, original_task)
+            original_task = (ModelMessage(role="user", content=initial),)
     if not groups:
         return replace(checkpoint, last_estimated_input_tokens=before), None
 
@@ -85,7 +106,13 @@ def compact_checkpoint(
     if old_group_count <= 0:
         return replace(checkpoint, last_estimated_input_tokens=before), None
 
-    old_messages = tuple(item for group in groups[:old_group_count] for item in group)
+    previous_summary = checkpoint.compaction_summary or next(
+        (m.content for m in checkpoint.messages if m.content.startswith(_SUMMARY_OPEN)), ""
+    )
+    carried = tuple(checkpoint.pinned_messages) or legacy_pins
+    if previous_summary:
+        carried += (ModelMessage(role="system", content=previous_summary),)
+    old_messages = (*carried, *(item for group in groups[:old_group_count] for item in group))
     pinned_messages = _select_pinned_messages(old_messages)
     compressible_messages = tuple(
         message for message in old_messages if message not in pinned_messages
@@ -109,6 +136,7 @@ def compact_checkpoint(
         *( () if pinned is None else (pinned,) ),
         *( () if task_state is None else (task_state,) ),
         summary,
+        *original_task,
         *(item for group in keep_groups for item in group),
     )
     after = estimator.count_messages(compacted_messages, tools=tools, model=model)
@@ -141,6 +169,7 @@ def compact_checkpoint(
             *( () if pinned is None else (pinned,) ),
             *( () if task_state is None else (task_state,) ),
             summary,
+            *original_task,
             *(item for group in keep_groups for item in group),
         )
         after = estimator.count_messages(compacted_messages, tools=tools, model=model)
@@ -152,6 +181,8 @@ def compact_checkpoint(
         compaction_count=checkpoint.compaction_count + 1,
         compacted_message_count=checkpoint.compacted_message_count + max(0, removed_count),
         last_estimated_input_tokens=after,
+        compaction_summary=summary.content,
+        pinned_messages=pinned_messages,
     )
     return updated, CompactionReport(
         before_tokens=before,
@@ -397,7 +428,13 @@ def _deterministic_conversation_summary(
             patterns=("待办", "还没", "怎么", "如何", "看看", "?"),
         ),
     }
-    lines: list[str] = []
+    previous = next(
+        (m.content for m in messages if m.content.startswith(_SUMMARY_OPEN)), ""
+    )
+    if previous:
+        previous = "\n".join(previous.splitlines()[3:-1])
+    lines: list[str] = previous.splitlines() if previous else []
+    retained_lines = len(lines)
     for title, items in buckets.items():
         lines.append(f"{title}:")
         if not items:
@@ -405,7 +442,10 @@ def _deterministic_conversation_summary(
             continue
         for item in items[:4]:
             lines.append(f"- {item}")
-    while estimator.count_text("\n".join(lines), model=model) > max_tokens and len(lines) > 8:
+    while (
+        estimator.count_text("\n".join(lines), model=model) > max_tokens
+        and len(lines) > max(retained_lines, 8)
+    ):
         lines.pop()
     return "\n".join(lines)
 
@@ -435,7 +475,7 @@ def _select_pinned_messages(messages: tuple[ModelMessage, ...]) -> tuple[ModelMe
     return tuple(
         message
         for message in messages
-        if message.role in {"user", "system", "assistant"}
+        if message.role == "user"
         and _PINNED_MESSAGE_RE.search(message.content)
     )
 
@@ -459,10 +499,9 @@ def _pinned_message(
         f"source_message_count={len(messages)} source_hash={digest}",
     ]
     for message in messages:
-        candidate = f"- role={message.role}: {_message_excerpt(message, max_chars=800)}"
-        proposed = "\n".join((*lines, candidate, _PINNED_CLOSE))
-        if estimator.count_text(proposed, model=model) > max_tokens:
-            continue
+        candidate = f"- role={message.role}: {message.content}"
+        # Required constraints are never silently truncated to fit a soft budget.
+        # The caller's hard context limit rejects an oversized model request.
         lines.append(candidate)
     lines.append(_PINNED_CLOSE)
     return ModelMessage(role="system", content="\n".join(lines))

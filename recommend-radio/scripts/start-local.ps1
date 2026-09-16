@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$Rebuild,
-    [switch]$NoFrontend
+    [switch]$NoFrontend,
+    [switch]$ValidateOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -10,6 +11,33 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $appRoot = Split-Path -Parent $scriptRoot
 $backendRoot = Join-Path $appRoot 'backend'
 $embeddingPort = 8001
+$backendPort = 5000
+$ssePort = 18080
+$httpPort = 3000
+$rabbitManagementPort = 15672
+$startLocalEmbedding = $true
+
+function Initialize-Configuration {
+    if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+        throw 'Docker CLI was not found. Install Docker Desktop first.'
+    }
+    Push-Location $appRoot
+    try {
+        $configurationJson = & docker compose config --format json
+        if ($LASTEXITCODE -ne 0) { throw 'Docker Compose configuration is invalid.' }
+        $configuration = ($configurationJson -join "`n") | ConvertFrom-Json
+        $script:backendPort = [int]$configuration.services.backend.ports[0].published
+        $script:ssePort = [int]$configuration.services.'sse-gateway'.ports[0].published
+        $script:httpPort = [int]$configuration.services.frontend.ports[0].published
+        $managementMapping = $configuration.services.rabbitmq.ports | Where-Object { $_.target -eq 15672 }
+        $script:rabbitManagementPort = [int]$managementMapping.published
+        $embeddingUrl = [Uri]$configuration.services.amem.environment.AMEM_EMBEDDING_BASE_URL
+        $script:startLocalEmbedding = $embeddingUrl.Host -in @('host.docker.internal', '127.0.0.1', 'localhost')
+        if ($startLocalEmbedding) { $script:embeddingPort = $embeddingUrl.Port }
+    } finally {
+        Pop-Location
+    }
+}
 
 function Test-HttpReady {
     param([string]$Url)
@@ -33,6 +61,10 @@ function Wait-HttpReady {
 }
 
 function Start-EmbeddingServer {
+    if (-not $startLocalEmbedding) {
+        Write-Host '[embedding] using configured external provider' -ForegroundColor Cyan
+        return
+    }
     $healthUrl = "http://127.0.0.1:$embeddingPort/health"
     $existing = Test-HttpReady -Url $healthUrl
     if ($existing -and $existing.status -eq 'ready') {
@@ -53,6 +85,10 @@ function Start-EmbeddingServer {
     $pythonLauncher = Join-Path $env:WINDIR 'py.exe'
     if (-not (Test-Path $pythonLauncher)) {
         throw 'Python launcher py.exe was not found. Install Python 3.12 first.'
+    }
+    & $pythonLauncher -3.12 -c "import uvicorn, fastapi, sentence_transformers"
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Local embedding dependencies are missing: uvicorn, fastapi, sentence-transformers (Python 3.12).'
     }
     Write-Host '[embedding] starting local bge-m3 service...' -ForegroundColor Cyan
     Start-Process -FilePath $pythonLauncher `
@@ -103,27 +139,17 @@ function Start-DockerEngine {
 function Start-ComposeStack {
     Push-Location $appRoot
     try {
-        $services = @('amem', 'backend', 'sse-gateway')
+        $services = @('rabbitmq', 'amem', 'outbox', 'task-worker', 'event-worker', 'backend', 'sse-gateway')
         if (-not $NoFrontend) { $services += 'frontend' }
         if ($Rebuild) {
-            if (-not $NoFrontend) {
-                Write-Host '[frontend] building assets with host Node.js...' -ForegroundColor Cyan
-                Push-Location (Join-Path $appRoot 'frontend')
-                try {
-                    & npm run build
-                    if ($LASTEXITCODE -ne 0) { throw "frontend build failed with exit code $LASTEXITCODE" }
-                } finally {
-                    Pop-Location
-                }
-            }
-            & docker compose build amem backend sse-gateway
+            $buildServices = @('migrate') + @($services | Where-Object { $_ -ne 'rabbitmq' })
+            & docker compose build @buildServices
             if ($LASTEXITCODE -ne 0) { throw "docker compose build failed with exit code $LASTEXITCODE" }
-            if (-not $NoFrontend) {
-                & docker build --file frontend/Dockerfile.local --tag recommend-radio-frontend:latest frontend
-                if ($LASTEXITCODE -ne 0) { throw "local frontend image build failed with exit code $LASTEXITCODE" }
-            }
         }
-        $arguments = @('compose', 'up', '-d', '--no-build')
+        $arguments = @(
+            'compose', 'up', '-d', '--no-build',
+            '--wait', '--wait-timeout', '240'
+        )
         $arguments += $services
         Write-Host "[docker] starting: $($services -join ', ')" -ForegroundColor Cyan
         & docker @arguments
@@ -133,18 +159,24 @@ function Start-ComposeStack {
     }
 }
 
-Start-EmbeddingServer
+Initialize-Configuration
+if ($ValidateOnly) {
+    Write-Host 'Startup arguments and Compose configuration are valid.' -ForegroundColor Green
+    return
+}
 Start-DockerEngine
+Start-EmbeddingServer
 Start-ComposeStack
 
-$backend = Wait-HttpReady -Url 'http://127.0.0.1:5000/health/ready' -TimeoutSeconds 90
+$backend = Wait-HttpReady -Url "http://127.0.0.1:$backendPort/health/ready" -TimeoutSeconds 90
 if ($backend.data.status -ne 'ready') { throw 'Recommend Radio backend did not become ready.' }
-$sseGateway = Wait-HttpReady -Url 'http://127.0.0.1:18080/health/ready' -TimeoutSeconds 60
+$sseGateway = Wait-HttpReady -Url "http://127.0.0.1:$ssePort/health/ready" -TimeoutSeconds 60
 if ($sseGateway.status -ne 'ready') { throw 'Recommend Radio SSE gateway did not become ready.' }
 
 Write-Host ''
 Write-Host 'Recommend Radio is ready.' -ForegroundColor Green
-Write-Host '  UI:       http://localhost:3000' -ForegroundColor Green
-Write-Host '  Backend:  http://127.0.0.1:5000' -ForegroundColor Green
-Write-Host '  SSE:      http://127.0.0.1:18080/health/ready' -ForegroundColor Green
-Write-Host "  Embedding: http://127.0.0.1:$embeddingPort/health" -ForegroundColor Green
+if (-not $NoFrontend) { Write-Host "  UI:       http://localhost:$httpPort" -ForegroundColor Green }
+Write-Host "  Backend:  http://127.0.0.1:$backendPort" -ForegroundColor Green
+Write-Host "  SSE:      http://127.0.0.1:$ssePort/health/ready" -ForegroundColor Green
+if ($startLocalEmbedding) { Write-Host "  Embedding: http://127.0.0.1:$embeddingPort/health" -ForegroundColor Green }
+Write-Host "  RabbitMQ: http://127.0.0.1:$rabbitManagementPort" -ForegroundColor Green

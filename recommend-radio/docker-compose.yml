@@ -1,4 +1,41 @@
 services:
+  rabbitmq:
+    image: rabbitmq:4.3.5-management-alpine
+    container_name: bilibili-radio-rabbitmq
+    hostname: rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER:-radio}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASSWORD:-radio_dev_password}"
+      RABBITMQ_DEFAULT_VHOST: "${RABBITMQ_VHOST:-/}"
+      TZ: Asia/Shanghai
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      - "${RABBITMQ_BIND_ADDRESS:-127.0.0.1}:${RABBITMQ_AMQP_PORT:-5672}:5672"
+      - "${RABBITMQ_BIND_ADDRESS:-127.0.0.1}:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          rabbitmq-diagnostics -q ping &&
+          rabbitmq-diagnostics -q check_running &&
+          rabbitmq-diagnostics -q check_local_alarms
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
   amem:
     build:
       context: ..
@@ -54,13 +91,14 @@ services:
       retries: 10
       start_period: 20s
 
-  backend:
+  backend: &backend-service
     build:
       context: ..
       dockerfile: recommend-radio/backend/Dockerfile
     container_name: bilibili-radio-backend
     restart: unless-stopped
     environment:
+      REQUIRE_DB_MIGRATION: "1"
       AUTH_MODE: ${AUTH_MODE:-disabled}
       ALLOW_INSECURE_LOCAL_AUTH: ${ALLOW_INSECURE_LOCAL_AUTH:-1}
       APP_SECRET_KEY: ${APP_SECRET_KEY:-}
@@ -116,6 +154,18 @@ services:
       RECOMMEND_PROFILE_TTL_SECONDS: "${RECOMMEND_PROFILE_TTL_SECONDS:-600}"
       SSE_GATEWAY_INTERNAL_URL: "http://sse-gateway:8080/internal/events"
       SSE_INTERNAL_TOKEN: "${SSE_INTERNAL_TOKEN:-local-sse-token}"
+      RABBITMQ_ENABLED: "true"
+      RABBITMQ_HOST: "rabbitmq"
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: "${RABBITMQ_USER:-radio}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:-radio_dev_password}"
+      RABBITMQ_VHOST: "${RABBITMQ_VHOST:-/}"
+      RABBITMQ_EXCHANGE: "${RABBITMQ_EXCHANGE:-recommend-radio.events.v1}"
+      RABBITMQ_BEHAVIOR_ROUTING_KEY: "${RABBITMQ_BEHAVIOR_ROUTING_KEY:-behavior.music}"
+      RABBITMQ_BEHAVIOR_QUEUE: "${RABBITMQ_BEHAVIOR_QUEUE:-recommend-radio.amem.behavior.v1}"
+      RABBITMQ_DEAD_LETTER_EXCHANGE: "${RABBITMQ_DEAD_LETTER_EXCHANGE:-recommend-radio.dlx.v1}"
+      RABBITMQ_BEHAVIOR_DLQ: "${RABBITMQ_BEHAVIOR_DLQ:-recommend-radio.amem.behavior.dlq.v1}"
+      RABBITMQ_DELIVERY_LIMIT: "${RABBITMQ_DELIVERY_LIMIT:-8}"
       LOG_LEVEL: "${LOG_LEVEL:-info}"
     volumes:
       - ./server-data:/app/data
@@ -124,7 +174,11 @@ services:
     expose:
       - "5000"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       amem:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     healthcheck:
       test:
@@ -136,6 +190,110 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  migrate:
+    <<: *backend-service
+    container_name: bilibili-radio-migrate
+    restart: "no"
+    command: ["python", "migrate_db.py"]
+    depends_on: {}
+    ports: []
+    expose: []
+    healthcheck:
+      disable: true
+
+  task-worker:
+    <<: *backend-service
+    container_name: bilibili-radio-task-worker
+    command: ["celery", "-A", "task_app", "worker", "--loglevel=INFO", "--concurrency=2", "--hostname=jobs@%h", "-Q", "radio.jobs.v2"]
+    ports: []
+    expose: []
+    stop_grace_period: 300s
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A task_app inspect ping -d jobs@$$HOSTNAME --timeout=3"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  event-worker:
+    <<: *backend-service
+    container_name: bilibili-radio-event-worker
+    command: ["celery", "-A", "task_app", "worker", "--loglevel=INFO", "--concurrency=2", "--hostname=events@%h", "-Q", "radio.events.v2"]
+    ports: []
+    expose: []
+    stop_grace_period: 300s
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A task_app inspect ping -d events@$$HOSTNAME --timeout=3"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  outbox:
+    <<: *backend-service
+    container_name: bilibili-radio-outbox
+    command: ["python", "outbox_dispatcher.py"]
+    ports: []
+    expose: []
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib,time; assert time.time()-float(pathlib.Path('/tmp/radio-outbox-heartbeat').read_text()) < 60"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  behavior-worker:
+    profiles: ["legacy-drain"]
+    build:
+      context: ..
+      dockerfile: recommend-radio/backend/Dockerfile
+    container_name: bilibili-radio-behavior-worker
+    restart: unless-stopped
+    command: ["python", "behavior_worker.py"]
+    environment:
+      REQUIRE_DB_MIGRATION: "1"
+      AMEM_GRPC_ADDR: "${AMEM_GRPC_ADDR:-amem:9090}"
+      AMEM_GRPC_TIMEOUT_SECONDS: "${AMEM_GRPC_TIMEOUT_SECONDS:-10}"
+      RABBITMQ_HOST: "rabbitmq"
+      RABBITMQ_PORT: "5672"
+      RABBITMQ_USER: "${RABBITMQ_USER:-radio}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD:-radio_dev_password}"
+      RABBITMQ_VHOST: "${RABBITMQ_VHOST:-/}"
+      RABBITMQ_EXCHANGE: "${RABBITMQ_EXCHANGE:-recommend-radio.events.v1}"
+      RABBITMQ_BEHAVIOR_ROUTING_KEY: "${RABBITMQ_BEHAVIOR_ROUTING_KEY:-behavior.music}"
+      RABBITMQ_BEHAVIOR_QUEUE: "${RABBITMQ_BEHAVIOR_QUEUE:-recommend-radio.amem.behavior.v1}"
+      RABBITMQ_DEAD_LETTER_EXCHANGE: "${RABBITMQ_DEAD_LETTER_EXCHANGE:-recommend-radio.dlx.v1}"
+      RABBITMQ_BEHAVIOR_DLQ: "${RABBITMQ_BEHAVIOR_DLQ:-recommend-radio.amem.behavior.dlq.v1}"
+      RABBITMQ_DELIVERY_LIMIT: "${RABBITMQ_DELIVERY_LIMIT:-8}"
+      RABBITMQ_PREFETCH_COUNT: "${RABBITMQ_PREFETCH_COUNT:-16}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      TZ: Asia/Shanghai
+    volumes:
+      - ./server-data:/app/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      amem:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import pathlib,time; assert time.time()-float(pathlib.Path('/tmp/radio-legacy-heartbeat').read_text()) < 60"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    stop_grace_period: 30s
     logging:
       driver: json-file
       options:
@@ -198,3 +356,6 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
+
+volumes:
+  rabbitmq-data:

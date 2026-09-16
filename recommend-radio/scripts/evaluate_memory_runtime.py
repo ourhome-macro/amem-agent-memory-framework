@@ -19,19 +19,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-import tiktoken
 import requests
+import tiktoken
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-from database import init_db  # noqa: E402
+from database import get_connection, init_db  # noqa: E402
 from memory_lifecycle import SceneMemoryService  # noqa: E402
 from recommendation_service import RecommendationService  # noqa: E402
 from request_spec import RequestInterpreter, RequestSpec  # noqa: E402
-
 
 K = 8
 QUERY_TEMPLATES = (
@@ -61,8 +60,15 @@ class Candidate:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--live-url", default="", help="Optional backend URL for end-to-end latency sampling.")
+    parser.add_argument(
+        "--live-url", default="", help="Optional backend URL for end-to-end latency sampling."
+    )
     parser.add_argument("--live-samples", type=int, default=5)
+    parser.add_argument(
+        "--db-path",
+        default="",
+        help="Optional application SQLite path for leakage-safe logged-slate evaluation.",
+    )
     args = parser.parse_args()
     personalization = evaluate_ambiguous_queries()
     continuation = evaluate_follow_up_restoration()
@@ -84,6 +90,10 @@ def main() -> None:
             args.live_url,
             samples=max(args.live_samples, 1),
         )
+    if args.db_path:
+        db_path = Path(args.db_path).resolve()
+        init_db(db_path)
+        report["loggedEvaluation"] = evaluate_logged_impressions(db_path)
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
@@ -106,7 +116,9 @@ def evaluate_ambiguous_queries() -> dict[str, float | int]:
         started = time.perf_counter()
         with_memory = sorted(
             candidates,
-            key=lambda item: item.popularity + (4.0 * 0.9 if item.genre == preferred_genre else 0.0),
+            key=lambda item: (
+                item.popularity + (4.0 * 0.9 if item.genre == preferred_genre else 0.0)
+            ),
             reverse=True,
         )
         memory_ms.append((time.perf_counter() - started) * 1000)
@@ -154,7 +166,9 @@ def evaluate_follow_up_restoration() -> dict[str, float | int]:
                 recovered += 1
 
             generic = interpreter.interpret("随便推荐一些歌")
-            resolved_generic, generic_restored = RecommendationService._resolve_request_spec(generic, active_spec)
+            resolved_generic, generic_restored = RecommendationService._resolve_request_spec(
+                generic, active_spec
+            )
             if not generic_restored and not resolved_generic.has_explicit_preferences:
                 generic_isolated += 1
 
@@ -231,12 +245,160 @@ def evaluate_live_latency(base_url: str, *, samples: int) -> dict[str, float | i
     }
 
 
+def evaluate_logged_impressions(db_path: Path) -> dict[str, object]:
+    """Evaluate only immutable serving snapshots against later observed feedback.
+
+    This intentionally does not score unexposed candidates. It avoids using a
+    future profile to reconstruct a past decision, while making the remaining
+    exposure bias explicit in the output.
+    """
+
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT i.recommendation_trace_id, i.user_id, i.track_id,
+                   i.rank_position, i.score, i.score_signals_json,
+                   i.policy_json, i.shown_at,
+                   MAX(CASE WHEN e.event IN ('played', 'accepted') THEN 1 ELSE 0 END) AS played,
+                   MAX(CASE WHEN e.event='completed' OR e.completed=1 THEN 1 ELSE 0 END) AS completed,
+                   MAX(CASE WHEN e.event='liked' THEN 1 ELSE 0 END) AS liked,
+                   MAX(CASE WHEN e.event IN ('skipped', 'dismissed', 'dislike')
+                                 OR e.negative=1 THEN 1 ELSE 0 END) AS negative,
+                   CASE WHEN (
+                       SELECT COUNT(DISTINCT ps.session_id)
+                       FROM playback_sessions ps
+                       WHERE ps.user_id=i.user_id AND ps.track_id=i.track_id
+                         AND julianday(ps.started_at) >= julianday(i.shown_at)
+                         AND julianday(ps.started_at) <= julianday(i.shown_at, '+7 days')
+                   ) >= 2 THEN 1 ELSE 0 END AS repeated
+            FROM recommendation_impressions i
+            LEFT JOIN recommendation_events e
+              ON e.recommendation_trace_id=i.recommendation_trace_id
+             AND e.track_id=i.track_id
+             AND julianday(e.created_at) >= julianday(i.shown_at)
+             AND julianday(e.created_at) <= julianday(i.shown_at, '+7 days')
+            GROUP BY i.recommendation_trace_id, i.user_id, i.track_id,
+                     i.rank_position, i.score, i.score_signals_json,
+                     i.policy_json, i.shown_at
+            ORDER BY i.shown_at, i.recommendation_trace_id, i.rank_position
+            """
+        ).fetchall()
+    if not rows:
+        return {
+            "available": False,
+            "impressionCount": 0,
+            "limitations": [
+                "No post-migration recommendation impressions are available.",
+                "Unexposed candidates cannot be judged without propensity logging.",
+            ],
+        }
+
+    traces: dict[str, list[dict[str, object]]] = {}
+    for row in rows:
+        relevance = 3 if row["liked"] else 2 if row["completed"] else 1 if row["played"] else 0
+        traces.setdefault(str(row["recommendation_trace_id"]), []).append(
+            {
+                "track_id": str(row["track_id"]),
+                "rank": int(row["rank_position"]),
+                "score": float(row["score"]),
+                "signals": _json_object(row["score_signals_json"]),
+                "policy": _json_object(row["policy_json"]),
+                "relevance": relevance,
+                "negative": int(row["negative"] or 0),
+                "repeated": int(row["repeated"] or 0),
+            }
+        )
+
+    ndcg_values = []
+    memory_ablation_values = []
+    precision_values = []
+    hit_values = []
+    variant_values: dict[str, list[float]] = {}
+    for items in traces.values():
+        ranking = sorted(items, key=lambda item: int(item["rank"]))[:K]
+        ndcg_values.append(_graded_ndcg([int(item["relevance"]) for item in ranking], K))
+        precision_values.append(
+            sum(int(item["relevance"]) >= 2 for item in ranking) / max(len(ranking), 1)
+        )
+        hit_values.append(float(any(int(item["relevance"]) >= 2 for item in ranking)))
+        ablated = sorted(
+            ranking,
+            key=lambda item: (
+                float(item["score"])
+                - sum(
+                    float(item["signals"].get(name) or 0.0)
+                    for name in (
+                        "profile_match",
+                        "negative_preference_penalty",
+                        "preferred_uploader",
+                    )
+                )
+            ),
+            reverse=True,
+        )
+        memory_ablation_values.append(_graded_ndcg([int(item["relevance"]) for item in ablated], K))
+        experiments = ranking[0]["policy"].get("experiments") if ranking else {}
+        if isinstance(experiments, dict):
+            variant = str(experiments.get("memory_context_v1") or "unknown")
+            variant_values.setdefault(variant, []).append(ndcg_values[-1])
+
+    return {
+        "available": True,
+        "traceCount": len(traces),
+        "impressionCount": len(rows),
+        "precisionAt8": _round_mean(precision_values),
+        "hitRateAt8Pct": _pct(hit_values),
+        "ndcgAt8": _round_mean(ndcg_values),
+        "loggedSlateNdcgAt8WithoutMemoryScoreSignals": _round_mean(memory_ablation_values),
+        "negativeRatePct": round(
+            100 * sum(int(row["negative"] or 0) for row in rows) / len(rows),
+            2,
+        ),
+        "completionRatePct": round(
+            100 * sum(int(row["completed"] or 0) for row in rows) / len(rows),
+            2,
+        ),
+        "sevenDayRepeatRatePct": round(
+            100 * sum(int(row["repeated"] or 0) for row in rows) / len(rows),
+            2,
+        ),
+        "memoryExperimentNdcgAt8": {
+            variant: _round_mean(values) for variant, values in sorted(variant_values.items())
+        },
+        "limitations": [
+            "Metrics are conditional on the logged exposed slate.",
+            "The score-signal ablation reranks only displayed items, not the historical candidate pool.",
+            "IPS/SNIPS requires future logging of non-zero selection propensities.",
+        ],
+    }
+
+
+def _graded_ndcg(relevances: list[int], k: int) -> float:
+    actual = relevances[:k]
+    ideal = sorted(relevances, reverse=True)[:k]
+    dcg = sum((2**grade - 1) / math.log2(index + 2) for index, grade in enumerate(actual))
+    idcg = sum((2**grade - 1) / math.log2(index + 2) for index, grade in enumerate(ideal))
+    return dcg / idcg if idcg else 0.0
+
+
+def _json_object(value: object) -> dict[str, object]:
+    try:
+        parsed = json.loads(str(value or "{}"))
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _candidate_inventory(index: int, preferred_genre: str) -> list[Candidate]:
     rng = random.Random(20260906 + index)
     candidates: list[Candidate] = []
     target_position = rng.randrange(24)
     for position in range(24):
-        genre = preferred_genre if position == target_position else DISTRACTORS[(position + index) % len(DISTRACTORS)]
+        genre = (
+            preferred_genre
+            if position == target_position
+            else DISTRACTORS[(position + index) % len(DISTRACTORS)]
+        )
         relevance = 3 if position == target_position else 1 if position < 10 else 0
         candidates.append(
             Candidate(
@@ -251,9 +413,14 @@ def _candidate_inventory(index: int, preferred_genre: str) -> list[Candidate]:
 
 def _ndcg_at_k(ranking: Iterable[Candidate], k: int) -> float:
     values = list(ranking)
-    dcg = sum((2**item.relevance - 1) / math.log2(position + 2) for position, item in enumerate(values[:k]))
+    dcg = sum(
+        (2**item.relevance - 1) / math.log2(position + 2)
+        for position, item in enumerate(values[:k])
+    )
     ideal = sorted(values, key=lambda item: item.relevance, reverse=True)
-    idcg = sum((2**item.relevance - 1) / math.log2(position + 2) for position, item in enumerate(ideal[:k]))
+    idcg = sum(
+        (2**item.relevance - 1) / math.log2(position + 2) for position, item in enumerate(ideal[:k])
+    )
     return dcg / idcg if idcg else 0.0
 
 

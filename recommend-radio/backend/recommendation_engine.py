@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import re
-import os
 import math
-import time
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
-import requests
 
 from request_spec import RequestSpec
 
@@ -24,6 +21,9 @@ class RecommendationRequest:
 class RecommendationEngine:
     """Serving-only engine: scope filtering, score ordering, diversity and final selection."""
 
+    def __init__(self, *, embedding_service: Any | None = None) -> None:
+        self.embedding_service = embedding_service
+
     def rank_and_select(
         self,
         candidates: list[Any],
@@ -33,11 +33,17 @@ class RecommendationEngine:
         select: Callable[[list[Any]], list[Any]],
         diversity: Callable[[list[Any]], list[Any]],
     ) -> tuple[list[Any], list[Any], dict[str, Any]]:
-        eligible = [
-            item
-            for item in candidates
-            if not hard_filtered(item) and request.request_spec.matches_facets(getattr(item, "facets", {}))
-        ]
+        hard_rejected = []
+        facet_rejected = []
+        eligible = []
+        for item in candidates:
+            if hard_filtered(item):
+                hard_rejected.append(item)
+                continue
+            if not request.request_spec.matches_facets(getattr(item, "facets", {})):
+                facet_rejected.append(item)
+                continue
+            eligible.append(item)
         eligible.sort(key=lambda item: float(getattr(item, "score", 0)), reverse=True)
         reranked = eligible[: min(len(eligible), max(request.limit * 4, 16))]
         mmr_pool = eligible[: min(len(eligible), max(request.limit * 2, 16))]
@@ -46,11 +52,18 @@ class RecommendationEngine:
             request,
             output_limit=min(len(mmr_pool), max(request.limit * 4, 16)),
         )
+        diagnostics.update(
+            {
+                "inputCandidateCount": len(candidates),
+                "hardFilteredCount": len(hard_rejected),
+                "requestFacetFilteredCount": len(facet_rejected),
+                "eligibleCount": len(eligible),
+            }
+        )
         selected = diversity(select(mmr_ranked))
         if len(selected) < request.limit:
             selected_ids = {
-                str((getattr(item, "track", {}) or {}).get("trackId") or "")
-                for item in selected
+                str((getattr(item, "track", {}) or {}).get("trackId") or "") for item in selected
             }
             fill_pool = list(selected)
             for item in [*mmr_ranked, *eligible]:
@@ -69,71 +82,76 @@ class RecommendationEngine:
         *,
         output_limit: int,
     ) -> tuple[list[Any], dict[str, Any]]:
-        started = time.perf_counter()
         if len(candidates) <= 1:
-            return candidates[:output_limit], {"mode": "none", "candidateCount": len(candidates), "embeddingMs": 0.0}
-        base_url = os.getenv("AMEM_EMBEDDING_BASE_URL", "").rstrip("/")
-        model = os.getenv("AMEM_EMBEDDING_MODEL", "bge-m3")
-        timeout_seconds = _env_float("AMEM_EMBEDDING_TIMEOUT_SECONDS", 15.0)
-        if not base_url:
+            return candidates[:output_limit], {
+                "mode": "none",
+                "candidateCount": len(candidates),
+                "embeddingMs": 0.0,
+            }
+        document_vectors = [list(getattr(item, "text_embedding", []) or []) for item in candidates]
+        dimensions = {len(vector) for vector in document_vectors if vector}
+        if (
+            self.embedding_service is None
+            or len(dimensions) != 1
+            or any(not vector for vector in document_vectors)
+        ):
             return self._lexical_mmr(candidates, output_limit), {
                 "mode": "lexical_fallback",
                 "candidateCount": len(candidates),
                 "embeddingMs": 0.0,
-                "reason": "embedding_base_url_missing",
+                "reason": "persisted_candidate_vectors_incomplete",
             }
         profile = request.profile
-        query = " ".join(
-            item
-            for item in [
-                request.request_spec.raw_text,
-                " ".join(getattr(profile, "positive_topics", {}).keys()),
-                " ".join(getattr(profile, "mood_weights", {}).keys()),
-                getattr(profile, "music_persona", ""),
-                getattr(profile, "current_music_phase", ""),
-                " ".join(getattr(profile, "core_traits", [])),
-            ]
-            if item
-        ) or "personalized music recommendation"
+        query = (
+            " ".join(
+                item
+                for item in [
+                    request.request_spec.raw_text,
+                    " ".join(getattr(profile, "positive_topics", {}).keys()),
+                    " ".join(getattr(profile, "mood_weights", {}).keys()),
+                    getattr(profile, "music_persona", ""),
+                    getattr(profile, "current_music_phase", ""),
+                    " ".join(getattr(profile, "core_traits", [])),
+                ]
+                if item
+            )
+            or "personalized music recommendation"
+        )
         negative_query = " ".join(
             [
                 " ".join(getattr(profile, "negative_topics", {}).keys()),
                 " ".join(getattr(profile, "negative_interest_texts", [])),
-                " ".join(str(item) for item in request.recent_context.get("negativeSamples", [])[:12]),
+                " ".join(
+                    str(item) for item in request.recent_context.get("negativeSamples", [])[:12]
+                ),
             ]
         ).strip()
-        texts = [
-            f"{str(item.track.get('title', ''))[:180]} {str(item.track.get('owner', ''))[:80]}"
-            for item in candidates
-        ]
-        embedding_inputs = [query, *([negative_query] if negative_query else []), *texts]
-        try:
-            response = requests.post(
-                f"{base_url}/embeddings",
-                json={"model": model, "input": embedding_inputs},
-                headers={"Authorization": f"Bearer {os.getenv('BGE_M3_API_KEY', 'local-embedding')}"},
-                timeout=timeout_seconds,
-            )
-            response.raise_for_status()
-            vectors = [item["embedding"] for item in sorted(response.json()["data"], key=lambda item: item["index"])]
-            if len(vectors) != len(embedding_inputs):
-                raise ValueError("embedding count mismatch")
-        except Exception as exc:
+        query_vector = self.embedding_service.embed_query(query)
+        negative_vector = (
+            self.embedding_service.embed_query(negative_query) if negative_query else None
+        )
+        if not query_vector or len(query_vector) not in dimensions:
             return self._lexical_mmr(candidates, output_limit), {
                 "mode": "lexical_fallback",
                 "candidateCount": len(candidates),
                 "negativeSampleCount": len(request.recent_context.get("negativeSamples", [])),
-                "embeddingMs": round((time.perf_counter() - started) * 1000, 2),
-                "reason": type(exc).__name__,
+                "embeddingMs": 0.0,
+                "reason": "query_embedding_unavailable",
             }
-        query_vector = vectors[0]
-        negative_vector = vectors[1] if negative_query else None
-        document_vectors = vectors[2:] if negative_query else vectors[1:]
+        if negative_vector and len(negative_vector) not in dimensions:
+            negative_vector = None
+        audio_vectors = [list(getattr(item, "audio_embedding", []) or []) for item in candidates]
+        audio_dimensions = {len(vector) for vector in audio_vectors if vector}
+        diversity_vectors = (
+            audio_vectors if len(audio_dimensions) == 1 and all(audio_vectors) else document_vectors
+        )
+        diversity_space = "audio" if diversity_vectors is audio_vectors else "text"
         pending = list(range(len(candidates)))
         selected: list[int] = []
         scores = [float(getattr(item, "score", 0.0)) for item in candidates]
         low, high = min(scores), max(scores)
         while pending and len(selected) < output_limit:
+
             def mmr(index: int) -> float:
                 relevance = 0.5 if high == low else (scores[index] - low) / (high - low)
                 query_similarity = _cosine(query_vector, document_vectors[index])
@@ -142,17 +160,31 @@ class RecommendationEngine:
                     if negative_vector is not None
                     else 0.0
                 )
-                diversity = max((_cosine(document_vectors[index], document_vectors[other]) for other in selected), default=0.0)
-                return 0.45 * relevance + 0.35 * query_similarity - 0.20 * diversity - 0.20 * negative_similarity
+                diversity = max(
+                    (
+                        _cosine(diversity_vectors[index], diversity_vectors[other])
+                        for other in selected
+                    ),
+                    default=0.0,
+                )
+                return (
+                    0.45 * relevance
+                    + 0.35 * query_similarity
+                    - 0.20 * diversity
+                    - 0.20 * negative_similarity
+                )
+
             best = max(pending, key=mmr)
             pending.remove(best)
             selected.append(best)
         return [candidates[index] for index in selected], {
             "mode": "bge_m3_vector",
-            "model": model,
+            "model": self.embedding_service.text_model,
             "candidateCount": len(candidates),
             "negativeSampleCount": len(request.recent_context.get("negativeSamples", [])),
-            "embeddingMs": round((time.perf_counter() - started) * 1000, 2),
+            "embeddingMs": 0.0,
+            "candidateVectors": "persisted",
+            "diversitySpace": diversity_space,
         }
 
     @staticmethod
@@ -179,7 +211,11 @@ def _tokens(candidate: Any) -> set[str]:
     track = getattr(candidate, "track", {}) or {}
     text = " ".join(
         str(value or "")
-        for value in (track.get("title"), track.get("owner"), " ".join(getattr(candidate, "tags", [])))
+        for value in (
+            track.get("title"),
+            track.get("owner"),
+            " ".join(getattr(candidate, "tags", [])),
+        )
     ).casefold()
     return set(re.findall(r"[a-z0-9]+|[\u4e00-\u9fff]{1,3}", text))
 
@@ -191,14 +227,7 @@ def _jaccard(left: set[str], right: set[str]) -> float:
 
 
 def _cosine(left: list[float], right: list[float]) -> float:
-    dot = sum(float(a) * float(b) for a, b in zip(left, right))
+    dot = sum(float(a) * float(b) for a, b in zip(left, right, strict=False))
     left_norm = math.sqrt(sum(float(value) ** 2 for value in left))
     right_norm = math.sqrt(sum(float(value) ** 2 for value in right))
     return dot / max(left_norm * right_norm, 1e-12)
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return max(float(os.getenv(name, str(default))), 0.1)
-    except ValueError:
-        return default

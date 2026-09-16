@@ -12,8 +12,8 @@ from typing import Any, Callable, Optional
 from urllib.parse import urlencode, urlparse
 
 import requests
-
-from constant import BilibiliAPI as APIConst, HttpHeader
+from constant import BilibiliAPI as APIConst
+from constant import HttpHeader
 from error_code import APIError
 from models import AudioStreamInfo, FavoriteFolder, Track, VideoDetail, VideoInfo, normalize_bvid
 from monitoring import record_bilibili_request
@@ -24,6 +24,7 @@ from track_service import (
     normalize_favorite_media_item,
     normalize_player_chapters,
     normalize_player_subtitles,
+    normalize_related_item,
     normalize_reply_comments,
     normalize_search_item,
     normalize_space_archive_item,
@@ -33,7 +34,6 @@ from track_service import (
     normalize_video_detail,
     normalize_video_intro,
 )
-
 
 AUDIO_QUALITY_STREAM_IDS = {
     "64k": 30216,
@@ -59,10 +59,70 @@ QUALITY_ALIASES = {
 }
 
 WBI_MIXIN_KEY_ENC_TAB = (
-    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
-    27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
-    37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
-    22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
+    46,
+    47,
+    18,
+    2,
+    53,
+    8,
+    23,
+    32,
+    15,
+    50,
+    10,
+    31,
+    58,
+    3,
+    45,
+    35,
+    27,
+    43,
+    5,
+    49,
+    33,
+    9,
+    42,
+    19,
+    29,
+    28,
+    14,
+    39,
+    12,
+    38,
+    41,
+    13,
+    37,
+    48,
+    7,
+    16,
+    24,
+    55,
+    40,
+    61,
+    26,
+    17,
+    0,
+    1,
+    60,
+    51,
+    30,
+    4,
+    22,
+    25,
+    54,
+    21,
+    56,
+    59,
+    6,
+    63,
+    57,
+    62,
+    11,
+    36,
+    20,
+    34,
+    44,
+    52,
 )
 WBI_FORBIDDEN_VALUE_CHARS = re.compile(r"[!'()*]")
 WBI_SIGNATURE_REJECT_CODES = {-403}
@@ -164,6 +224,25 @@ class BiliClient:
 
     def get_video_detail(self, bvid: str) -> VideoDetail:
         return normalize_video_detail(self._get_video_detail_payload(bvid))
+
+    def list_related_tracks(self, bvid: str, *, limit: int = 20) -> list[Track]:
+        normalized = normalize_bvid(bvid)
+        if not self.is_valid_bvid(normalized):
+            raise APIError.invalid_bvid(bvid)
+        response = self._observed_get(
+            "related_videos",
+            self.session,
+            APIConst.RELATED_VIDEOS_URL,
+            params={"bvid": normalized},
+            headers=HttpHeader.video_headers(normalized),
+            timeout=self.timeout,
+        )
+        response.raise_for_status()
+        payload = self._json_payload(response, "related videos")
+        if payload.get("code") != 0:
+            raise APIError.api_error(payload.get("message") or "Bilibili related videos failed")
+        tracks = [normalize_related_item(item) for item in payload.get("data") or []]
+        return [track for track in tracks if track is not None][: max(1, min(limit, 50))]
 
     def cache_scope(self) -> str:
         cookie = self.cookie_provider() if self.cookie_provider else None
@@ -809,11 +888,7 @@ class BiliClient:
             actual_aid = 0
             actual_cid = 0
         actual_bvid = normalize_bvid(str(player_data.get("bvid") or ""))
-        if (
-            actual_aid != expected_aid
-            or actual_cid != expected_cid
-            or actual_bvid != expected_bvid
-        ):
+        if actual_aid != expected_aid or actual_cid != expected_cid or actual_bvid != expected_bvid:
             raise APIError.api_error("Bilibili signed player info identity mismatch")
 
         verified = copy.deepcopy(player_data)
@@ -841,7 +916,7 @@ class BiliClient:
             or int(source.get("cid") or 0) != expected_cid
         ):
             return False
-        raw_subtitles = ((player_data.get("subtitle") or {}).get("subtitles") or [])
+        raw_subtitles = (player_data.get("subtitle") or {}).get("subtitles") or []
         appears_in_verified_manifest = any(
             normalize_cover(item.get("subtitle_url") or item.get("subtitleUrl")) == subtitle_url
             for item in raw_subtitles
@@ -854,7 +929,7 @@ class BiliClient:
         if "/bfs/ai_subtitle/" in path:
             if not path.startswith(ai_prefix):
                 return False
-            source_identifier = path[len(ai_prefix):].split("/", 1)[0]
+            source_identifier = path[len(ai_prefix) :].split("/", 1)[0]
             return source_identifier.startswith(f"{expected_aid}{expected_cid}")
         return True
 
@@ -1003,7 +1078,9 @@ class BiliClient:
     @staticmethod
     def _is_space_risk_rejection(response: requests.Response, payload: dict[str, Any]) -> bool:
         message = str(payload.get("message") or "")
-        return response.status_code == 412 or payload.get("code") in {-412, -352} or "风控" in message
+        return (
+            response.status_code == 412 or payload.get("code") in {-412, -352} or "风控" in message
+        )
 
     @classmethod
     def _normalize_audio_quality(cls, quality: str) -> str:
@@ -1012,7 +1089,9 @@ class BiliClient:
         return normalized if normalized in QUALITY_ORDER else "auto"
 
     @classmethod
-    def _select_audio_stream(cls, audio_streams: list[dict[str, Any]], quality: str) -> dict[str, Any]:
+    def _select_audio_stream(
+        cls, audio_streams: list[dict[str, Any]], quality: str
+    ) -> dict[str, Any]:
         normalized = cls._normalize_audio_quality(quality)
         if normalized == "auto":
             return max(audio_streams, key=lambda item: int(item.get("bandwidth") or 0))

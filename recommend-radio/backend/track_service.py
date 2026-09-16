@@ -9,7 +9,6 @@ from urllib.parse import urlparse
 
 from models import BiliUserProfile, FavoriteFolder, Track, VideoDetail, VideoInfo, normalize_bvid
 
-
 TAG_RE = re.compile(r"<[^>]+>")
 SUBTITLE_PATH_MARKERS = ("/bfs/subtitle/", "/bfs/ai_subtitle/")
 
@@ -40,8 +39,10 @@ def is_valid_subtitle_url(url: Any) -> bool:
     path = parsed.path.lower()
     # Bilibili's manually uploaded subtitles end in .json, while AI subtitle
     # payloads use an extensionless /bfs/ai_subtitle/prod/... URL.
-    return parsed.scheme == "https" and host.endswith(".hdslb.com") and any(
-        marker in path for marker in SUBTITLE_PATH_MARKERS
+    return (
+        parsed.scheme == "https"
+        and host.endswith(".hdslb.com")
+        and any(marker in path for marker in SUBTITLE_PATH_MARKERS)
     )
 
 
@@ -84,6 +85,31 @@ def normalize_search_item(item: dict[str, Any]) -> Track:
         duration=parse_duration(item.get("duration")),
         play_count=int(item.get("play") or item.get("play_count") or 0),
         published_at=format_pubdate(item.get("pubdate") or item.get("senddate")),
+        description=clean_text(item.get("description") or item.get("desc")),
+        tags=_string_tuple(item.get("tag") or item.get("tags")),
+        type_name=clean_text(item.get("typename") or item.get("type_name")),
+        hit_columns=_string_tuple(item.get("hit_columns")),
+    )
+
+
+def normalize_related_item(item: dict[str, Any]) -> Optional[Track]:
+    bvid = str(item.get("bvid") or "").strip()
+    if not bvid:
+        return None
+    owner = item.get("owner") or {}
+    stat = item.get("stat") or {}
+    return Track(
+        bvid=bvid,
+        cid=int(item.get("cid") or 0) or None,
+        title=clean_text(item.get("title")),
+        owner=clean_text(owner.get("name")),
+        owner_mid=int(owner.get("mid") or 0) or None,
+        cover=normalize_cover(item.get("pic")),
+        duration=parse_duration(item.get("duration")),
+        play_count=int(stat.get("view") or 0),
+        published_at=format_pubdate(item.get("pubdate") or item.get("ctime")),
+        description=clean_text(item.get("desc") or item.get("description")),
+        type_name=clean_text(item.get("tname") or item.get("typename")),
     )
 
 
@@ -180,7 +206,12 @@ def normalize_favorite_media_item(item: dict[str, Any]) -> Optional[Track]:
         cover=normalize_cover(item.get("cover") or item.get("pic")),
         duration=parse_duration(item.get("duration")),
         play_count=int(cnt_info.get("play") or cnt_info.get("view") or 0),
-        published_at=format_pubdate(item.get("pubtime") or item.get("pubdate") or item.get("ctime")),
+        published_at=format_pubdate(
+            item.get("pubtime") or item.get("pubdate") or item.get("ctime")
+        ),
+        description=clean_text(item.get("intro") or item.get("description") or item.get("desc")),
+        tags=_string_tuple(item.get("tags") or item.get("tag")),
+        type_name=clean_text(item.get("type_name") or item.get("typename")),
     )
 
 
@@ -280,7 +311,12 @@ def normalize_subtitle_lines(payload: dict[str, Any]) -> list[dict[str, Any]]:
         except (TypeError, ValueError):
             continue
         text = clean_text(item.get("content"))
-        if not text or not math.isfinite(from_time) or not math.isfinite(to_time) or to_time <= from_time:
+        if (
+            not text
+            or not math.isfinite(from_time)
+            or not math.isfinite(to_time)
+            or to_time <= from_time
+        ):
             continue
         lines.append(
             {
@@ -374,7 +410,20 @@ def normalize_space_archive_item(item: dict[str, Any], owner: dict[str, Any]) ->
         duration=parse_duration(item.get("duration") or item.get("length")),
         play_count=int(stat.get("view") or item.get("play") or 0),
         published_at=format_pubdate(item.get("pubdate") or item.get("created")),
+        description=clean_text(item.get("description") or item.get("desc")),
+        tags=_string_tuple(item.get("tags") or item.get("tag")),
+        type_name=clean_text(item.get("typename") or item.get("type_name")),
     )
+
+
+def _string_tuple(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        values = re.split(r"[,，]", value)
+    elif isinstance(value, (list, tuple, set)):
+        values = value
+    else:
+        values = ()
+    return tuple(dict.fromkeys(clean_text(item) for item in values if clean_text(item)))
 
 
 def cover_info_from_video_data(data: dict[str, Any], cid: Optional[int] = None) -> dict[str, Any]:

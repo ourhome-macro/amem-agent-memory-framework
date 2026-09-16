@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
@@ -9,9 +9,12 @@ from typing import Any, Iterable
 from database import get_connection
 from library_service import LibraryService
 from models import Track
-from music_keyword_pool import has_gossip_exclusion, has_music_relevance_signal, has_non_music_context
+from music_keyword_pool import (
+    has_gossip_exclusion,
+    has_music_relevance_signal,
+    has_non_music_context,
+)
 from request_spec import RequestSpec
-
 
 READY_STATUS = "ready"
 
@@ -92,13 +95,11 @@ class CandidatePool:
                     INSERT INTO content_cache (
                         user_id, track_id, source, facets_json, evidence_json, status, scope_kind, scope_key, created_at, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(user_id, track_id) DO UPDATE SET
+                    ON CONFLICT(user_id, track_id, scope_kind, scope_key) DO UPDATE SET
                         source = excluded.source,
                         facets_json = excluded.facets_json,
                         evidence_json = excluded.evidence_json,
                         status = excluded.status,
-                        scope_kind = excluded.scope_kind,
-                        scope_key = excluded.scope_key,
                         updated_at = excluded.updated_at
                     """,
                     (
@@ -142,7 +143,15 @@ class CandidatePool:
                         source='negative_probe', facets_json=excluded.facets_json,
                         evidence_json=excluded.evidence_json, status='negative_sample', updated_at=excluded.updated_at
                     """,
-                    (self.user_id, track.track_id, query[:240], json.dumps(facets, ensure_ascii=False), json.dumps(evidence, ensure_ascii=False), now, now),
+                    (
+                        self.user_id,
+                        track.track_id,
+                        query[:240],
+                        json.dumps(facets, ensure_ascii=False),
+                        json.dumps(evidence, ensure_ascii=False),
+                        now,
+                        now,
+                    ),
                 )
         return len(values)
 
@@ -172,7 +181,14 @@ class CandidatePool:
                 ORDER BY c.updated_at DESC
                 LIMIT 300
                 """,
-                (self.user_id, READY_STATUS, int(scoped), scope_key, int(bool(context_keys)), *context_keys),
+                (
+                    self.user_id,
+                    READY_STATUS,
+                    int(scoped),
+                    scope_key,
+                    int(bool(context_keys)),
+                    *context_keys,
+                ),
             ).fetchall()
         result = []
         provenance = self._provenance_for_tracks(rows)
@@ -184,17 +200,50 @@ class CandidatePool:
                 PoolCandidate(
                     track=self.library._track_from_row(row),
                     source=str(row["cache_source"] or "candidate_pool"),
-                    facets={key: [str(item) for item in value] for key, value in facets.items() if isinstance(value, list)},
+                    facets={
+                        key: [str(item) for item in value]
+                        for key, value in facets.items()
+                        if isinstance(value, list)
+                    },
                     evidence=_json_strings(row["evidence_json"]),
                     scope_kind=str(row["scope_kind"] or "default"),
-                    source_keyword_ids=list(provenance.get((str(row["track_id"]), str(row["scope_kind"]), str(row["scope_key"] or "")), {}).get("keywordIds", [])),
-                    source_keyword_family_ids=list(provenance.get((str(row["track_id"]), str(row["scope_kind"]), str(row["scope_key"] or "")), {}).get("familyIds", [])),
-                    source_discovery_job_ids=list(provenance.get((str(row["track_id"]), str(row["scope_kind"]), str(row["scope_key"] or "")), {}).get("jobIds", [])),
+                    source_keyword_ids=list(
+                        provenance.get(
+                            (
+                                str(row["track_id"]),
+                                str(row["scope_kind"]),
+                                str(row["scope_key"] or ""),
+                            ),
+                            {},
+                        ).get("keywordIds", [])
+                    ),
+                    source_keyword_family_ids=list(
+                        provenance.get(
+                            (
+                                str(row["track_id"]),
+                                str(row["scope_kind"]),
+                                str(row["scope_key"] or ""),
+                            ),
+                            {},
+                        ).get("familyIds", [])
+                    ),
+                    source_discovery_job_ids=list(
+                        provenance.get(
+                            (
+                                str(row["track_id"]),
+                                str(row["scope_kind"]),
+                                str(row["scope_key"] or ""),
+                            ),
+                            {},
+                        ).get("jobIds", [])
+                    ),
                 )
             )
         return result
 
-    def _provenance_for_tracks(self, cache_rows: list[Any]) -> dict[tuple[str, str, str], dict[str, list[str]]]:
+    def _provenance_for_tracks(
+        self, cache_rows: list[Any]
+    ) -> dict[tuple[str, str, str], dict[str, list[str]]]:
         values = list(dict.fromkeys(str(row["track_id"]) for row in cache_rows if row["track_id"]))
         if not values:
             return {}
@@ -221,7 +270,11 @@ class CandidatePool:
             ).fetchall()
         result: dict[tuple[str, str, str], dict[str, list[str]]] = {}
         for row in rows:
-            key = (str(row["track_id"]), str(row["scope_kind"] or "default"), str(row["scope_key"] or ""))
+            key = (
+                str(row["track_id"]),
+                str(row["scope_kind"] or "default"),
+                str(row["scope_key"] or ""),
+            )
             item = result.setdefault(key, {"keywordIds": [], "familyIds": [], "jobIds": []})
             _append_bounded(item["keywordIds"], str(row["keyword_id"]), 6)
             _append_bounded(item["familyIds"], str(row["family_id"]), 6)
@@ -231,10 +284,17 @@ class CandidatePool:
             matching_keys = [key for key in result if key[0] == track_id]
             if matching_keys:
                 continue
-            cache_row = next((item for item in cache_rows if str(item["track_id"]) == track_id), None)
-            scope_kind = "default" if cache_row is None else str(cache_row["scope_kind"] or "default")
+            cache_row = next(
+                (item for item in cache_rows if str(item["track_id"]) == track_id), None
+            )
+            scope_kind = (
+                "default" if cache_row is None else str(cache_row["scope_kind"] or "default")
+            )
             fallback_scope_key = "" if cache_row is None else str(cache_row["scope_key"] or "")
-            item = result.setdefault((track_id, scope_kind, fallback_scope_key), {"keywordIds": [], "familyIds": [], "jobIds": []})
+            item = result.setdefault(
+                (track_id, scope_kind, fallback_scope_key),
+                {"keywordIds": [], "familyIds": [], "jobIds": []},
+            )
             _append_bounded(item["keywordIds"], str(row["keyword_id"]), 6)
             _append_bounded(item["familyIds"], str(row["family_id"] or ""), 6)
         return result
@@ -257,19 +317,65 @@ class CandidatePool:
             ).fetchall()
         return [
             " ".join(
-                part for part in (str(row["title"] or ""), str(row["owner"] or ""), str(row["query_text"] or "")) if part
+                part
+                for part in (
+                    str(row["title"] or ""),
+                    str(row["owner"] or ""),
+                    str(row["query_text"] or ""),
+                )
+                if part
             )[:320]
             for row in rows
         ]
 
 
 def infer_facets(track: Track, *, query: str) -> tuple[dict[str, list[str]], list[str]]:
-    text = f"{track.title} {track.page_title or ''} {track.owner}".casefold()
+    text = " ".join(
+        (
+            track.title,
+            track.page_title or "",
+            track.owner,
+            track.type_name,
+            " ".join(track.tags),
+            track.description,
+        )
+    ).casefold()
     query_text = query.casefold()
-    facets: dict[str, list[str]] = {"regions": [], "languages": [], "vocals": [], "topics": [], "genres": []}
+    facets: dict[str, list[str]] = {
+        "regions": [],
+        "languages": [],
+        "vocals": [],
+        "topics": [],
+        "genres": [],
+    }
     evidence: list[str] = []
     western_query = _matches(query_text, ("欧美", "英文", "english", "western"))
-    if _matches(text, ("欧美", "英文", "english", "western", "taylor swift", "adele", "billie eilish", "lady gaga", "bruno mars", "ed sheeran", "the weeknd", "rihanna", "beyoncé", "beyonce", "ariana grande", "maroon 5", "coldplay", "linkin park", "imagine dragons", "lana del rey", "dua lipa")) or (western_query and _looks_english(track.title)):
+    if _matches(
+        text,
+        (
+            "欧美",
+            "英文",
+            "english",
+            "western",
+            "taylor swift",
+            "adele",
+            "billie eilish",
+            "lady gaga",
+            "bruno mars",
+            "ed sheeran",
+            "the weeknd",
+            "rihanna",
+            "beyoncé",
+            "beyonce",
+            "ariana grande",
+            "maroon 5",
+            "coldplay",
+            "linkin park",
+            "imagine dragons",
+            "lana del rey",
+            "dua lipa",
+        ),
+    ) or (western_query and _looks_english(track.title)):
         facets["regions"].append("western")
         facets["languages"].append("english")
         evidence.append("facet:western_or_english:title_or_artist")
@@ -300,18 +406,38 @@ def infer_facets(track: Track, *, query: str) -> tuple[dict[str, list[str]], lis
             facets["topics"].append(topic)
             facets["genres"].append(topic)
             evidence.append(
-                f"facet:topic:{topic}:title" if _matches(text, terms) else f"facet:topic:{topic}:query"
+                f"facet:topic:{topic}:title"
+                if _matches(text, terms)
+                else f"facet:topic:{topic}:query"
             )
     if query:
         evidence.append(f"discovery_query:{query[:120]}")
+    if "音乐" in track.type_name or "music" in track.type_name.casefold():
+        evidence.append("content_type:music")
+    if "tag" in {value.casefold() for value in track.hit_columns}:
+        evidence.append("search_hit:tag")
     return facets, evidence
 
 
 def is_admissible(track: Track, facets: dict[str, list[str]]) -> bool:
-    text = f"{track.title} {track.page_title or ''} {track.owner}"
+    text = " ".join(
+        (
+            track.title,
+            track.page_title or "",
+            track.owner,
+            track.type_name,
+            " ".join(track.tags),
+            track.description,
+        )
+    )
     if has_gossip_exclusion(text):
         return False
     if has_non_music_context(text) and not has_music_relevance_signal(text):
+        return False
+    non_music_partition = any(
+        value in track.type_name for value in ("生活", "游戏", "知识", "鬼畜", "娱乐")
+    )
+    if non_music_partition and not has_music_relevance_signal(text):
         return False
     return bool(track.title.strip())
 

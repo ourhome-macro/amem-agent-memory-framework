@@ -15,11 +15,14 @@ from uuid import uuid4
 from amem_bridge import NoopAmemBridge, record_music_behavior
 from bili_client import BiliClient
 from candidate_pool import CandidatePool
+from content_embeddings import ContentEmbeddingService
 from database import DEFAULT_DB_PATH, LEGACY_OWNER_USER_ID, get_connection, init_db
 from discovery_planner import DiscoveryPlanner
 from discovery_service import DiscoveryService
-from library_service import LibraryService
+from experiments import ExperimentAssignments
+from full_trace import FullTrace, current_trace_id, hash_text
 from keyword_governance import KeywordGovernance
+from library_service import LibraryService
 from memory_lifecycle import SceneMemoryService
 from models import Track
 from music_keyword_pool import (
@@ -30,7 +33,7 @@ from music_keyword_pool import (
     matched_artist_names,
 )
 from music_profile import MusicProfile
-from profile_projector import ProfileProjector
+from profile_projector import ProfileProjection, ProfileProjector
 from profile_statement_service import ProfileStatementService
 from profile_update import MusicProfileUpdatePipeline
 from recommendation_engine import RecommendationEngine, RecommendationRequest
@@ -92,6 +95,9 @@ class UserProfile:
     recently_heard_track_ids: set[str] = field(default_factory=set)
     recently_recommended_track_ids: set[str] = field(default_factory=set)
     skipped_track_ids: set[str] = field(default_factory=set)
+    recently_heard_recording_ids: set[str] = field(default_factory=set)
+    recently_recommended_work_ids: set[str] = field(default_factory=set)
+    skipped_recording_ids: set[str] = field(default_factory=set)
 
 
 @dataclass
@@ -107,6 +113,8 @@ class CandidateDraft:
     source_keyword_ids: set[str] = field(default_factory=set)
     source_keyword_family_ids: set[str] = field(default_factory=set)
     source_discovery_job_ids: set[str] = field(default_factory=set)
+    text_embedding: list[float] = field(default_factory=list)
+    audio_embedding: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -130,6 +138,8 @@ class RecommendationCandidate:
     source_keyword_family_ids: list[str] = field(default_factory=list)
     source_discovery_job_ids: list[str] = field(default_factory=list)
     recommendation_trace_id: str = ""
+    text_embedding: list[float] = field(default_factory=list, repr=False)
+    audio_embedding: list[float] = field(default_factory=list, repr=False)
 
     def to_dict(self) -> dict[str, Any]:
         value = {
@@ -180,13 +190,18 @@ class RecommendationService:
         self.amem_bridge = amem_bridge if amem_bridge is not None else NoopAmemBridge()
         self.profile_projector = profile_projector or ProfileProjector(self.amem_bridge)
         self.candidate_pool = CandidatePool(str(self.db_path), user_id=self.user_id)
+        self.content_embeddings = ContentEmbeddingService(
+            str(self.db_path),
+            user_id=self.user_id,
+        )
+        self.experiments = ExperimentAssignments(str(self.db_path), user_id=self.user_id)
         self.discovery_service = DiscoveryService(
             str(self.db_path),
             user_id=self.user_id,
             bili_client=self.bili_client,
             planner=discovery_planner,
         )
-        self.recommendation_engine = RecommendationEngine()
+        self.recommendation_engine = RecommendationEngine(embedding_service=self.content_embeddings)
         self.profile_statement_service = ProfileStatementService(self.amem_bridge)
         self.profile_update_pipeline = MusicProfileUpdatePipeline(
             str(self.db_path),
@@ -195,21 +210,86 @@ class RecommendationService:
         )
         self.scene_memory_service = SceneMemoryService(str(self.db_path), user_id=self.user_id)
         self.keyword_governance = KeywordGovernance(str(self.db_path), user_id=self.user_id)
-        self.auto_discovery = _env_bool("RECOMMEND_AUTO_DISCOVERY_ENABLED", False) if auto_discovery is None else auto_discovery
+        self.auto_discovery = (
+            _env_bool("RECOMMEND_AUTO_DISCOVERY_ENABLED", False)
+            if auto_discovery is None
+            else auto_discovery
+        )
 
     def list_recommendations(
         self,
         scene: str = "home",
         limit: int = DEFAULT_RECOMMENDATION_LIMIT,
         request_spec: RequestSpec | None = None,
+        *,
+        parent_trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_scene = self._normalize_scene(scene)
+        trace = FullTrace(
+            str(self.db_path),
+            trace_type="recommendation",
+            user_id=self.user_id,
+            parent_trace_id=parent_trace_id or current_trace_id(),
+            attributes={
+                "scene": normalized_scene,
+                "limit": min(
+                    max(int(limit or DEFAULT_RECOMMENDATION_LIMIT), 1), MAX_RECOMMENDATION_LIMIT
+                ),
+                "requestTextHash": hash_text("" if request_spec is None else request_spec.raw_text),
+            },
+        )
+        with trace:
+            result = self._list_recommendations(
+                scene=normalized_scene,
+                limit=limit,
+                request_spec=request_spec,
+                full_trace=trace,
+            )
+            result["fullTraceId"] = trace.trace_id
+            trace.event(
+                "recommendation.completed",
+                {
+                    "resultCount": len(result.get("items") or []),
+                    "trackIds": [
+                        str((item.get("track") or {}).get("trackId") or "")
+                        for item in result.get("items") or []
+                    ],
+                },
+            )
+            return result
+
+    def _list_recommendations(
+        self,
+        scene: str,
+        limit: int,
+        request_spec: RequestSpec | None,
+        *,
+        full_trace: FullTrace,
     ) -> dict[str, Any]:
         started_at = time.perf_counter()
         timings: dict[str, Any] = {}
         normalized_scene = self._normalize_scene(scene)
+        memory_variant = self.experiments.memory_variant()
         span_started = time.perf_counter()
-        scene_memories = self.scene_memory_service.active(scene=normalized_scene)
+        scene_memories = (
+            []
+            if memory_variant == "control"
+            else self.scene_memory_service.active(scene=normalized_scene)
+        )
         timings["l2SceneMemoryMs"] = round((time.perf_counter() - span_started) * 1000, 3)
-        timings["l2SceneMemorySource"] = scene_memories[0].get("source") if scene_memories else "sqlite_empty"
+        timings["l2SceneMemorySource"] = (
+            scene_memories[0].get("source") if scene_memories else "sqlite_empty"
+        )
+        full_trace.record_span(
+            "scene_memory.retrieve",
+            timings["l2SceneMemoryMs"],
+            kind="memory",
+            inputs={"scene": normalized_scene, "memoryVariant": memory_variant},
+            outputs={
+                "memoryCount": len(scene_memories),
+                "source": timings["l2SceneMemorySource"],
+            },
+        )
         active_scene_spec = (
             RequestSpec.from_dict(scene_memories[0]["requestSpec"])
             if scene_memories and isinstance(scene_memories[0].get("requestSpec"), dict)
@@ -226,23 +306,46 @@ class RecommendationService:
         legacy_profile = self._load_user_profile()
         fallback_profile = self._fallback_music_profile(legacy_profile)
         span_started = time.perf_counter()
-        projection = self.profile_projector.project(
-            user_id=self.user_id,
-            scene=normalized_scene,
-            fallback_profile=fallback_profile,
-        )
+        if memory_variant == "control":
+            projection = ProfileProjection(
+                profile=MusicProfile.empty(),
+                memories=[],
+                trace_id=f"profile-control:{self.user_id}:{normalized_scene}",
+            )
+        else:
+            projection = self.profile_projector.project(
+                user_id=self.user_id,
+                scene=normalized_scene,
+                fallback_profile=fallback_profile,
+            )
         timings["profileProjectionMs"] = round((time.perf_counter() - span_started) * 1000, 2)
         timings["profileCacheHit"] = bool(getattr(projection, "cache_hit", False))
         if getattr(projection, "llm_latency_ms", 0):
             timings["profileLlmApiMs"] = round(float(projection.llm_latency_ms), 2)
         music_profile = projection.profile
+        full_trace.record_span(
+            "profile.project",
+            timings["profileProjectionMs"],
+            kind="memory",
+            outputs={
+                "traceId": projection.trace_id,
+                "memoryCount": len(projection.memories),
+                "cacheHit": timings["profileCacheHit"],
+                "profileSource": music_profile.source,
+            },
+            metrics={"llmApiMs": timings.get("profileLlmApiMs", 0.0)},
+        )
         negative_samples = self.candidate_pool.list_negative_sample_texts(limit=12)
         recommendation_request = RecommendationRequest(
             scene=normalized_scene,
             limit=bounded_limit,
             request_spec=resolved_request_spec,
             profile=music_profile,
-            exclude_track_ids=(legacy_profile.recently_heard_track_ids | legacy_profile.recently_recommended_track_ids | legacy_profile.skipped_track_ids),
+            exclude_track_ids=(
+                legacy_profile.recently_heard_track_ids
+                | legacy_profile.recently_recommended_track_ids
+                | legacy_profile.skipped_track_ids
+            ),
             recent_context={
                 "sceneMemories": scene_memories,
                 "l1": music_profile.to_dict(),
@@ -252,23 +355,59 @@ class RecommendationService:
         profile_version = _profile_version(projection.trace_id, music_profile)
 
         context_specs = []
-        if normalized_scene == "conversation" and restore_scene_context and active_scene_spec is not None:
+        if (
+            normalized_scene == "conversation"
+            and restore_scene_context
+            and active_scene_spec is not None
+        ):
             context_specs = [active_scene_spec]
         span_started = time.perf_counter()
-        drafts = self._generate_candidates(legacy_profile, resolved_request_spec, context_specs=context_specs)
+        drafts = self._generate_candidates(
+            legacy_profile, resolved_request_spec, context_specs=context_specs
+        )
         timings["candidatePoolReadMs"] = round((time.perf_counter() - span_started) * 1000, 2)
+        full_trace.record_span(
+            "candidate_pool.read",
+            timings["candidatePoolReadMs"],
+            kind="retrieval",
+            inputs={"requestSpec": resolved_request_spec.to_dict()},
+            outputs={"candidateCount": len(drafts)},
+            metrics={"poolHit": int(bool(drafts))},
+        )
+        span_started = time.perf_counter()
         discovery_plan = self.discovery_service.planner.plan(
             profile=music_profile,
             request_spec=resolved_request_spec,
             scene=normalized_scene,
         )
+        timings["discoveryPlanMs"] = round((time.perf_counter() - span_started) * 1000, 3)
+        full_trace.record_span(
+            "discovery.plan",
+            timings["discoveryPlanMs"],
+            kind="planning",
+            outputs={
+                "entityQueries": [
+                    query
+                    for query in discovery_plan.search_queries
+                    if query not in discovery_plan.semantic_queries
+                ],
+                "semanticQueries": discovery_plan.semantic_queries,
+                "externalQueryCount": len(discovery_plan.search_queries),
+            },
+        )
         discovery_job_id = None
-        if self.auto_discovery and normalized_scene == "home" and not resolved_request_spec.constrained and len(drafts) < DEFAULT_POOL_TARGET:
+        if (
+            self.auto_discovery
+            and normalized_scene == "home"
+            and not resolved_request_spec.constrained
+            and len(drafts) < DEFAULT_POOL_TARGET
+        ):
             discovery_job_id = self.discovery_service.enqueue(
                 profile=music_profile,
                 request_spec=resolved_request_spec,
                 scene=normalized_scene,
                 limit=bounded_limit,
+                parent_trace_id=full_trace.trace_id,
             )
 
         span_started = time.perf_counter()
@@ -283,6 +422,12 @@ class RecommendationService:
             for draft in drafts.values()
         ]
         timings["candidateScoringMs"] = round((time.perf_counter() - span_started) * 1000, 2)
+        full_trace.record_span(
+            "candidate.score",
+            timings["candidateScoringMs"],
+            kind="ranking",
+            outputs={"candidateCount": len(candidates)},
+        )
         span_started = time.perf_counter()
         reranked, selected, mmr_diagnostics = self.recommendation_engine.rank_and_select(
             candidates,
@@ -307,11 +452,37 @@ class RecommendationService:
         )
         timings["selectionMmrMs"] = round((time.perf_counter() - span_started) * 1000, 2)
         timings["mmr"] = mmr_diagnostics
+        timings["ttfrMs"] = round(full_trace.elapsed_ms(), 2) if selected else None
+        full_trace.record_span(
+            "candidate.rank_select",
+            timings["selectionMmrMs"],
+            kind="ranking",
+            outputs={
+                "rerankedCount": len(reranked),
+                "selectedCount": len(selected),
+                "selectedTrackIds": [item.track.get("trackId") for item in selected],
+            },
+            metrics={**mmr_diagnostics, "ttfrMs": timings["ttfrMs"]},
+        )
+        if selected:
+            full_trace.event(
+                "recommendation.first_valid_result",
+                {
+                    "ttfrMs": timings["ttfrMs"],
+                    "trackId": selected[0].track.get("trackId"),
+                },
+            )
         timings["servingMs"] = round((time.perf_counter() - started_at) * 1000, 2)
 
         span_started = time.perf_counter()
         self._upsert_candidate_tracks(selected)
         timings["candidatePersistenceMs"] = round((time.perf_counter() - span_started) * 1000, 2)
+        full_trace.record_span(
+            "candidate.persist",
+            timings["candidatePersistenceMs"],
+            kind="storage",
+            metrics={"candidateCount": len(selected)},
+        )
         span_started = time.perf_counter()
         trace_id = self._store_recommendation_trace(
             scene=normalized_scene,
@@ -327,8 +498,16 @@ class RecommendationService:
             selected=selected,
             request_spec=resolved_request_spec,
             timing=timings,
+            experiments={"memory_context_v1": memory_variant},
+            trace_id=full_trace.trace_id,
         )
         timings["tracePersistenceMs"] = round((time.perf_counter() - span_started) * 1000, 2)
+        full_trace.record_span(
+            "recommendation_trace.persist",
+            timings["tracePersistenceMs"],
+            kind="storage",
+            outputs={"traceId": trace_id},
+        )
         for item in selected:
             item.recommendation_trace_id = trace_id
         span_started = time.perf_counter()
@@ -348,6 +527,12 @@ class RecommendationService:
             ]
         )
         timings["feedbackWriteMs"] = round((time.perf_counter() - span_started) * 1000, 2)
+        full_trace.record_span(
+            "impression.write",
+            timings["feedbackWriteMs"],
+            kind="feedback",
+            metrics={"impressionCount": len(selected)},
+        )
         timings["totalMs"] = round((time.perf_counter() - started_at) * 1000, 2)
         self._update_recommendation_trace_timing(trace_id, timings)
         return {
@@ -361,6 +546,7 @@ class RecommendationService:
             "requestSpec": resolved_request_spec.to_dict(),
             "debugTraceId": trace_id,
             "timing": timings,
+            "experiments": {"memory_context_v1": memory_variant},
         }
 
     @staticmethod
@@ -506,10 +692,17 @@ class RecommendationService:
                 ON CONFLICT(user_id) DO UPDATE SET profile_json = excluded.profile_json,
                     source = excluded.source, updated_at = excluded.updated_at
                 """,
-                (self.user_id, json.dumps(result.get("profile") or {}, ensure_ascii=False), "profile_statement", _utc_now()),
+                (
+                    self.user_id,
+                    json.dumps(result.get("profile") or {}, ensure_ascii=False),
+                    "profile_statement",
+                    _utc_now(),
+                ),
             )
         try:
-            submitted_profile = MusicProfile.from_dict(result.get("profile") or {}, source="profile_statement")
+            submitted_profile = MusicProfile.from_dict(
+                result.get("profile") or {}, source="profile_statement"
+            )
             result["discovery"] = self.discovery_service.discover_now(
                 profile=submitted_profile,
                 request_spec=RequestSpec(),
@@ -517,7 +710,10 @@ class RecommendationService:
                 limit=MAX_RECOMMENDATION_LIMIT,
             )
         except Exception:
-            result["discovery"] = {"available": self.candidate_pool.availability(RequestSpec()), "queries": []}
+            result["discovery"] = {
+                "available": self.candidate_pool.availability(RequestSpec()),
+                "queries": [],
+            }
         result["analysis"] = self.music_profile_analysis(scene="home")
         return result
 
@@ -602,6 +798,34 @@ class RecommendationService:
         return events[0] if events else {}
 
     def record_events(self, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        parent_ids = {
+            str(
+                payload.get("recommendationTraceId") or payload.get("recommendation_trace_id") or ""
+            )
+            for payload in payloads
+        } - {""}
+        parent_trace_id = next(iter(parent_ids)) if len(parent_ids) == 1 else current_trace_id()
+        trace = FullTrace(
+            str(self.db_path),
+            trace_type="feedback",
+            user_id=self.user_id,
+            parent_trace_id=parent_trace_id,
+            attributes={"inputEventCount": len(payloads)},
+        )
+        with trace:
+            result = self._record_events(payloads, full_trace=trace)
+            for item in result:
+                item["fullTraceId"] = trace.trace_id
+            trace.event("feedback.completed", {"acceptedEventCount": len(result)})
+            return result
+
+    def _record_events(
+        self,
+        payloads: list[dict[str, Any]],
+        *,
+        full_trace: FullTrace,
+    ) -> list[dict[str, Any]]:
+        normalized_started = time.perf_counter()
         now = _utc_now()
         normalized = []
         for payload in payloads:
@@ -642,16 +866,27 @@ class RecommendationService:
                     "behaviorPayload": dict(payload),
                 }
             )
+        full_trace.record_span(
+            "feedback.normalize",
+            (time.perf_counter() - normalized_started) * 1000,
+            kind="feedback",
+            outputs={
+                "acceptedEventCount": len(normalized),
+                "eventTypes": sorted({item["event"] for item in normalized}),
+            },
+        )
 
+        storage_started = time.perf_counter()
         if normalized:
             with get_connection(self.db_path) as conn:
                 conn.executemany(
                     """
                     INSERT INTO recommendation_events (
                         user_id, track_id, event, scene, source, reason, score,
-                        recommendation_trace_id, source_keyword_ids_json, created_at
+                        recommendation_trace_id, source_keyword_ids_json,
+                        played_seconds, completed, negative, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [
                         (
@@ -664,6 +899,9 @@ class RecommendationService:
                             item["score"],
                             item["recommendationTraceId"],
                             json.dumps(item["sourceKeywordIds"], ensure_ascii=False),
+                            item["playedSeconds"],
+                            int(item["completed"]),
+                            int(item["skipped"]),
                             item["createdAt"],
                         )
                         for item in normalized
@@ -671,7 +909,23 @@ class RecommendationService:
                 )
                 for item in normalized:
                     self._write_history(conn, item)
+                    if item['event'] in MEMORY_EVIDENCE_EVENTS:
+                        from durable_jobs import enqueue_behavior
+                        behavior_payload = dict(item.get('behaviorPayload') or {})
+                        behavior_payload.update({name: item[name] for name in (
+                            'source','reason','score','playedSeconds','completed','skipped')})
+                        enqueue_behavior(conn, user_id=self.user_id, event=item['event'],
+                                         scene=item['scene'], track=item['track'],
+                                         payload=behavior_payload)
+        full_trace.record_span(
+            "feedback.persist",
+            (time.perf_counter() - storage_started) * 1000,
+            kind="storage",
+            metrics={"eventCount": len(normalized)},
+        )
 
+        learning_started = time.perf_counter()
+        memory_evidence_count = 0
         for item in normalized:
             behavior_payload = dict(item.get("behaviorPayload") or {})
             behavior_payload.update(
@@ -687,22 +941,50 @@ class RecommendationService:
             # Exposure is stored locally for fatigue and keyword attribution,
             # but it is not user-preference evidence and must not enter AMEM.
             if item["event"] in MEMORY_EVIDENCE_EVENTS:
-                record_music_behavior(
-                    self.amem_bridge,
-                    user_id=self.user_id,
-                    event=item["event"],
-                    track=item["track"],
-                    scene=item["scene"],
-                    payload=behavior_payload,
-                )
+                memory_evidence_count += 1
+                from rabbitmq_bus import rabbitmq_enabled
+                if not rabbitmq_enabled():
+                    record_music_behavior(
+                        self.amem_bridge,
+                        user_id=self.user_id,
+                        event=item["event"],
+                        track=item["track"],
+                        scene=item["scene"],
+                        payload=behavior_payload,
+                    )
             self.keyword_governance.record_feedback(
                 item["trackId"],
                 item["event"],
                 recommendation_trace_id=item["recommendationTraceId"],
                 source_keyword_ids=item["sourceKeywordIds"],
             )
+            if item["event"] in {"completed", "liked", "collection_added"}:
+                self.content_embeddings.enqueue_audio_embeddings(
+                    [item["track"]],
+                    force=True,
+                )
+        full_trace.record_span(
+            "feedback.learn",
+            (time.perf_counter() - learning_started) * 1000,
+            kind="memory",
+            metrics={
+                "eventCount": len(normalized),
+                "memoryEvidenceCount": memory_evidence_count,
+            },
+        )
+        profile_started = time.perf_counter()
         if any(item["event"] in PROFILE_LIFECYCLE_EVENTS for item in normalized):
             self.profile_update_pipeline.process()
+        full_trace.record_span(
+            "profile.lifecycle.update",
+            (time.perf_counter() - profile_started) * 1000,
+            kind="memory",
+            metrics={
+                "triggered": int(
+                    any(item["event"] in PROFILE_LIFECYCLE_EVENTS for item in normalized)
+                )
+            },
+        )
         return [
             {key: value for key, value in item.items() if key not in {"track", "behaviorPayload"}}
             for item in normalized
@@ -717,7 +999,9 @@ class RecommendationService:
     ) -> dict[str, CandidateDraft]:
         """Load only previously admitted content. This serving path never calls Bilibili search."""
         candidates: dict[str, CandidateDraft] = {}
-        for candidate in self.candidate_pool.list_ready(request_spec or RequestSpec(), context_specs=context_specs):
+        for candidate in self.candidate_pool.list_ready(
+            request_spec or RequestSpec(), context_specs=context_specs
+        ):
             self._add_candidate(candidates, candidate.track, candidate.source)
             draft = candidates[candidate.track.track_id]
             draft.facets = candidate.facets
@@ -731,6 +1015,14 @@ class RecommendationService:
                 for evidence in candidate.evidence
                 if evidence.startswith("discovery_query:")
             )
+        vectors = self.content_embeddings.text_vectors(candidates)
+        audio_vectors = self.content_embeddings.audio_vectors(candidates)
+        for track_id, vector in vectors.items():
+            if track_id in candidates:
+                candidates[track_id].text_embedding = vector
+        for track_id, vector in audio_vectors.items():
+            if track_id in candidates:
+                candidates[track_id].audio_embedding = vector
         return candidates
 
     def _score_candidate(
@@ -747,7 +1039,9 @@ class RecommendationService:
         matched_preferences: list[str] = []
         evidence: list[str] = []
         penalties: list[str] = []
-        text = f"{track.title} {track.owner} {' '.join(draft.tags)} {' '.join(draft.profile_signals)}"
+        text = (
+            f"{track.title} {track.owner} {' '.join(draft.tags)} {' '.join(draft.profile_signals)}"
+        )
 
         if track.owner_mid and track.owner_mid in profile.frequent_owner_mids:
             score += _add_score_signal(score_signals, "frequent_owner", 3)
@@ -778,10 +1072,14 @@ class RecommendationService:
                 evidence.append("贴近你稳定偏好的听感")
 
         negative_weight = music_profile.topic_weight(text, positive=False)
-        if set((request_spec or RequestSpec()).required_genres) & set(draft.facets.get("genres") or []):
+        if set((request_spec or RequestSpec()).required_genres) & set(
+            draft.facets.get("genres") or []
+        ):
             negative_weight = 0.0
         if negative_weight:
-            score += _add_score_signal(score_signals, "negative_preference_penalty", -3 * negative_weight)
+            score += _add_score_signal(
+                score_signals, "negative_preference_penalty", -3 * negative_weight
+            )
             negative_topics = _matched_profile_topics(text, music_profile.negative_topics)
             if negative_topics:
                 penalties.append(f"命中你回避的 {'、'.join(negative_topics[:2])}")
@@ -843,6 +1141,8 @@ class RecommendationService:
             source_keyword_ids=sorted(draft.source_keyword_ids),
             source_keyword_family_ids=sorted(draft.source_keyword_family_ids),
             source_discovery_job_ids=sorted(draft.source_discovery_job_ids),
+            text_embedding=list(draft.text_embedding),
+            audio_embedding=list(draft.audio_embedding),
         )
 
     def _select_epsilon_greedy(
@@ -866,9 +1166,9 @@ class RecommendationService:
         high_selected: list[RecommendationCandidate] = []
 
         explore_pool = [
-            item for item in candidates
-            if self._is_unfamiliar(item, profile)
-            and item.source in EXPLORE_SOURCES
+            item
+            for item in candidates
+            if self._is_unfamiliar(item, profile) and item.source in EXPLORE_SOURCES
         ][:50]
 
         seed = f"{self.user_id}:{scene}:{datetime.now(timezone.utc).date().isoformat()}"
@@ -883,7 +1183,8 @@ class RecommendationService:
             selected_ids.add(item.track["trackId"])
 
         high_pool = [
-            item for item in candidates
+            item
+            for item in candidates
             if item.track["trackId"] not in selected_ids
             and not self._is_skipped(item, profile)
             and item.track["trackId"] not in profile.recently_recommended_track_ids
@@ -895,7 +1196,11 @@ class RecommendationService:
         if len(high_selected) < high_count:
             for item in candidates:
                 track_id = item.track["trackId"]
-                if track_id in selected_ids or self._is_skipped(item, profile) or track_id in profile.recently_recommended_track_ids:
+                if (
+                    track_id in selected_ids
+                    or self._is_skipped(item, profile)
+                    or track_id in profile.recently_recommended_track_ids
+                ):
                     continue
                 high_selected.append(item)
                 selected_ids.add(track_id)
@@ -913,17 +1218,19 @@ class RecommendationService:
         request_scoped_limit: int | None = 2,
     ) -> list[RecommendationCandidate]:
         uploader_limit = (
-            same_uploader_limit
-            if same_uploader_limit > 0
-            else SERVICE_DEFAULT_SAME_UPLOADER_LIMIT
+            same_uploader_limit if same_uploader_limit > 0 else SERVICE_DEFAULT_SAME_UPLOADER_LIMIT
         )
         uploader_counts: dict[str, int] = {}
         artist_counts: dict[str, int] = {}
+        selected_work_ids: set[str] = set()
         contextual_count = 0
         selected: list[RecommendationCandidate] = []
         for item in candidates:
             uploader = str(item.track.get("ownerMid") or item.track.get("owner") or "")
             artist_keys = _candidate_artist_keys(item)
+            work_id = str(item.track.get("workId") or "")
+            if work_id and work_id in selected_work_ids:
+                continue
             if uploader and uploader_counts.get(uploader, 0) >= uploader_limit:
                 continue
             if any(
@@ -942,6 +1249,8 @@ class RecommendationService:
                 uploader_counts[uploader] = uploader_counts.get(uploader, 0) + 1
             for artist in artist_keys:
                 artist_counts[artist] = artist_counts.get(artist, 0) + 1
+            if work_id:
+                selected_work_ids.add(work_id)
             if item.scope_kind == "request":
                 contextual_count += 1
             if len(selected) >= limit:
@@ -956,7 +1265,8 @@ class RecommendationService:
         legacy_profile: UserProfile,
     ) -> list[RecommendationCandidate]:
         return [
-            item for item in candidates
+            item
+            for item in candidates
             if not RecommendationService._is_hard_filtered(item, profile, legacy_profile)
         ]
 
@@ -969,6 +1279,9 @@ class RecommendationService:
         track_id = str(item.track.get("trackId") or "")
         if track_id in legacy_profile.skipped_track_ids:
             return True
+        recording_id = str(item.track.get("recordingId") or "")
+        if recording_id and recording_id in legacy_profile.skipped_recording_ids:
+            return True
         if not RecommendationService._is_music_candidate(item, legacy_profile):
             return True
         owner_mid = _candidate_owner_mid(item)
@@ -977,7 +1290,10 @@ class RecommendationService:
             | set(getattr(legacy_profile, "liked_owner_mids", set()))
             | set(getattr(legacy_profile, "completed_owner_mids", set()))
         )
-        if owner_mid in set(getattr(legacy_profile, "negative_owner_mids", set())) and owner_mid not in trusted_owner_mids:
+        if (
+            owner_mid in set(getattr(legacy_profile, "negative_owner_mids", set()))
+            and owner_mid not in trusted_owner_mids
+        ):
             return True
         uploader = str(item.track.get("ownerMid") or item.track.get("owner") or "")
         return profile.hard_blocked_uploader(uploader) or profile.avoided_uploader(uploader)
@@ -1006,15 +1322,22 @@ class RecommendationService:
     @staticmethod
     def _is_unfamiliar(item: RecommendationCandidate, profile: UserProfile) -> bool:
         track_id = item.track["trackId"]
+        recording_id = str(item.track.get("recordingId") or "")
+        work_id = str(item.track.get("workId") or "")
         return (
             track_id not in profile.recently_heard_track_ids
             and track_id not in profile.recently_recommended_track_ids
             and track_id not in profile.skipped_track_ids
+            and (not recording_id or recording_id not in profile.recently_heard_recording_ids)
+            and (not work_id or work_id not in profile.recently_recommended_work_ids)
         )
 
     @staticmethod
     def _is_skipped(item: RecommendationCandidate, profile: UserProfile) -> bool:
-        return item.track["trackId"] in profile.skipped_track_ids
+        recording_id = str(item.track.get("recordingId") or "")
+        return item.track["trackId"] in profile.skipped_track_ids or (
+            bool(recording_id) and recording_id in profile.skipped_recording_ids
+        )
 
     def _load_user_profile(self) -> UserProfile:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=RECENT_LISTEN_DAYS)).isoformat()
@@ -1144,6 +1467,63 @@ class RecommendationService:
                     (self.user_id, self.user_id, self.user_id),
                 ).fetchall()
             }
+            profile.recently_heard_recording_ids = {
+                str(row["recording_id"])
+                for row in conn.execute(
+                    """
+                    SELECT DISTINCT t.recording_id
+                    FROM tracks t
+                    WHERE t.recording_id IS NOT NULL AND t.track_id IN (
+                        SELECT track_id FROM recent
+                        WHERE user_id=? AND last_played_at>=?
+                        UNION
+                        SELECT track_id FROM playback_recent
+                        WHERE user_id=? AND last_played_at>=?
+                    )
+                    """,
+                    (self.user_id, cutoff, self.user_id, cutoff),
+                ).fetchall()
+                if row["recording_id"]
+            }
+            profile.recently_recommended_work_ids = {
+                str(row["work_id"])
+                for row in conn.execute(
+                    """
+                    SELECT DISTINCT t.work_id
+                    FROM tracks t
+                    WHERE t.work_id IS NOT NULL AND t.track_id IN (
+                        SELECT track_id FROM recommendation_history
+                        WHERE user_id=? AND recommended_at>=?
+                        UNION
+                        SELECT track_id FROM recommendation_events
+                        WHERE user_id=? AND event='shown' AND created_at>=?
+                    )
+                    """,
+                    (self.user_id, recommend_cutoff, self.user_id, recommend_cutoff),
+                ).fetchall()
+                if row["work_id"]
+            }
+            profile.skipped_recording_ids = {
+                str(row["recording_id"])
+                for row in conn.execute(
+                    """
+                    SELECT DISTINCT t.recording_id
+                    FROM tracks t
+                    WHERE t.recording_id IS NOT NULL AND t.track_id IN (
+                        SELECT track_id FROM playback_recent
+                        WHERE user_id=? AND skipped=1
+                        UNION
+                        SELECT track_id FROM recommendation_history
+                        WHERE user_id=? AND skipped=1
+                        UNION
+                        SELECT track_id FROM recommendation_events
+                        WHERE user_id=? AND event IN ('skipped', 'dismissed', 'dislike')
+                    )
+                    """,
+                    (self.user_id, self.user_id, self.user_id),
+                ).fetchall()
+                if row["recording_id"]
+            }
             profile.negative_owner_mids = {
                 int(row["owner_mid"])
                 for row in conn.execute(
@@ -1189,14 +1569,32 @@ class RecommendationService:
             source="fallback",
         )
         with get_connection(self.db_path) as conn:
-            row = conn.execute("SELECT profile_json FROM music_profile_snapshots WHERE user_id = ?", (self.user_id,)).fetchone()
+            row = conn.execute(
+                "SELECT profile_json FROM music_profile_snapshots WHERE user_id = ?",
+                (self.user_id,),
+            ).fetchone()
         if row is None:
             return fallback
         stored = _json_loads(row["profile_json"])
         snapshot = MusicProfile.from_dict(stored, source="profile_snapshot")
-        for name in ("positive_topics", "negative_topics", "preferred_uploaders", "avoid_uploaders", "blocked_uploaders", "mood_weights"):
+        for name in (
+            "positive_topics",
+            "negative_topics",
+            "preferred_uploaders",
+            "avoid_uploaders",
+            "blocked_uploaders",
+            "mood_weights",
+        ):
             getattr(fallback, name).update(getattr(snapshot, name))
-        for name in ("mbti", "music_persona", "current_music_phase", "core_traits", "psychological_needs", "persona_evidence", "persona_confidence"):
+        for name in (
+            "mbti",
+            "music_persona",
+            "current_music_phase",
+            "core_traits",
+            "psychological_needs",
+            "persona_evidence",
+            "persona_confidence",
+        ):
             value = getattr(snapshot, name)
             if value:
                 setattr(fallback, name, value)
@@ -1356,10 +1754,12 @@ class RecommendationService:
         selected: list[RecommendationCandidate],
         request_spec: RequestSpec,
         timing: dict[str, Any],
+        experiments: dict[str, str],
+        trace_id: str | None = None,
     ) -> str:
         created_at = _utc_now()
         timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        trace_id = f"recommend:{self.user_id}:{scene}:{timestamp_ms}:{uuid4().hex[:8]}"
+        trace_id = trace_id or f"recommend:{self.user_id}:{scene}:{timestamp_ms}:{uuid4().hex[:8]}"
         for candidate in selected:
             candidate.recommendation_trace_id = trace_id
         payload = {
@@ -1376,6 +1776,7 @@ class RecommendationService:
             "musicProfile": music_profile.to_dict(),
             "requestSpec": request_spec.to_dict(),
             "timing": timing,
+            "experiments": experiments,
             "candidatePool": {
                 "searchQueries": agent_queries,
                 "availableCandidateCount": max(local_candidate_count, 0),
@@ -1387,14 +1788,8 @@ class RecommendationService:
                 "agentCandidateCount": 0,
                 "agentCandidates": [],
             },
-            "rerankedCandidates": [
-                _candidate_to_trace(candidate)
-                for candidate in reranked[:40]
-            ],
-            "finalResults": [
-                _candidate_to_trace(candidate)
-                for candidate in selected
-            ],
+            "rerankedCandidates": [_candidate_to_trace(candidate) for candidate in reranked[:40]],
+            "finalResults": [_candidate_to_trace(candidate) for candidate in selected],
         }
         with get_connection(self.db_path) as conn:
             conn.execute(
@@ -1415,6 +1810,38 @@ class RecommendationService:
                     created_at,
                 ),
             )
+            policy_json = json.dumps(
+                {
+                    "experiments": experiments,
+                    "scene": scene,
+                    "profileVersion": profile_version,
+                    "requestSpec": request_spec.to_dict(),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            for rank_position, candidate in enumerate(selected, start=1):
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO recommendation_impressions (
+                        recommendation_trace_id, user_id, track_id, rank_position,
+                        score, score_signals_json, candidate_snapshot_json,
+                        policy_json, selection_propensity, shown_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        trace_id,
+                        self.user_id,
+                        str(candidate.track.get("trackId") or ""),
+                        rank_position,
+                        float(candidate.score),
+                        json.dumps(candidate.score_signals, ensure_ascii=False, sort_keys=True),
+                        json.dumps(_candidate_to_trace(candidate), ensure_ascii=False),
+                        policy_json,
+                        None,
+                        created_at,
+                    ),
+                )
             for candidate in selected:
                 keyword_ids = list(dict.fromkeys(candidate.source_keyword_ids))
                 if not keyword_ids:
@@ -1425,8 +1852,7 @@ class RecommendationService:
                     tuple(keyword_ids),
                 ).fetchall()
                 family_by_keyword = {
-                    str(row["keyword_id"]): str(row["family_id"] or "")
-                    for row in family_rows
+                    str(row["keyword_id"]): str(row["family_id"] or "") for row in family_rows
                 }
                 credit_weight = 1.0 / max(len(keyword_ids), 1)
                 for keyword_id in keyword_ids:
@@ -1671,6 +2097,11 @@ def _candidate_to_trace(candidate: RecommendationCandidate) -> dict[str, Any]:
         "title": track.get("title"),
         "owner": track.get("owner"),
         "ownerMid": track.get("ownerMid"),
+        "workId": track.get("workId"),
+        "recordingId": track.get("recordingId"),
+        "canonicalTitle": track.get("canonicalTitle"),
+        "canonicalArtist": track.get("canonicalArtist"),
+        "versionType": track.get("versionType"),
         "score": round(candidate.score, 4),
         "source": candidate.source,
         "reason": candidate.reason,

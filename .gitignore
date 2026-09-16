@@ -9,5 +9,7 @@ dist/
 build/
 *.egg-info/
 tests/
+!recommend-radio/backend/tests/
+!recommend-radio/backend/tests/*.py
 examples/
 benchmarks/

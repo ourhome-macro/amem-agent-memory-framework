@@ -1,4 +1,13 @@
 services:
+  rabbitmq:
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_VHOST:-/}
+    ports: !reset []
+    expose:
+      - "5672"
+
   backend:
     environment:
       AUTH_MODE: oidc
@@ -7,6 +16,13 @@ services:
       SESSION_COOKIE_SECURE: "true"
       GRAFANA_PUBLIC_URL: https://${APP_DOMAIN:?Set APP_DOMAIN in .env}/grafana/
       SSE_INTERNAL_TOKEN: ${SSE_INTERNAL_TOKEN:?Set SSE_INTERNAL_TOKEN in .env}
+      RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+
+  behavior-worker:
+    environment:
+      RABBITMQ_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
 
   frontend:
     ports: !reset []
