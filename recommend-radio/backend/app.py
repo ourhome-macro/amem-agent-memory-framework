@@ -13,7 +13,7 @@ from uuid import uuid4
 import click
 import requests
 from admin_service import AdminService
-from amem_bridge import record_music_behavior
+from amem_bridge import record_music_behavior as _record_music_behavior
 from amem_runtime import build_amem_runtime
 from analysis_service import AnalysisService
 from auth_service import AuthService
@@ -24,8 +24,9 @@ from dialogue_service import MusicDialogueService
 from dialogue_task_service import DialogueTaskService
 from env_loader import load_recommend_radio_env
 from error_code import APIError, ErrorCode
-from flask import Flask, Response, copy_current_request_context, g, has_request_context, request
+from flask import Flask, Response, g, has_request_context, request
 from flask_cors import CORS
+from full_trace import load_trace_tree
 from identity_service import IdentityService
 from library_service import LibraryService
 from models import Track, make_track_id, normalize_bvid
@@ -44,53 +45,59 @@ from request_spec import RequestInterpreter
 from requests.adapters import HTTPAdapter
 from result import Result
 from settings_service import SettingsService
-from stream_service import StreamService
 from sse_event_client import SSEEventPublisher
+from stream_service import StreamService
+from trace_metrics import summarize_traces
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 load_recommend_radio_env()
 
+
+def record_music_behavior(*args, **kwargs):
+    # Library/playback methods persist behavior in their own business transaction.
+    from rabbitmq_bus import rabbitmq_enabled
+    if not rabbitmq_enabled():
+        return _record_music_behavior(*args, **kwargs)
+
 app = Flask(__name__)
-app.secret_key = os.getenv('APP_SECRET_KEY') or secrets.token_urlsafe(48)
-_secure_cookie_default = os.getenv('AUTH_MODE', 'disabled').strip().lower() == 'oidc'
-_secure_cookie_value = os.getenv('SESSION_COOKIE_SECURE')
+app.secret_key = os.getenv("APP_SECRET_KEY") or secrets.token_urlsafe(48)
+_secure_cookie_default = os.getenv("AUTH_MODE", "disabled").strip().lower() == "oidc"
+_secure_cookie_value = os.getenv("SESSION_COOKIE_SECURE")
 app.config.update(
-    SESSION_COOKIE_NAME='br_oidc_flow',
+    SESSION_COOKIE_NAME="br_oidc_flow",
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=(
         _secure_cookie_default
         if _secure_cookie_value is None
-        else _secure_cookie_value.strip().lower() in {'1', 'true', 'yes', 'on'}
+        else _secure_cookie_value.strip().lower() in {"1", "true", "yes", "on"}
     ),
 )
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 cors_origins = [
-    origin.strip()
-    for origin in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
-    if origin.strip()
+    origin.strip() for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if origin.strip()
 ]
 if _secure_cookie_default and cors_origins:
-    allow_http = os.getenv('OIDC_ALLOW_HTTP', '').strip().lower() in {'1', 'true', 'yes', 'on'}
+    allow_http = os.getenv("OIDC_ALLOW_HTTP", "").strip().lower() in {"1", "true", "yes", "on"}
     for origin in cors_origins:
         parsed_origin = urlparse(origin)
         if (
-            '*' in origin
-            or parsed_origin.scheme not in ({'https', 'http'} if allow_http else {'https'})
+            "*" in origin
+            or parsed_origin.scheme not in ({"https", "http"} if allow_http else {"https"})
             or not parsed_origin.hostname
-            or parsed_origin.path not in {'', '/'}
+            or parsed_origin.path not in {"", "/"}
             or parsed_origin.query
             or parsed_origin.fragment
         ):
-            raise RuntimeError('CORS_ALLOWED_ORIGINS must contain exact HTTPS origins')
+            raise RuntimeError("CORS_ALLOWED_ORIGINS must contain exact HTTPS origins")
 if cors_origins:
     CORS(
         app,
         origins=cors_origins,
         supports_credentials=True,
-        expose_headers=['X-Request-ID', 'Server-Timing'],
+        expose_headers=["X-Request-ID", "Server-Timing"],
     )
 
 init_db()
@@ -98,15 +105,13 @@ identity_service = IdentityService()
 oidc_auth = OIDCAuth(app, identity_service)
 if oidc_auth.enabled:
     configured_hosts = {
-        host.strip()
-        for host in os.getenv('APP_TRUSTED_HOSTS', '').split(',')
-        if host.strip()
+        host.strip() for host in os.getenv("APP_TRUSTED_HOSTS", "").split(",") if host.strip()
     }
-    configured_hosts.update({'127.0.0.1', 'localhost', 'backend'})
+    configured_hosts.update({"127.0.0.1", "localhost", "backend"})
     external_hostname = urlparse(oidc_auth.external_url).hostname
     if external_hostname:
         configured_hosts.add(external_hostname)
-    app.config['TRUSTED_HOSTS'] = sorted(configured_hosts)
+    app.config["TRUSTED_HOSTS"] = sorted(configured_hosts)
 auth_service = AuthService()
 library_service = LibraryService()
 playback_service = PlaybackService()
@@ -119,9 +124,9 @@ admin_service = AdminService()
 
 def _request_user_id_or_legacy() -> str:
     if has_request_context():
-        user = getattr(g, 'current_user', None)
+        user = getattr(g, "current_user", None)
         if user:
-            return str(user['id'])
+            return str(user["id"])
     return LEGACY_OWNER_USER_ID
 
 
@@ -137,30 +142,32 @@ def _request_service(attribute: str, legacy_service: Any, factory):
 
 
 def _auth_for_request() -> AuthService:
-    return _request_service('_auth_service', auth_service, lambda user_id: AuthService(user_id=user_id))
+    return _request_service(
+        "_auth_service", auth_service, lambda user_id: AuthService(user_id=user_id)
+    )
 
 
 def _library_for_request() -> LibraryService:
     return _request_service(
-        '_library_service', library_service, lambda user_id: LibraryService(user_id=user_id)
+        "_library_service", library_service, lambda user_id: LibraryService(user_id=user_id)
     )
 
 
 def _playback_for_request() -> PlaybackService:
     return _request_service(
-        '_playback_service', playback_service, lambda user_id: PlaybackService(user_id=user_id)
+        "_playback_service", playback_service, lambda user_id: PlaybackService(user_id=user_id)
     )
 
 
 def _queue_for_request() -> PlayerQueueService:
     return _request_service(
-        '_queue_service', queue_service, lambda user_id: PlayerQueueService(user_id=user_id)
+        "_queue_service", queue_service, lambda user_id: PlayerQueueService(user_id=user_id)
     )
 
 
 def _recommendations_for_request() -> RecommendationService:
     return _request_service(
-        '_recommendation_service',
+        "_recommendation_service",
         recommendation_service,
         lambda user_id: RecommendationService(
             user_id=user_id,
@@ -173,7 +180,7 @@ def _recommendations_for_request() -> RecommendationService:
 
 def _dialogue_for_request() -> MusicDialogueService:
     return _request_service(
-        '_dialogue_service',
+        "_dialogue_service",
         dialogue_service,
         lambda user_id: MusicDialogueService(
             user_id=user_id,
@@ -184,13 +191,13 @@ def _dialogue_for_request() -> MusicDialogueService:
 
 def _settings_for_request() -> SettingsService:
     return _request_service(
-        '_settings_service', settings_service, lambda user_id: SettingsService(user_id=user_id)
+        "_settings_service", settings_service, lambda user_id: SettingsService(user_id=user_id)
     )
 
 
 def _analysis_for_request() -> AnalysisService:
     return _request_service(
-        '_analysis_service', analysis_service, lambda user_id: AnalysisService(user_id=user_id)
+        "_analysis_service", analysis_service, lambda user_id: AnalysisService(user_id=user_id)
     )
 
 
@@ -206,7 +213,7 @@ dialogue_task_service = DialogueTaskService(SSEEventPublisher())
 stream_service = StreamService(bili_client)
 register_monitoring(app, user_stats_provider=admin_service.monitoring_user_stats)
 
-_REQUEST_ID_PATTERN = re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _IMAGE_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _image_session = requests.Session()
 _image_adapter = HTTPAdapter(
@@ -215,16 +222,22 @@ _image_adapter = HTTPAdapter(
     max_retries=0,
     pool_block=True,
 )
-_image_session.mount('http://', _image_adapter)
-_image_session.mount('https://', _image_adapter)
+_image_session.mount("http://", _image_adapter)
+_image_session.mount("https://", _image_adapter)
 
 
-_PUBLIC_API_ENDPOINTS = {'session_me', 'session_login', 'session_callback'}
-_UNSAFE_METHODS = {'POST', 'PUT', 'PATCH', 'DELETE'}
+_PUBLIC_API_ENDPOINTS = {"session_me", "session_login", "session_callback"}
+_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 def _close_runtime_clients() -> None:
-    for client in (dialogue_task_service, stream_service, _image_session, bili_client):
+    for client in (
+        amem_bridge,
+        dialogue_task_service,
+        stream_service,
+        _image_session,
+        bili_client,
+    ):
         try:
             client.close()
         except Exception:
@@ -235,41 +248,41 @@ atexit.register(_close_runtime_clients)
 
 
 def resolve_bind_host(*, auth_enabled: bool = oidc_auth.enabled) -> str:
-    configured_host = os.getenv('APP_BIND_HOST') or os.getenv('APP_DEV_HOST')
+    configured_host = os.getenv("APP_BIND_HOST") or os.getenv("APP_DEV_HOST")
     if configured_host:
         return configured_host.strip()
-    return '127.0.0.1' if not auth_enabled else Server.HOST
+    return "127.0.0.1" if not auth_enabled else Server.HOST
 
 
 def resolve_bind_port() -> int:
-    configured_port = os.getenv('APP_BIND_PORT') or os.getenv('PORT')
+    configured_port = os.getenv("APP_BIND_PORT") or os.getenv("PORT")
     if not configured_port:
         return Server.PORT
     try:
         port = int(configured_port)
     except ValueError as exc:
-        raise RuntimeError('APP_BIND_PORT must be an integer') from exc
+        raise RuntimeError("APP_BIND_PORT must be an integer") from exc
     if port < 1 or port > 65535:
-        raise RuntimeError('APP_BIND_PORT must be between 1 and 65535')
+        raise RuntimeError("APP_BIND_PORT must be between 1 and 65535")
     return port
 
 
 def enforce_loopback_binding(host: str, *, auth_enabled: bool = oidc_auth.enabled) -> None:
     if (
         not auth_enabled
-        and host not in {'127.0.0.1', '::1', 'localhost'}
-        and os.getenv('ALLOW_INSECURE_LOCAL_AUTH', '').strip().lower()
-        not in {'1', 'true', 'yes', 'on'}
+        and host not in {"127.0.0.1", "::1", "localhost"}
+        and os.getenv("ALLOW_INSECURE_LOCAL_AUTH", "").strip().lower()
+        not in {"1", "true", "yes", "on"}
     ):
         raise RuntimeError(
-            'AUTH_MODE=disabled may only bind to loopback; set '
-            'ALLOW_INSECURE_LOCAL_AUTH=1 to acknowledge the risk'
+            "AUTH_MODE=disabled may only bind to loopback; set "
+            "ALLOW_INSECURE_LOCAL_AUTH=1 to acknowledge the risk"
         )
 
 
 @app.teardown_request
 def close_request_services(_error=None):
-    scoped_auth = getattr(g, '_auth_service', None)
+    scoped_auth = getattr(g, "_auth_service", None)
     if scoped_auth is not None:
         try:
             scoped_auth.session.close()
@@ -280,46 +293,43 @@ def close_request_services(_error=None):
 @app.before_request
 def begin_request():
     g.request_started_at = time.perf_counter()
-    supplied_request_id = request.headers.get('X-Request-ID', '')
+    supplied_request_id = request.headers.get("X-Request-ID", "")
     g.request_id = (
-        supplied_request_id
-        if _REQUEST_ID_PATTERN.fullmatch(supplied_request_id)
-        else uuid4().hex
+        supplied_request_id if _REQUEST_ID_PATTERN.fullmatch(supplied_request_id) else uuid4().hex
     )
     g.app_session_token = request.cookies.get(oidc_auth.cookie_name)
     g.current_user = oidc_auth.current_user(g.app_session_token)
 
-    if not request.path.startswith('/api/') or request.endpoint in _PUBLIC_API_ENDPOINTS:
+    if not request.path.startswith("/api/") or request.endpoint in _PUBLIC_API_ENDPOINTS:
         return None
-    if request.method == 'OPTIONS':
+    if request.method == "OPTIONS":
         return None
     if g.current_user is None:
-        raise APIError.auth_required('Application login is required')
+        raise APIError.auth_required("Application login is required")
     if request.method in _UNSAFE_METHODS and oidc_auth.enabled:
-        csrf_token = request.headers.get('X-CSRF-Token')
+        csrf_token = request.headers.get("X-CSRF-Token")
         if not oidc_auth.validate_csrf(g.app_session_token, csrf_token):
-            raise APIError.forbidden('CSRF validation failed')
+            raise APIError.forbidden("CSRF validation failed")
     return None
 
 
 @app.after_request
 def complete_request(response: Response):
-    request_id = getattr(g, 'request_id', uuid4().hex)
+    request_id = getattr(g, "request_id", uuid4().hex)
     headers_ms = max(
         0.0,
-        (time.perf_counter() - getattr(g, 'request_started_at', time.perf_counter()))
-        * 1_000,
+        (time.perf_counter() - getattr(g, "request_started_at", time.perf_counter())) * 1_000,
     )
-    response.headers['X-Request-ID'] = request_id
-    if request.endpoint in {'session_me', 'session_callback', 'session_logout'}:
-        response.headers['Cache-Control'] = 'no-store'
-    app_timing = f'app_headers;dur={headers_ms:.1f}'
-    existing_timing = response.headers.get('Server-Timing')
-    response.headers['Server-Timing'] = (
-        f'{existing_timing}, {app_timing}' if existing_timing else app_timing
+    response.headers["X-Request-ID"] = request_id
+    if request.endpoint in {"session_me", "session_callback", "session_logout"}:
+        response.headers["Cache-Control"] = "no-store"
+    app_timing = f"app_headers;dur={headers_ms:.1f}"
+    existing_timing = response.headers.get("Server-Timing")
+    response.headers["Server-Timing"] = (
+        f"{existing_timing}, {app_timing}" if existing_timing else app_timing
     )
     app.logger.info(
-        'http_request request_id=%s method=%s path=%s status=%s headers_ms=%.1f',
+        "http_request request_id=%s method=%s path=%s status=%s headers_ms=%.1f",
         request_id,
         request.method,
         request.path,
@@ -349,82 +359,85 @@ def handle_http_exception(error: HTTPException):
 @app.errorhandler(Exception)
 def handle_unexpected_error(error: Exception):
     app.logger.exception(
-        'Unhandled server error request_id=%s: %s',
-        getattr(g, 'request_id', '-'),
+        "Unhandled server error request_id=%s: %s",
+        getattr(g, "request_id", "-"),
         error,
     )
-    return Result.server_error('Internal server error', code=ErrorCode.UNKNOWN_ERROR.name)
+    return Result.server_error("Internal server error", code=ErrorCode.UNKNOWN_ERROR.name)
 
 
 def require_admin(handler):
     @wraps(handler)
     def wrapped(*args, **kwargs):
-        user = getattr(g, 'current_user', None)
-        if not user or user.get('role') != 'admin':
-            raise APIError.forbidden('Administrator access is required')
+        user = getattr(g, "current_user", None)
+        if not user or user.get("role") != "admin":
+            raise APIError.forbidden("Administrator access is required")
         return handler(*args, **kwargs)
 
     return wrapped
 
 
-@app.get('/health/live')
+@app.get("/health/live")
 def health_live():
-    return Result.ok({'status': 'ok'}).json()
+    return Result.ok({"status": "ok"}).json()
 
 
-@app.get('/health/ready')
+@app.get("/health/ready")
 def health_ready():
     with get_connection() as conn:
-        conn.execute('SELECT 1').fetchone()
-    return Result.ok({'status': 'ready'}).json()
+        conn.execute("SELECT 1").fetchone()
+    behavior_bus_health = getattr(amem_bridge, "behavior_bus_health", None)
+    if callable(behavior_bus_health):
+        behavior_bus_health()
+    return Result.ok({"status": "ready"}).json()
 
 
-@app.get('/api/session/me')
+@app.get("/api/session/me")
 def session_me():
-    user = getattr(g, 'current_user', None)
+    user = getattr(g, "current_user", None)
     if user is None:
         return Result.ok(
             {
-                'authenticated': False,
-                'user': None,
-                'csrfToken': None,
-                'oidcEnabled': oidc_auth.enabled,
-                'biliConnected': False,
+                "authenticated": False,
+                "user": None,
+                "csrfToken": None,
+                "oidcEnabled": oidc_auth.enabled,
+                "biliConnected": False,
             }
         ).json()
     bili_status = _auth_for_request().get_status(refresh=False)
     return Result.ok(
         {
-            'authenticated': True,
-            'user': user,
-            'csrfToken': oidc_auth.csrf_token(getattr(g, 'app_session_token', None)),
-            'oidcEnabled': oidc_auth.enabled,
-            'biliConnected': bool(bili_status.get('isLoggedIn')),
+            "authenticated": True,
+            "user": user,
+            "csrfToken": oidc_auth.csrf_token(getattr(g, "app_session_token", None)),
+            "oidcEnabled": oidc_auth.enabled,
+            "biliConnected": bool(bili_status.get("isLoggedIn")),
         }
     ).json()
 
 
-@app.get('/api/session/login')
+@app.get("/api/session/login")
 def session_login():
-    return oidc_auth.begin_login(request.args.get('next'))
+    return oidc_auth.begin_login(request.args.get("next"))
 
 
-@app.get('/api/session/callback')
+@app.get("/api/session/callback")
 def session_callback():
     try:
         response, _raw_session, _user = oidc_auth.finish_login()
     except Exception:
-        record_auth_event('oidc_login', 'error')
+        record_auth_event("oidc_login", "error")
         raise
-    record_auth_event('oidc_login', 'success')
+    record_auth_event("oidc_login", "success")
     return response
 
 
-@app.post('/api/session/logout')
+@app.post("/api/session/logout")
 def session_logout():
-    response = Result.ok({'loggedOut': True}).json()
-    oidc_auth.logout(response, getattr(g, 'app_session_token', None))
-    record_auth_event('oidc_logout', 'success')
+    response = Result.ok({"loggedOut": True}).json()
+    oidc_auth.logout(response, getattr(g, "app_session_token", None))
+    record_auth_event("oidc_logout", "success")
     return response
 
 
@@ -562,7 +575,7 @@ def get_audio_stream(bvid: str, cid: int):
 
 @app.get("/api/player/status")
 def get_player_status():
-    return Result.ok({'has_video': False, 'video_info': None}).json()
+    return Result.ok({"has_video": False, "video_info": None}).json()
 
 
 @app.route("/api/player/queue", methods=["GET", "PUT", "DELETE"])
@@ -588,7 +601,7 @@ def stop_player():
 
 @app.get("/api/stream/<bvid>")
 def stream_audio_legacy(bvid: str):
-    cid = request.args.get('cid', type=int)
+    cid = request.args.get("cid", type=int)
     return stream_service.proxy_stream(bvid, cid=cid, quality=request.args.get("quality", "auto"))
 
 
@@ -653,7 +666,7 @@ def add_like(bvid: str):
         track=track,
         scene="library",
     )
-    record_playback_metric('favorite')
+    record_playback_metric("favorite")
     return Result.ok(result).json()
 
 
@@ -848,7 +861,10 @@ def import_favorite_to_playlist(playlist_id: str):
 
 @app.post("/api/playback/events")
 def record_playback_event():
-    result = _playback_for_request().record_event(_json_body())
+    payload = _json_body()
+    if request.headers.get('Idempotency-Key'):
+        payload['eventId'] = request.headers['Idempotency-Key']
+    result = _playback_for_request().record_event(payload)
     track = _library_for_request().get_track(str(result.get("trackId") or ""))
     record_music_behavior(
         amem_bridge,
@@ -870,12 +886,12 @@ def record_playback_event():
             "skipped": result.get("skipped"),
         },
     )
-    if result.get('completed'):
-        record_playback_event_metric = 'complete'
-    elif result.get('skipped'):
-        record_playback_event_metric = 'skip'
-    elif result.get('event') in {'start', 'play'}:
-        record_playback_event_metric = 'play'
+    if result.get("completed"):
+        record_playback_event_metric = "complete"
+    elif result.get("skipped"):
+        record_playback_event_metric = "skip"
+    elif result.get("event") in {"start", "play"}:
+        record_playback_event_metric = "play"
     else:
         record_playback_event_metric = None
     if record_playback_event_metric:
@@ -937,7 +953,9 @@ def latest_recommendation_debug_trace():
 
 @app.post("/api/recommendations/events")
 def record_recommendation_event():
-    return Result.ok(_recommendations_for_request().record_event(_json_body())).json_with_status(202)
+    return Result.ok(_recommendations_for_request().record_event(_json_body())).json_with_status(
+        202
+    )
 
 
 @app.get("/api/profile/music")
@@ -949,7 +967,9 @@ def music_profile_analysis():
 @app.post("/api/profile/music/backfill")
 def backfill_music_profile_memories():
     limit = _int_arg("limit", 80)
-    return Result.ok(_recommendations_for_request().backfill_music_memories(limit=limit)).json_with_status(202)
+    return Result.ok(
+        _recommendations_for_request().backfill_music_memories(limit=limit)
+    ).json_with_status(202)
 
 
 @app.post("/api/profile/music/statement")
@@ -1008,18 +1028,6 @@ def submit_agent_dialogue_task():
     session_id = payload.get("sessionId")
     context_card_id = payload.get("contextCardId")
     context_track_id = payload.get("contextTrackId")
-    captured_user = dict(g.current_user) if getattr(g, "current_user", None) else None
-    captured_session_token = getattr(g, "app_session_token", None)
-
-    def preserve_request_identity(callback):
-        @copy_current_request_context
-        def wrapped():
-            g.current_user = captured_user
-            g.app_session_token = captured_session_token
-            callback()
-
-        return wrapped
-
     try:
         result = dialogue_task_service.submit(
             service=_dialogue_for_request(),
@@ -1028,13 +1036,27 @@ def submit_agent_dialogue_task():
             session_id=str(session_id) if session_id else None,
             context_card_id=str(context_card_id) if context_card_id else None,
             context_track_id=str(context_track_id) if context_track_id else None,
-            request_runner=preserve_request_identity,
+            idempotency_key=request.headers.get('Idempotency-Key'),
         )
     except ValueError as exc:
         return Result.bad_request(str(exc))
     except KeyError:
         return Result.not_found("dialogue card or session not found")
     return Result.ok(result).json_with_status(202)
+
+
+@app.get('/api/agent/dialogue/tasks/<path:task_id>')
+def dialogue_task_status(task_id: str):
+    import json
+    with get_connection() as conn:
+        row = conn.execute("""SELECT status,result_json,error FROM durable_jobs
+            WHERE job_id=? AND user_id=? AND kind='dialogue'""",
+            (task_id,_request_user_id_or_legacy())).fetchone()
+    if row is None:
+        return Result.not_found('task not found')
+    return Result.ok({'taskId': task_id, 'status': row['status'],
+                      'result': json.loads(row['result_json'] or 'null'),
+                      'error': row['error']}).json()
 
 
 @app.post("/api/agent/dialogue/undo")
@@ -1088,10 +1110,10 @@ def auth_qrcode_status():
     payload = _json_body()
     qrcode_key = payload.get("qrcodeKey") or payload.get("qrcode_key") or ""
     result = _auth_for_request().poll_qrcode(qrcode_key)
-    if result.get('status') == 'confirmed':
-        record_auth_event('bilibili_qr', 'success')
-    elif result.get('status') == 'expired':
-        record_auth_event('bilibili_qr', 'expired')
+    if result.get("status") == "confirmed":
+        record_auth_event("bilibili_qr", "success")
+    elif result.get("status") == "expired":
+        record_auth_event("bilibili_qr", "expired")
     return Result.ok(result).json()
 
 
@@ -1129,7 +1151,9 @@ def list_bili_favorites():
 def list_bili_favorite_tracks(media_id: int):
     page = _int_arg("page", 1)
     page_size = _int_arg("page_size", _int_arg("pageSize", 20))
-    return Result.ok(bili_client.list_favorite_tracks(media_id, page=page, page_size=page_size)).json()
+    return Result.ok(
+        bili_client.list_favorite_tracks(media_id, page=page, page_size=page_size)
+    ).json()
 
 
 @app.get("/api/bili/users/<int:mid>/profile")
@@ -1183,58 +1207,72 @@ def update_audio_quality_preference():
     ).json()
 
 
-@app.get('/api/admin/stats/summary')
+@app.get("/api/admin/stats/summary")
 @require_admin
 def admin_stats_summary():
-    return Result.ok(admin_service.summary(request.args.get('range', '7d'))).json()
+    return Result.ok(admin_service.summary(request.args.get("range", "7d"))).json()
 
 
-@app.post('/api/admin/genshin')
-def toggle_owner_admin_easter_egg():
-    user = getattr(g, 'current_user', None)
-    if (
-        not user
-        or user.get('id') != LEGACY_OWNER_USER_ID
-        or (
-            oidc_auth.enabled
-            and (not user.get('issuer') or not user.get('subject'))
-        )
-    ):
-        raise APIError.forbidden('This easter egg belongs to the local owner')
-    updated = admin_service.toggle_owner_admin(
-        user['id'],
-        actor_user_id=user['id'],
-        request_id=getattr(g, 'request_id', None),
-    )
-    return Result.ok(updated).json()
-
-
-@app.get('/api/admin/users')
+@app.get("/api/admin/evaluations/traces/<path:trace_id>")
 @require_admin
-def admin_users():
+def admin_evaluation_trace(trace_id: str):
+    return Result.ok(load_trace_tree(str(admin_service.db_path), trace_id)).json()
+
+
+@app.get("/api/admin/evaluations/metrics")
+@require_admin
+def admin_evaluation_metrics():
     return Result.ok(
-        admin_service.list_users(
-            page=_int_arg('page', 1),
-            page_size=_int_arg('pageSize', _int_arg('page_size', 20)),
+        summarize_traces(
+            str(admin_service.db_path),
+            since=request.args.get("since") or None,
         )
     ).json()
 
 
-@app.patch('/api/admin/users/<user_id>/role')
+@app.post("/api/admin/genshin")
+def toggle_owner_admin_easter_egg():
+    user = getattr(g, "current_user", None)
+    if (
+        not user
+        or user.get("id") != LEGACY_OWNER_USER_ID
+        or (oidc_auth.enabled and (not user.get("issuer") or not user.get("subject")))
+    ):
+        raise APIError.forbidden("This easter egg belongs to the local owner")
+    updated = admin_service.toggle_owner_admin(
+        user["id"],
+        actor_user_id=user["id"],
+        request_id=getattr(g, "request_id", None),
+    )
+    return Result.ok(updated).json()
+
+
+@app.get("/api/admin/users")
+@require_admin
+def admin_users():
+    return Result.ok(
+        admin_service.list_users(
+            page=_int_arg("page", 1),
+            page_size=_int_arg("pageSize", _int_arg("page_size", 20)),
+        )
+    ).json()
+
+
+@app.patch("/api/admin/users/<user_id>/role")
 @require_admin
 def admin_update_user_role(user_id: str):
     user = admin_service.set_role(
         user_id,
-        str(_json_body().get('role') or ''),
+        str(_json_body().get("role") or ""),
         actor_user_id=_request_user_id_or_legacy(),
-        request_id=getattr(g, 'request_id', None),
+        request_id=getattr(g, "request_id", None),
     )
     return Result.ok(user).json()
 
 
-@app.cli.command('claim-legacy-owner')
-@click.option('--issuer', required=True, help='Exact OIDC issuer URL.')
-@click.option('--subject', required=True, help='Exact OIDC subject identifier.')
+@app.cli.command("claim-legacy-owner")
+@click.option("--issuer", required=True, help="Exact OIDC issuer URL.")
+@click.option("--subject", required=True, help="Exact OIDC subject identifier.")
 def claim_legacy_owner_command(issuer: str, subject: str):
     user = identity_service.claim_legacy_owner(issuer, subject)
     click.echo(f"Claimed {user['id']} as admin for {user['issuer']} / {user['subject']}")
@@ -1334,7 +1372,9 @@ def _stream_info_payload(bvid: str, cid: Optional[int], quality: Optional[str]) 
     if resolved_cid is None:
         resolved_cid = bili_client.get_video_info(resolved_bvid).cid
     resolved_quality = quality or _settings_for_request().get_audio_quality_preference()
-    audio_info = stream_service.get_audio_info(resolved_bvid, cid=resolved_cid, quality=resolved_quality)
+    audio_info = stream_service.get_audio_info(
+        resolved_bvid, cid=resolved_cid, quality=resolved_quality
+    )
     payload = audio_info.to_dict()
     relative_url = f"/api/tracks/{resolved_bvid}/{resolved_cid}/stream?quality={resolved_quality}"
     payload.update(
@@ -1360,8 +1400,8 @@ def _proxy_image_url(image_url: str):
         "Referer": "https://www.bilibili.com/",
         "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
     }
-    request_id = getattr(g, 'request_id', '-')
-    request_started_at = getattr(g, 'request_started_at', time.perf_counter())
+    request_id = getattr(g, "request_id", "-")
+    request_started_at = getattr(g, "request_started_at", time.perf_counter())
     upstream_started_at = time.perf_counter()
     upstream = _open_image_upstream(image_url, headers)
     upstream_headers_ms = max(
@@ -1380,7 +1420,7 @@ def _proxy_image_url(image_url: str):
                 if first_chunk:
                     first_chunk = False
                     app.logger.info(
-                        'image_first_byte request_id=%s duration_ms=%.1f',
+                        "image_first_byte request_id=%s duration_ms=%.1f",
                         request_id,
                         max(0.0, (time.perf_counter() - request_started_at) * 1_000),
                     )
@@ -1388,7 +1428,7 @@ def _proxy_image_url(image_url: str):
         finally:
             upstream.close()
             app.logger.info(
-                'image_closed request_id=%s bytes=%s duration_ms=%.1f',
+                "image_closed request_id=%s bytes=%s duration_ms=%.1f",
                 request_id,
                 total_bytes,
                 max(0.0, (time.perf_counter() - request_started_at) * 1_000),
@@ -1397,9 +1437,9 @@ def _proxy_image_url(image_url: str):
     response_headers = {
         "Content-Type": upstream.headers.get("Content-Type", "image/jpeg"),
         "Cache-Control": "public, max-age=86400",
-        'Server-Timing': f'image_upstream_headers;dur={upstream_headers_ms:.1f}',
+        "Server-Timing": f"image_upstream_headers;dur={upstream_headers_ms:.1f}",
     }
-    for name in ('Content-Length', 'ETag', 'Last-Modified'):
+    for name in ("Content-Length", "ETag", "Last-Modified"):
         if upstream.headers.get(name):
             response_headers[name] = upstream.headers[name]
     response = Response(generate(), status=upstream.status_code, headers=response_headers)
@@ -1424,12 +1464,12 @@ def _open_image_upstream(image_url: str, headers: dict[str, str]):
             raise APIError.network_error(type(exc).__name__)
 
         if upstream.status_code in _IMAGE_REDIRECT_STATUSES:
-            location = upstream.headers.get('Location')
+            location = upstream.headers.get("Location")
             upstream.close()
             if not location:
-                raise APIError.api_error('Image upstream redirect has no location')
+                raise APIError.api_error("Image upstream redirect has no location")
             if redirect_count >= 3:
-                raise APIError.api_error('Image upstream redirected too many times')
+                raise APIError.api_error("Image upstream redirected too many times")
             current_url = urljoin(current_url, location)
             _validate_image_url(current_url)
             continue
@@ -1444,7 +1484,7 @@ def _open_image_upstream(image_url: str, headers: dict[str, str]):
             raise APIError.network_error(type(exc).__name__)
         return upstream
 
-    raise APIError.api_error('Image upstream redirected too many times')
+    raise APIError.api_error("Image upstream redirected too many times")
 
 
 def _validate_image_url(image_url: str) -> None:

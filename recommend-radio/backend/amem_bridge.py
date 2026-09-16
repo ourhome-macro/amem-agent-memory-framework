@@ -440,8 +440,15 @@ class AmemBridge:
     def _record_event(self, event: str, *, user_id: str, session_id: str, payload: dict[str, Any]) -> Any:
         from agent_memory_runtime.domain.event import Event
 
+        event_id = str(payload.get("event_id") or payload.get("eventId") or uuid4())
+        occurred_at = str(
+            payload.get("occurred_at")
+            or payload.get("occurredAt")
+            or datetime.now(timezone.utc).isoformat()
+        )
         return self.handle.runtime.ingest(
             Event(
+                event_id=event_id,
                 kind="observation.created",
                 actor_id=user_id,
                 session_id=session_id,
@@ -451,6 +458,7 @@ class AmemBridge:
                 labels=("private",),
                 tags=(*MUSIC_TAGS, "behavior", event),
                 payload={**payload, "event": event},
+                occurred_at=occurred_at,
             )
         ).event
 

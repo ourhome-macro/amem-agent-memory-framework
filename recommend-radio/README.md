@@ -14,6 +14,7 @@ Recommend Radio 是 AMEM 的 B 站音乐推荐应用：Vue 前端、Flask API、
 - 推荐 trace 输出画像、请求约束、候选来源和性能耗时；
 - 本地 bge-m3 embedding 支持 AMEM 语义检索。
 - impression、稳定用户分桶和 logged-slate 评测支持可证伪的线上/离线实验。
+- dialogue → recommendation → discovery → feedback 使用统一父子 trace，并提供三层 Golden Set 回归门禁。
 
 ## 启动
 
@@ -48,3 +49,5 @@ RequestSpec 硬约束
 ## 性能
 
 推荐 API 返回 `timing`，trace 保存画像、LLM API、L2、候选池、打分、MMR 和 Discovery 搜索/准入耗时。画像缓存命中后不会再次调用 LLM。
+
+Agent 评测与 trace 使用方式见 [doc/AGENT_EVALUATION.md](doc/AGENT_EVALUATION.md)。

@@ -215,7 +215,7 @@ class LibraryService:
         self.upsert_track(track)
         now = utc_now()
         with get_connection(self.db_path) as conn:
-            conn.execute(
+            inserted = conn.execute(
                 """
                 INSERT INTO likes (user_id, track_id, created_at)
                 VALUES (?, ?, ?)
@@ -223,6 +223,10 @@ class LibraryService:
                 """,
                 (self.user_id, track.track_id, now),
             )
+            if inserted.rowcount:
+                from durable_jobs import enqueue_behavior
+                enqueue_behavior(conn, user_id=self.user_id, event='liked',
+                                 scene='library', track=track)
         return {"track": track.to_dict(), "likedAt": now}
 
     def is_liked(self, bvid: str, cid: Optional[int] = None) -> bool:
@@ -247,6 +251,10 @@ class LibraryService:
 
     def remove_like(self, bvid: str, cid: Optional[int] = None) -> int:
         with get_connection(self.db_path) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            liked = conn.execute("""SELECT t.* FROM tracks t JOIN likes l ON t.track_id=l.track_id
+                WHERE l.user_id=? AND t.bvid=? AND (? IS NULL OR t.cid=?)""",
+                (self.user_id,normalize_bvid(bvid),cid,cid)).fetchall()
             if cid is None:
                 rows = conn.execute(
                     """
@@ -261,7 +269,12 @@ class LibraryService:
                     "DELETE FROM likes WHERE user_id = ? AND track_id = ?",
                     (self.user_id, make_track_id(bvid, cid)),
                 )
-            return rows.rowcount
+            removed = rows.rowcount
+            from durable_jobs import enqueue_behavior
+            for item in liked:
+                enqueue_behavior(conn, user_id=self.user_id, event='unliked',
+                                 scene='library', track=self._track_from_row(item))
+            return removed
 
     def get_review(self, bvid: str, cid: Optional[int] = None) -> Optional[dict[str, Any]]:
         track_id = make_track_id(bvid, cid)
@@ -294,6 +307,10 @@ class LibraryService:
 
         now = utc_now()
         with get_connection(self.db_path) as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            previous = conn.execute('SELECT rating,mood,note FROM track_reviews '
+                                    'WHERE user_id=? AND track_id=?',
+                                    (self.user_id,track.track_id)).fetchone()
             conn.execute(
                 """
                 INSERT INTO track_reviews (
@@ -317,6 +334,14 @@ class LibraryService:
                     now,
                 ),
             )
+            if previous is None or tuple(previous) != (
+                normalized_rating, normalized_mood, normalized_note
+            ):
+                from durable_jobs import enqueue_behavior
+                enqueue_behavior(conn, user_id=self.user_id, event='track_reviewed',
+                                 scene='review', track=track,
+                                 payload={'rating': normalized_rating, 'mood': normalized_mood,
+                                          'hasNote': bool(normalized_note)})
             row = conn.execute(
                 """
                 SELECT tr.*, t.bvid, t.cid, t.title, t.owner, t.cover, t.duration

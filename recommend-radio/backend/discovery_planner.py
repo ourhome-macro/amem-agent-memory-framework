@@ -115,7 +115,7 @@ class DiscoveryPlanner:
         # Bilibili text search is strongest for entities. Keep at most one
         # semantic probe for supply discovery; the full semantic intent is used
         # by local vector ranking instead of consuming the search budget.
-        queries = [*entity_queries, *semantic_queries[:1]][:candidate_limit]
+        queries = [*entity_queries, *semantic_queries[:1]][: self.search_budget]
         trace = f"discovery:{scene}:{abs(hash((tuple(queries), request_spec.raw_text))) % 1000000}"
         negative_queries = (
             []

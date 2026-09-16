@@ -4,7 +4,6 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
-
 _REGION_ALIASES = {
     "western": ("欧美", "欧美流行", "西洋", "western pop", "english pop"),
     "chinese": ("华语", "中文", "国语", "华语流行", "mandopop"),
@@ -30,7 +29,7 @@ _GENRE_ALIASES = {
     "reggae": ("雷鬼", "reggae"),
     "rnb": ("rnb", "r&b", "节奏布鲁斯"),
 }
-_NEGATION_PREFIX = r"(?:不要|不想|别|避开|少来点|不听)"
+_NEGATION_PREFIX = r"(?:不要(?:放|听|来)?|不想(?:听|要)?|别(?:放|来|听|推)?|避开|少来点|不听)"
 
 
 _FOLLOW_UP_RECOMMENDATION_PHRASES = (
@@ -84,9 +83,8 @@ class RequestSpec:
         request cannot pollute a later “recommend anything” interaction.
         """
         normalized = self.raw_text.casefold()
-        return (
-            not self.has_explicit_preferences
-            and any(phrase in normalized for phrase in _FOLLOW_UP_RECOMMENDATION_PHRASES)
+        return not self.has_explicit_preferences and any(
+            phrase in normalized for phrase in _FOLLOW_UP_RECOMMENDATION_PHRASES
         )
 
     @property
@@ -126,7 +124,12 @@ class RequestSpec:
     def from_dict(cls, value: dict[str, object]) -> "RequestSpec":
         def strings(key: str) -> tuple[str, ...]:
             raw = value.get(key) or []
-            return tuple(str(item) for item in raw if str(item).strip()) if isinstance(raw, list) else ()
+            return (
+                tuple(str(item) for item in raw if str(item).strip())
+                if isinstance(raw, list)
+                else ()
+            )
+
         return cls(
             raw_text=str(value.get("rawText") or "")[:240],
             required_regions=strings("requiredRegions"),
@@ -146,7 +149,9 @@ class RequestSpec:
         }
         if self.required_regions and not set(self.required_regions).issubset(values["regions"]):
             return False
-        if self.required_languages and not set(self.required_languages).issubset(values["languages"]):
+        if self.required_languages and not set(self.required_languages).issubset(
+            values["languages"]
+        ):
             return False
         if set(self.excluded_languages) & values["languages"]:
             return False
@@ -200,7 +205,10 @@ def _positive_matches(text: str, aliases: dict[str, tuple[str, ...]]) -> list[st
     return [
         name
         for name, terms in aliases.items()
-        if any(term in text and not re.search(_NEGATION_PREFIX + r"\s*" + re.escape(term), text) for term in terms)
+        if any(
+            term in text and not re.search(_NEGATION_PREFIX + r"\s*" + re.escape(term), text)
+            for term in terms
+        )
     ]
 
 

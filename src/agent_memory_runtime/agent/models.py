@@ -409,6 +409,8 @@ class AgentCheckpoint:
     compacted_message_count: int = 0
     last_estimated_input_tokens: int = 0
     output_repair_attempts: int = 0
+    compaction_summary: str = ""
+    pinned_messages: tuple[ModelMessage, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -422,6 +424,8 @@ class AgentCheckpoint:
             "compacted_message_count": self.compacted_message_count,
             "last_estimated_input_tokens": self.last_estimated_input_tokens,
             "output_repair_attempts": self.output_repair_attempts,
+            "compaction_summary": self.compaction_summary,
+            "pinned_messages": [message.to_dict() for message in self.pinned_messages],
         }
 
     @classmethod
@@ -444,6 +448,11 @@ class AgentCheckpoint:
                 value.get("last_estimated_input_tokens") or 0
             ),
             output_repair_attempts=int(value.get("output_repair_attempts") or 0),
+            compaction_summary=str(value.get("compaction_summary") or ""),
+            pinned_messages=tuple(
+                ModelMessage.from_dict(_dict(item))
+                for item in _list(value.get("pinned_messages"))
+            ),
         )
 
 

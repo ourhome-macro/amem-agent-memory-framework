@@ -1,17 +1,17 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from uuid import uuid4
 
+from database import get_connection
+from durable_jobs import enqueue
 from sse_event_client import SSEEventPublisher
 
 LOGGER = logging.getLogger("recommend-radio.dialogue-tasks")
-TASK_WORKERS = 4
-DISCOVERY_WATCHERS = 2
 DISCOVERY_POLL_SECONDS = 0.75
 DISCOVERY_MAX_POLLS = 40
 
@@ -21,14 +21,6 @@ class DialogueTaskService:
 
     def __init__(self, publisher: SSEEventPublisher) -> None:
         self.publisher = publisher
-        self.executor = ThreadPoolExecutor(
-            max_workers=TASK_WORKERS,
-            thread_name_prefix="dialogue-task",
-        )
-        self.discovery_executor = ThreadPoolExecutor(
-            max_workers=DISCOVERY_WATCHERS,
-            thread_name_prefix="discovery-watch",
-        )
 
     def submit(
         self,
@@ -39,34 +31,57 @@ class DialogueTaskService:
         session_id: str | None,
         context_card_id: str | None,
         context_track_id: str | None,
-        request_runner: Callable[[Callable[[], None]], Callable[[], None]],
+        idempotency_key: str | None = None,
     ) -> dict[str, str]:
         normalized = str(message or "").strip()
         if not normalized:
             raise ValueError("message is required")
+        key = hashlib.sha256(f"{user_id}:{idempotency_key}".encode()).hexdigest()
+        task_id = f"dialogue:{key if idempotency_key else uuid4().hex}"
+        if idempotency_key:
+            with get_connection(service.db_path) as conn:
+                old = conn.execute(
+                    "SELECT * FROM durable_jobs WHERE job_id=? AND user_id=?", (task_id, user_id)
+                ).fetchone()
+            if old:
+                previous = json.loads(old["payload_json"])
+                if (
+                    previous["message"] != normalized
+                    or previous["context_card_id"] != context_card_id
+                    or previous["context_track_id"] != context_track_id
+                    or (session_id and previous["session_id"] != session_id)
+                ):
+                    raise ValueError("idempotency key is already bound to another request")
+                return {
+                    "taskId": task_id,
+                    "sessionId": previous["session_id"],
+                    "status": old["status"],
+                }
         resolved_session_id = service.resolve_session_id(session_id=session_id)
-        task_id = f"dialogue:{uuid4().hex}"
-        self.publisher.publish(
-            task_id=task_id,
-            session_id=resolved_session_id,
-            user_id=user_id,
-            event_type="task",
-            status="queued",
-            payload={"status": "queued"},
-        )
-
-        def execute() -> None:
-            self._run(
-                service=service,
+        with get_connection(service.db_path) as conn:
+            enqueue(
+                conn,
+                kind="dialogue",
                 user_id=user_id,
+                job_id=task_id,
+                lane=f"dialogue:{user_id}:{resolved_session_id}",
+                payload={
+                    "session_id": resolved_session_id,
+                    "message": normalized,
+                    "context_card_id": context_card_id,
+                    "context_track_id": context_track_id,
+                },
+            )
+            self.publisher.publish(
+                connection=conn,
                 task_id=task_id,
                 session_id=resolved_session_id,
-                message=normalized,
-                context_card_id=context_card_id,
-                context_track_id=context_track_id,
+                user_id=user_id,
+                event_type="task",
+                status="queued",
+                payload={"status": "queued"},
             )
 
-        self.executor.submit(request_runner(execute))
         return {"taskId": task_id, "sessionId": resolved_session_id, "status": "queued"}
 
     def _run(
@@ -89,6 +104,7 @@ class DialogueTaskService:
                 status=status,
                 payload=payload,
             )
+
         try:
             publish("progress", {"stage": "routing", "label": "正在理解你的需求"})
             result = service.send_message(
@@ -108,26 +124,29 @@ class DialogueTaskService:
                     "discovery",
                     {"status": "running", "cardIds": [item["cardId"] for item in pending_cards]},
                 )
-                self.discovery_executor.submit(
-                    self._watch_discovery,
-                    service,
-                    user_id,
-                    task_id,
-                    session_id,
-                    result,
-                )
+                with get_connection(service.db_path) as conn:
+                    enqueue(
+                        conn,
+                        kind="discovery_watch",
+                        user_id=user_id,
+                        job_id=f"watch:{task_id}",
+                        retry_safe=True,
+                        payload={"task_id": task_id, "session_id": session_id, "initial": result},
+                    )
             publish(
                 "done",
                 {"session": result, "discoveryPending": bool(pending_cards)},
                 status="streaming" if pending_cards else "completed",
             )
+            return result
         except Exception as exc:
             LOGGER.exception("dialogue task failed", extra={"task_id": task_id})
             publish(
                 "error",
-                {"message": str(exc)[:500]},
+                {"message": type(exc).__name__},
                 status="failed",
             )
+            raise
 
     def _watch_discovery(
         self,
@@ -185,8 +204,6 @@ class DialogueTaskService:
         )
 
     def close(self) -> None:
-        self.executor.shutdown(wait=False, cancel_futures=True)
-        self.discovery_executor.shutdown(wait=False, cancel_futures=True)
         self.publisher.close()
 
 
@@ -200,7 +217,7 @@ def _pending_discovery_cards(session: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(card, dict)
         and card.get("kind") == "recommendation_carousel"
         and card.get("discoveryJobId")
-        and card.get("discoveryStatus") not in {"completed", "failed"}
+        and card.get("discoveryStatus") not in {"completed", "failed", "needs_reconciliation"}
         and len(card.get("recommendations") or []) < 8
     ]
 

@@ -5,23 +5,22 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from threading import Lock
 from typing import Any
 from uuid import uuid4
 
 from candidate_pool import CandidatePool
 from content_embeddings import ContentEmbeddingService
 from database import get_connection
+from durable_jobs import enqueue
 from discovery_planner import DiscoveryPlanner
 from experiments import ExperimentAssignments
+from full_trace import FullTrace, current_trace_id
 from keyword_evolution import KeywordEvolutionService
 from keyword_governance import KeywordGovernance
 from models import Track
 from music_profile import MusicProfile
 from request_spec import RequestSpec
 
-_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="music-discovery")
-_EVOLUTION_LOCK = Lock()
 
 
 class DiscoveryService:
@@ -46,12 +45,31 @@ class DiscoveryService:
         self.keyword_evolution = KeywordEvolutionService(self.keyword_governance)
 
     def enqueue(
-        self, *, profile: MusicProfile, request_spec: RequestSpec, scene: str, limit: int
+        self,
+        *,
+        profile: MusicProfile,
+        request_spec: RequestSpec,
+        scene: str,
+        limit: int,
+        parent_trace_id: str | None = None,
     ) -> str | None:
         plan = self.planner.plan(profile=profile, request_spec=request_spec, scene=scene)
         if not plan.search_queries and not plan.negative_queries:
             return None
         job_id = f"discovery:{uuid4().hex}"
+        trace = FullTrace(
+            self.db_path,
+            trace_type="discovery",
+            trace_id=job_id,
+            parent_trace_id=parent_trace_id or current_trace_id(),
+            user_id=self.user_id,
+            attributes={"scene": scene, "mode": "async"},
+            initial_status="queued",
+        )
+        trace.event(
+            "discovery.queued",
+            {"queryCount": len(plan.search_queries), "limit": limit},
+        )
         now = _utc_now()
         with get_connection(self.db_path) as conn:
             conn.execute(
@@ -76,31 +94,46 @@ class DiscoveryService:
                     now,
                 ),
             )
-        _EXECUTOR.submit(
-            self._run_job,
-            job_id,
-            plan.search_queries,
-            plan.negative_queries,
-            plan.keyword_specs,
-            plan.negative_keyword_specs,
-            request_spec,
-            limit,
-        )
+            enqueue(conn, kind='discovery', job_id=job_id, user_id=self.user_id,
+                    lane=f'discovery:{self.user_id}', payload={
+                        'queries': plan.search_queries,
+                        'negative_queries': plan.negative_queries,
+                        'keyword_specs': plan.keyword_specs,
+                        'negative_keyword_specs': plan.negative_keyword_specs,
+                        'request_spec': request_spec.to_dict(), 'limit': limit,
+                    })
         return job_id
 
     def discover_now(
-        self, *, profile: MusicProfile, request_spec: RequestSpec, scene: str, limit: int
+        self,
+        *,
+        profile: MusicProfile,
+        request_spec: RequestSpec,
+        scene: str,
+        limit: int,
+        parent_trace_id: str | None = None,
     ) -> dict[str, Any]:
         plan = self.planner.plan(profile=profile, request_spec=request_spec, scene=scene)
-        return self._discover(
-            plan.search_queries,
-            request_spec,
-            limit,
-            trace_id=plan.trace_id,
-            negative_queries=plan.negative_queries,
-            keyword_specs=plan.keyword_specs,
-            negative_keyword_specs=plan.negative_keyword_specs,
+        trace = FullTrace(
+            self.db_path,
+            trace_type="discovery",
+            parent_trace_id=parent_trace_id or current_trace_id(),
+            user_id=self.user_id,
+            attributes={"scene": scene, "mode": "synchronous"},
         )
+        with trace:
+            result = self._discover(
+                plan.search_queries,
+                request_spec,
+                limit,
+                trace_id=trace.trace_id,
+                negative_queries=plan.negative_queries,
+                keyword_specs=plan.keyword_specs,
+                negative_keyword_specs=plan.negative_keyword_specs,
+                full_trace=trace,
+            )
+            result["fullTraceId"] = trace.trace_id
+            return result
 
     def job_status(self, job_id: str) -> dict[str, Any]:
         with get_connection(self.db_path) as conn:
@@ -110,12 +143,17 @@ class DiscoveryService:
             ).fetchone()
         if row is None:
             return {"jobId": job_id, "available": False}
+        with get_connection(self.db_path) as conn:
+            execution = conn.execute('SELECT status,error FROM durable_jobs WHERE job_id=?',
+                                     (job_id,)).fetchone()
+        terminal_failure = execution and execution['status'] in {'failed','needs_reconciliation'}
         return {
             "jobId": row["job_id"],
+            "fullTraceId": row["job_id"],
             "available": True,
-            "status": row["status"],
+            "status": execution['status'] if terminal_failure else row["status"],
             "result": _json_object(row["result_json"]),
-            "error": row["error"],
+            "error": execution['error'] if terminal_failure else row["error"],
         }
 
     def _run_job(
@@ -134,15 +172,32 @@ class DiscoveryService:
                 (_utc_now(), job_id),
             )
         try:
-            result = self._discover(
-                queries,
-                spec,
-                limit,
+            trace = FullTrace.resume(self.db_path, job_id)
+        except Exception:
+            trace = FullTrace(
+                self.db_path,
+                trace_type="discovery",
                 trace_id=job_id,
-                negative_queries=negative_queries,
-                keyword_specs=keyword_specs,
-                negative_keyword_specs=negative_keyword_specs,
+                user_id=self.user_id,
+                attributes={"mode": "async_recovered"},
             )
+        trace.record_span(
+            "discovery.queue_wait",
+            trace.elapsed_ms(),
+            kind="queue",
+        )
+        try:
+            with trace:
+                result = self._discover(
+                    queries,
+                    spec,
+                    limit,
+                    trace_id=job_id,
+                    negative_queries=negative_queries,
+                    keyword_specs=keyword_specs,
+                    negative_keyword_specs=negative_keyword_specs,
+                    full_trace=trace,
+                )
         except Exception as exc:
             with get_connection(self.db_path) as conn:
                 conn.execute(
@@ -156,18 +211,17 @@ class DiscoveryService:
                 (json.dumps(result, ensure_ascii=False), _utc_now(), job_id),
             )
         if self.keyword_governance.evolution_due():
-            _EXECUTOR.submit(self._run_evolution, list(spec.excluded_topics))
+            with get_connection(self.db_path) as conn:
+                enqueue(conn, kind='evolution', user_id=self.user_id,
+                        lane=f'evolution:{self.user_id}', job_id=f'evolution:{job_id}',
+                        payload={'blocked_topics': list(spec.excluded_topics)})
 
     def _run_evolution(self, blocked_topics: list[str]) -> None:
-        if not _EVOLUTION_LOCK.acquire(blocking=False):
-            return
         try:
             self.keyword_evolution.run(blocked_topics=blocked_topics)
         except Exception as exc:
             self.keyword_governance.record_evolution_run(status="failed", error=str(exc))
-            return
-        finally:
-            _EVOLUTION_LOCK.release()
+            raise
 
     def _discover(
         self,
@@ -179,9 +233,11 @@ class DiscoveryService:
         negative_queries: list[str] | None = None,
         keyword_specs: dict[str, dict[str, object]] | None = None,
         negative_keyword_specs: dict[str, dict[str, object]] | None = None,
+        full_trace: FullTrace | None = None,
     ) -> dict[str, Any]:
         started = time.perf_counter()
         keyword_specs = dict(keyword_specs or {})
+        governance_started = time.perf_counter()
         governance_variant = self.experiments.keyword_governance_variant()
         apply_governance = governance_variant != "control"
         if not spec.constrained and apply_governance:
@@ -220,21 +276,40 @@ class DiscoveryService:
         negative_query_pages = {
             item["query"]: int(item.get("searchCount") or 0) % 10 + 1 for item in negative_governed
         }
+        if full_trace is not None:
+            full_trace.record_span(
+                "keyword_governance.select",
+                (time.perf_counter() - governance_started) * 1000,
+                kind="governance",
+                outputs={
+                    "selectedQueries": queries,
+                    "negativeQueries": negative_queries,
+                    "variant": governance_variant,
+                },
+                metrics={"selectedQueryCount": len(queries)},
+            )
         per_query = max(4, min(16, max(limit, 1) * 2))
         total = {"enqueued": 0, "admitted": 0}
         query_timings = []
 
-        def search(kind: str, query: str) -> tuple[str, str, int, list[Track], float]:
+        def search(kind: str, query: str) -> tuple[str, str, int, list[Track], float, str | None]:
             query_started = time.perf_counter()
             page_size = min(per_query, 8) if kind == "negative" else per_query
             page = negative_query_pages[query] if kind == "negative" else query_pages[query]
-            tracks = self._safe_search(query, page_size, page=page)
-            return kind, query, page, tracks, (time.perf_counter() - query_started) * 1000
+            tracks, error_type = self._safe_search_result(query, page_size, page=page)
+            return (
+                kind,
+                query,
+                page,
+                tracks,
+                (time.perf_counter() - query_started) * 1000,
+                error_type,
+            )
 
         search_tasks = [("positive", query) for query in queries] + [
             ("negative", query) for query in negative_queries
         ]
-        search_results: list[tuple[str, str, int, list[Track], float]] = []
+        search_results: list[tuple[str, str, int, list[Track], float, str | None]] = []
         with ThreadPoolExecutor(
             max_workers=min(4, len(search_tasks) or 1), thread_name_prefix="music-search"
         ) as executor:
@@ -243,7 +318,17 @@ class DiscoveryService:
                 search_results.append(future.result())
         negative_sample_count = 0
         admitted_tracks: list[Track] = []
-        for kind, query, page, tracks, search_ms in search_results:
+        for kind, query, page, tracks, search_ms, error_type in search_results:
+            if full_trace is not None:
+                full_trace.record_span(
+                    "bilibili.search",
+                    search_ms,
+                    kind="tool",
+                    status="failed" if error_type else "completed",
+                    inputs={"query": query, "page": page, "queryKind": kind},
+                    outputs={"resultCount": len(tracks)},
+                    error_type=error_type,
+                )
             admit_started = time.perf_counter()
             if kind == "negative":
                 recorded = self.pool.record_negative_samples(tracks, query=query)
@@ -263,6 +348,7 @@ class DiscoveryService:
                         "searchMs": round(search_ms, 2),
                         "admissionMs": round((time.perf_counter() - admit_started) * 1000, 2),
                         "resultCount": len(tracks),
+                        "errorType": error_type,
                     }
                 )
                 continue
@@ -291,10 +377,26 @@ class DiscoveryService:
                     "searchMs": round(search_ms, 2),
                     "admissionMs": round(admit_ms, 2),
                     "resultCount": len(tracks),
+                    "errorType": error_type,
                 }
             )
+            if full_trace is not None:
+                full_trace.record_span(
+                    "candidate.admit",
+                    admit_ms,
+                    kind="retrieval",
+                    inputs={"source": "discovery_search", "query": query},
+                    outputs={
+                        "resultCount": len(tracks),
+                        "admittedCount": result["admitted"],
+                    },
+                    metrics={"invalidRecallCount": max(len(tracks) - result["admitted"], 0)},
+                )
         supply_lanes = []
-        for source, query, tracks in self._supply_lane_tracks(limit=max(limit * 2, 8)):
+        for source, query, tracks in self._supply_lane_tracks(
+            limit=max(limit * 2, 8),
+            full_trace=full_trace,
+        ):
             admit_started = time.perf_counter()
             result = self.pool.admit(
                 tracks,
@@ -315,9 +417,38 @@ class DiscoveryService:
                     "admissionMs": round((time.perf_counter() - admit_started) * 1000, 2),
                 }
             )
+            if full_trace is not None:
+                full_trace.record_span(
+                    "candidate.admit",
+                    supply_lanes[-1]["admissionMs"],
+                    kind="retrieval",
+                    inputs={"source": source, "query": query},
+                    outputs={
+                        "resultCount": len(tracks),
+                        "admittedCount": result["admitted"],
+                    },
+                    metrics={"invalidRecallCount": max(len(tracks) - result["admitted"], 0)},
+                )
         embedding_started = time.perf_counter()
         embedding_result = self.content_embeddings.ensure_text_embeddings(admitted_tracks[:64])
         audio_queued = self.content_embeddings.enqueue_audio_embeddings(admitted_tracks[:64])
+        embedding_ms = round((time.perf_counter() - embedding_started) * 1000, 2)
+        available = self.pool.availability(spec)
+        if full_trace is not None:
+            full_trace.record_span(
+                "candidate.embedding.persist",
+                embedding_ms,
+                kind="embedding",
+                outputs={**embedding_result, "audioQueued": audio_queued},
+            )
+            full_trace.event(
+                "discovery.completed",
+                {
+                    "admitted": total["admitted"],
+                    "enqueued": total["enqueued"],
+                    "available": available,
+                },
+            )
         return {
             "traceId": trace_id,
             "queries": queries,
@@ -327,16 +458,21 @@ class DiscoveryService:
             "keywordGovernanceVariant": governance_variant,
             "supplyLanes": supply_lanes,
             **total,
-            "available": self.pool.availability(spec),
+            "available": available,
             "embedding": {**embedding_result, "audioQueued": audio_queued},
             "timing": {
                 "queries": query_timings,
-                "embeddingPersistMs": round((time.perf_counter() - embedding_started) * 1000, 2),
+                "embeddingPersistMs": embedding_ms,
                 "totalMs": round((time.perf_counter() - started) * 1000, 2),
             },
         }
 
-    def _supply_lane_tracks(self, *, limit: int) -> list[tuple[str, str, list[Track]]]:
+    def _supply_lane_tracks(
+        self,
+        *,
+        limit: int,
+        full_trace: FullTrace | None = None,
+    ) -> list[tuple[str, str, list[Track]]]:
         with get_connection(self.db_path) as conn:
             uploader_rows = conn.execute(
                 """
@@ -372,6 +508,8 @@ class DiscoveryService:
         lanes: list[tuple[str, str, list[Track]]] = []
         for row in uploader_rows:
             mid = int(row["owner_mid"])
+            tool_started = time.perf_counter()
+            error_type = None
             try:
                 payload = self.bili_client.list_user_tracks(
                     mid,
@@ -380,21 +518,47 @@ class DiscoveryService:
                     order="pubdate",
                 )
                 tracks = [Track.from_dict(item) for item in payload.get("tracks") or []]
-            except Exception:
+            except Exception as exc:
                 tracks = []
+                error_type = type(exc).__name__
+            if full_trace is not None:
+                full_trace.record_span(
+                    "bilibili.uploader_supply",
+                    (time.perf_counter() - tool_started) * 1000,
+                    kind="tool",
+                    status="failed" if error_type else "completed",
+                    inputs={"uploaderMid": mid},
+                    outputs={"resultCount": len(tracks)},
+                    error_type=error_type,
+                )
             if tracks:
                 lanes.append(("preferred_uploader_supply", f"uploader:{mid}", tracks))
 
         for row in seed_rows:
             bvid = str(row["bvid"])
+            tool_started = time.perf_counter()
+            error_type = None
             try:
                 tracks = self.bili_client.list_related_tracks(bvid, limit=min(limit, 20))
-            except Exception:
+            except Exception as exc:
                 tracks = []
+                error_type = type(exc).__name__
+            if full_trace is not None:
+                full_trace.record_span(
+                    "bilibili.related_supply",
+                    (time.perf_counter() - tool_started) * 1000,
+                    kind="tool",
+                    status="failed" if error_type else "completed",
+                    inputs={"seedBvid": bvid},
+                    outputs={"resultCount": len(tracks)},
+                    error_type=error_type,
+                )
             if tracks:
                 lanes.append(("related_supply", f"related:{bvid}", tracks))
 
         for media_id in _favorite_media_ids():
+            tool_started = time.perf_counter()
+            error_type = None
             try:
                 payload = self.bili_client.list_favorite_tracks(
                     media_id,
@@ -402,24 +566,45 @@ class DiscoveryService:
                     page_size=min(limit, 20),
                 )
                 tracks = [Track.from_dict(item) for item in payload.get("tracks") or []]
-            except Exception:
+            except Exception as exc:
                 tracks = []
+                error_type = type(exc).__name__
+            if full_trace is not None:
+                full_trace.record_span(
+                    "bilibili.favorite_supply",
+                    (time.perf_counter() - tool_started) * 1000,
+                    kind="tool",
+                    status="failed" if error_type else "completed",
+                    inputs={"mediaId": media_id},
+                    outputs={"resultCount": len(tracks)},
+                    error_type=error_type,
+                )
             if tracks:
                 lanes.append(("favorite_supply", f"favorite:{media_id}", tracks))
         return lanes
 
     def _safe_search(self, query: str, page_size: int, *, page: int = 1) -> list[Track]:
+        values, _error_type = self._safe_search_result(query, page_size, page=page)
+        return values
+
+    def _safe_search_result(
+        self,
+        query: str,
+        page_size: int,
+        *,
+        page: int = 1,
+    ) -> tuple[list[Track], str | None]:
         try:
             values = self.bili_client.search(query, page=max(int(page), 1), page_size=page_size)
-        except Exception:
-            return []
+        except Exception as exc:
+            return [], type(exc).__name__
         result = []
         for value in values or []:
             try:
                 result.append(value if isinstance(value, Track) else Track.from_dict(value))
             except Exception:
                 continue
-        return result
+        return result, None
 
 
 def _json_object(value: Any) -> dict[str, Any]:

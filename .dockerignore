@@ -1,0 +1,16 @@
+.git
+.amem
+.env
+**/.env
+**/.env.*
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/node_modules
+**/server-data
+recommend-radio/backend/data
+**/*.log
+dist
+build
+**/*.tar
+**/*.tar.gz

@@ -57,3 +57,17 @@ python .\recommend-radio\scripts\evaluate_memory_runtime.py `
 ```
 
 开启 user-level A/B 前先确认样本量、实验互斥和指标窗口。assignment 会落库；关闭开关不会改变正常推荐行为。
+
+Agent Golden Set 和全链路 trace 门禁：
+
+```powershell
+python .\recommend-radio\scripts\run_agent_evals.py --fail-on-gate
+python .\recommend-radio\scripts\run_agent_evals.py `
+  --db-path .\recommend-radio\backend\data\bili_radio.sqlite3 `
+  --fail-on-gate
+```
+
+Trace 与指标查询接口位于管理员 API：
+
+- `GET /api/admin/evaluations/traces/{trace_id}`
+- `GET /api/admin/evaluations/metrics?since={ISO-8601}`

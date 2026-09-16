@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ from uuid import uuid4
 from amem_bridge import record_music_behavior
 from conversation_memory import ConversationMemoryService
 from database import DEFAULT_DB_PATH, LEGACY_OWNER_USER_ID, get_connection, init_db
+from full_trace import FullTrace, hash_text
 from music_keyword_pool import (
     detect_emotion,
     has_negative_intent,
@@ -276,12 +278,53 @@ class MusicDialogueService:
         context_track_id: str | None = None,
         progress: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
+        trace = FullTrace(
+            str(self.db_path),
+            trace_type="dialogue",
+            user_id=self.user_id,
+            session_id=session_id,
+            attributes={
+                "messageHash": hash_text(message),
+                "messageLength": len(message or ""),
+                "hasContextCard": bool(context_card_id),
+            },
+        )
+        with trace:
+            result = self._send_message(
+                message,
+                session_id=session_id,
+                context_card_id=context_card_id,
+                context_track_id=context_track_id,
+                progress=progress,
+                full_trace=trace,
+            )
+            result["fullTraceId"] = trace.trace_id
+            trace.event(
+                "dialogue.completed",
+                {
+                    "sessionId": result.get("sessionId"),
+                    "state": result.get("state"),
+                },
+            )
+            return result
+
+    def _send_message(
+        self,
+        message: str,
+        *,
+        session_id: str | None = None,
+        context_card_id: str | None = None,
+        context_track_id: str | None = None,
+        progress: Callable[[str, dict[str, Any]], None] | None = None,
+        full_trace: FullTrace,
+    ) -> dict[str, Any]:
         normalized = _normalize_message(message)
         if not normalized:
             raise ValueError("message is required")
         if len(normalized) > MAX_MESSAGE_LENGTH:
             raise ValueError("message is too long")
 
+        session_started = time.perf_counter()
         with get_connection(self.db_path) as conn:
             session = self._get_or_create_session(conn, session_id=session_id)
             context_card = self._load_card(conn, context_card_id) if context_card_id else None
@@ -303,11 +346,30 @@ class MusicDialogueService:
                 payload=payload,
             )
             resolved_session_id = session["session_id"]
+        full_trace.record_span(
+            "dialogue.session.prepare",
+            (time.perf_counter() - session_started) * 1000,
+            kind="storage",
+            outputs={"sessionId": resolved_session_id},
+        )
 
         self.conversation_memory.append(
             session_id=resolved_session_id, role="user", content=normalized
         )
+        route_started = time.perf_counter()
         route = self._route_message(normalized, context_card, session_id=resolved_session_id)
+        full_trace.record_span(
+            "dialogue.route",
+            (time.perf_counter() - route_started) * 1000,
+            kind="planning",
+            outputs={
+                "tool": route.tool,
+                "source": route.route_source,
+                "confidence": route.confidence,
+                "hasRequestSpec": route.request_spec is not None,
+                "hasSignal": route.signal is not None,
+            },
+        )
         _emit_progress(
             progress,
             "route",
@@ -331,12 +393,19 @@ class MusicDialogueService:
             if route.request_spec is not None
             else "emotion_state"
         )
+        warm_started = time.perf_counter()
         self.conversation_memory.refresh_warm(
             session_id=resolved_session_id,
             topic=warm_topic,
             memory_type=warm_memory_type,
             scope_type="scene",
             scope_key="music_conversation",
+        )
+        full_trace.record_span(
+            "dialogue.warm_memory.write",
+            (time.perf_counter() - warm_started) * 1000,
+            kind="memory",
+            inputs={"memoryType": warm_memory_type, "scope": "music_conversation"},
         )
         if route.signal is not None:
             self._record_conversation_signal(resolved_session_id, normalized, route.signal)
@@ -1252,6 +1321,16 @@ class MusicDialogueService:
                     now,
                 ),
             )
+            from durable_jobs import enqueue_behavior
+            queued = enqueue_behavior(conn, user_id=self.user_id, event='conversation_signal',
+                                      scene='conversation', payload={
+                                          'sessionId': session_id, 'kind': signal.kind,
+                                          'topic': signal.topic, 'statement': signal.statement,
+                                          'confidence': signal.confidence, 'status': signal.commit_policy,
+                                          'sourceText': source_text,
+                                      })
+        if queued:
+            return
         try:
             record_music_behavior(
                 self.recommendation_service.amem_bridge,
@@ -2066,6 +2145,18 @@ def _route_message(message: str, context_card: Any | None) -> DialogueRoute:
             need_memory=False,
             need_recommendation_search=False,
         )
+    if _looks_like_instruction_injection(text):
+        return DialogueRoute(
+            "casual_chat",
+            "instruction-like text must not select privileged tools",
+            signal=None,
+            emotion="",
+            primary_intent=INTENT_CHAT,
+            intents=(INTENT_CHAT,),
+            need_profile=False,
+            need_memory=False,
+            need_recommendation_search=False,
+        )
 
     signal = _extract_signal(text, context_card) or _extract_scene_signal(text)
     emotion = detect_emotion(text)
@@ -2154,6 +2245,20 @@ def _route_message(message: str, context_card: Any | None) -> DialogueRoute:
         need_profile=True,
         need_memory=True,
     )
+
+
+def _looks_like_instruction_injection(text: str) -> bool:
+    normalized = text.casefold()
+    instruction_markers = (
+        "忽略之前规则",
+        "忽略系统提示",
+        "system prompt",
+        "developer message",
+        "调用删除工具",
+        "删除数据库",
+        "绕过权限",
+    )
+    return any(marker in normalized for marker in instruction_markers)
 
 
 def _route_intents(primary: str, signal: ExtractedSignal | None) -> tuple[str, ...]:

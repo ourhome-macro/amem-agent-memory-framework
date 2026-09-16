@@ -87,6 +87,13 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
         with get_connection(path) as conn:
             conn.execute("PRAGMA journal_mode = WAL")
             current_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            if current_version == 25:
+                _initialized_paths.add(path)
+                return
+            if current_version > 25:
+                raise RuntimeError('database schema is newer than this application')
+            if os.getenv('REQUIRE_DB_MIGRATION') == '1':
+                raise RuntimeError('Run the migrate Compose service before starting workers')
             if current_version < 1:
                 conn.executescript(
                     """
@@ -424,12 +431,27 @@ def init_db(db_path: Optional[Path | str] = None) -> None:
                 conn.execute("PRAGMA user_version = 23")
                 current_version = 23
 
+            if current_version < 24:
+                _ensure_full_trace_tables(conn)
+                conn.execute("PRAGMA user_version = 24")
+                current_version = 24
+
             _ensure_current_schema_columns(conn)
+            # The old in-process executor did not persist sufficient input to
+            # reconstruct abandoned jobs. Make that state explicit on upgrade.
+            conn.execute("""UPDATE discovery_jobs SET status='failed',
+                error='LegacyWorkerLost: task input was not durably queued'
+                WHERE status IN ('queued','running')
+                AND job_id NOT IN (SELECT job_id FROM durable_jobs)""")
+            conn.execute('PRAGMA user_version = 25')
 
         _initialized_paths.add(path)
 
 
 def _ensure_current_schema_columns(conn: sqlite3.Connection) -> None:
+    from durable_jobs import ensure_schema
+
+    ensure_schema(conn)
     _add_column_if_missing(conn, "tracks", "owner_mid", "INTEGER")
     _add_column_if_missing(
         conn,
@@ -457,6 +479,69 @@ def _ensure_current_schema_columns(conn: sqlite3.Connection) -> None:
     _ensure_music_entity_tables(conn)
     _ensure_content_embedding_tables(conn)
     _ensure_recommendation_evaluation_tables(conn)
+    _ensure_full_trace_tables(conn)
+
+
+def _ensure_full_trace_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS evaluation_traces (
+            trace_id TEXT PRIMARY KEY,
+            root_trace_id TEXT NOT NULL,
+            parent_trace_id TEXT,
+            trace_type TEXT NOT NULL,
+            user_id TEXT NOT NULL DEFAULT '',
+            session_id TEXT,
+            request_id TEXT,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            duration_ms REAL,
+            attributes_json TEXT NOT NULL DEFAULT '{}',
+            error_type TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_evaluation_traces_root
+            ON evaluation_traces(root_trace_id, started_at);
+        CREATE INDEX IF NOT EXISTS idx_evaluation_traces_type_status
+            ON evaluation_traces(trace_type, status, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS evaluation_trace_spans (
+            span_id TEXT PRIMARY KEY,
+            trace_id TEXT NOT NULL,
+            parent_span_id TEXT,
+            sequence INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT NOT NULL,
+            duration_ms REAL NOT NULL,
+            input_json TEXT NOT NULL DEFAULT '{}',
+            output_json TEXT NOT NULL DEFAULT '{}',
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            error_type TEXT,
+            FOREIGN KEY(trace_id) REFERENCES evaluation_traces(trace_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_evaluation_trace_spans_trace_sequence
+            ON evaluation_trace_spans(trace_id, sequence);
+        CREATE INDEX IF NOT EXISTS idx_evaluation_trace_spans_name_status
+            ON evaluation_trace_spans(name, status, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS evaluation_trace_events (
+            event_id TEXT PRIMARY KEY,
+            trace_id TEXT NOT NULL,
+            span_id TEXT,
+            sequence INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(trace_id) REFERENCES evaluation_traces(trace_id) ON DELETE CASCADE,
+            FOREIGN KEY(span_id) REFERENCES evaluation_trace_spans(span_id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_evaluation_trace_events_trace_sequence
+            ON evaluation_trace_events(trace_id, sequence);
+        """
+    )
 
 
 def _ensure_music_entity_tables(conn: sqlite3.Connection) -> None:

@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import threading
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from agent_memory_runtime.agent.cancellation import CancellationToken
@@ -25,6 +26,8 @@ from agent_memory_runtime.agent.stores.base import AgentStateStore
 from agent_memory_runtime.audit.hashing import secure_hash
 from agent_memory_runtime.tools.base import Tool
 
+_IN_FLIGHT_SYNC_CALLS: set[asyncio.Task] = set()
+
 
 @dataclass(frozen=True)
 class ToolExecutionContext:
@@ -35,6 +38,7 @@ class ToolExecutionContext:
     request: AgentRequest
     attempt: int
     cancellation_token: CancellationToken | None = None
+    stop_requested: threading.Event = field(default_factory=threading.Event)
 
 
 AgentToolHandler = Callable[
@@ -93,6 +97,8 @@ class ReliableToolRuntime:
     ) -> ToolCallRecord:
         if record.status is ToolCallStatus.SUCCEEDED:
             return record
+        if record.status is ToolCallStatus.RECONCILIATION_REQUIRED:
+            raise AgentReconciliationRequired('tool outcome must be reconciled before execution')
         policy.authorize_tool(record.tool_name, side_effects=record.side_effects)
         try:
             validate_tool_arguments(record.arguments, tool_input_schema(tool))
@@ -148,6 +154,11 @@ class ReliableToolRuntime:
                         error_hash=None,
                     )
                 )
+            except AgentReconciliationRequired:
+                # A synchronous tool may still be running after timeout/cancel.
+                # Even idempotent calls must not overlap an unobserved attempt.
+                await asyncio.shield(self._mark_reconciliation(current))
+                raise
             except asyncio.CancelledError:
                 if current.side_effects and not current.idempotent:
                     await asyncio.shield(self._mark_reconciliation(current))
@@ -309,83 +320,40 @@ def new_tool_call_record(
 
 
 def validate_tool_arguments(arguments: dict[str, Any], schema: dict[str, Any]) -> None:
-    _validate_schema_value(arguments, schema, path="$")
+    """Validate the declared dialect completely; never retrieve remote schemas."""
+    from jsonschema import Draft202012Validator, FormatChecker, validators
+    from jsonschema.exceptions import SchemaError, ValidationError
+    from referencing import Registry
 
+    checker = FormatChecker()
 
-def _validate_schema_value(value: object, schema: object, *, path: str) -> None:
-    if not isinstance(schema, dict):
-        raise AgentPolicyError(f"invalid tool schema at {path}")
-    if "$ref" in schema:
-        raise AgentPolicyError("tool schemas with $ref are not supported by the built-in validator")
-    if "enum" in schema:
-        enum_values = schema["enum"]
-        if not isinstance(enum_values, list) or value not in enum_values:
-            raise AgentPolicyError(f"tool argument at {path} is outside the allowed enum")
-    expected = schema.get("type")
-    if isinstance(expected, list):
-        matches = any(_matches_type(value, str(item)) for item in expected)
-    elif expected is None:
-        matches = True
-    else:
-        matches = _matches_type(value, str(expected))
-    if not matches:
-        raise AgentPolicyError(f"tool argument at {path} has an invalid type")
+    def strict_format(validator, name, value, subschema):
+        if name not in checker.checkers:
+            yield ValidationError(f'format checker {name!r} is unavailable')
+        else:
+            yield from Draft202012Validator.VALIDATORS['format'](
+                validator, name, value, subschema
+            )
 
-    if expected == "object" or (expected is None and isinstance(value, dict)):
-        if not isinstance(value, dict):
-            return
-        properties = schema.get("properties", {})
-        if not isinstance(properties, dict):
-            raise AgentPolicyError(f"invalid object properties schema at {path}")
-        required = schema.get("required", [])
-        if not isinstance(required, list):
-            raise AgentPolicyError(f"invalid required schema at {path}")
-        for key in required:
-            if str(key) not in value:
-                raise AgentPolicyError(f"required tool argument {path}.{key} is missing")
-        additional = schema.get("additionalProperties", True)
-        for key, item in value.items():
-            child_schema = properties.get(key)
-            if child_schema is None:
-                if additional is False:
-                    raise AgentPolicyError(f"unexpected tool argument {path}.{key}")
-                if isinstance(additional, dict):
-                    child_schema = additional
-            if child_schema is not None:
-                _validate_schema_value(item, child_schema, path=f"{path}.{key}")
-    if expected == "array" and isinstance(value, list):
-        item_schema = schema.get("items")
-        if item_schema is not None:
-            for index, item in enumerate(value):
-                _validate_schema_value(item, item_schema, path=f"{path}[{index}]")
-    if expected == "string" and isinstance(value, str):
-        minimum = int(schema.get("minLength", 0))
-        maximum = int(schema.get("maxLength", len(value)))
-        if not minimum <= len(value) <= maximum:
-            raise AgentPolicyError(f"tool argument at {path} has an invalid length")
-    if expected in {"integer", "number"} and _is_number(value):
-        minimum = schema.get("minimum")
-        maximum = schema.get("maximum")
-        if minimum is not None and value < minimum:
-            raise AgentPolicyError(f"tool argument at {path} is below its minimum")
-        if maximum is not None and value > maximum:
-            raise AgentPolicyError(f"tool argument at {path} exceeds its maximum")
-
-
-def _matches_type(value: object, expected: str) -> bool:
-    return {
-        "object": isinstance(value, dict),
-        "array": isinstance(value, list),
-        "string": isinstance(value, str),
-        "integer": isinstance(value, int) and not isinstance(value, bool),
-        "number": _is_number(value),
-        "boolean": isinstance(value, bool),
-        "null": value is None,
-    }.get(expected, False)
-
-
-def _is_number(value: object) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    validator_type = validators.extend(Draft202012Validator, {'format': strict_format})
+    try:
+        if schema.get("$schema", "https://json-schema.org/draft/2020-12/schema") not in {
+            "https://json-schema.org/draft/2020-12/schema",
+            "https://json-schema.org/draft/2020-12/schema#",
+        }:
+            raise AgentPolicyError("tool schemas must use JSON Schema draft 2020-12")
+        Draft202012Validator.check_schema(schema)
+        validator_type(
+            schema, registry=Registry(), format_checker=checker
+        ).validate(arguments)
+    except (SchemaError, ValidationError) as error:
+        raise AgentPolicyError(f"invalid tool arguments or schema: {error.message}") from error
+    except AgentPolicyError:
+        raise
+    except Exception as error:
+        # An unresolved reference is a configuration failure, not permission to
+        # skip validation. Registry() has no network retrieval callback.
+        raise AgentPolicyError("tool schema contains an unresolvable reference") from error
 
 
 async def _invoke_tool(
@@ -397,17 +365,36 @@ async def _invoke_tool(
     if callable(execute):
         result = await _invoke_callable(execute, dict(arguments), context)
     else:
-        result = await asyncio.to_thread(tool.run, dict(arguments))
+        result = await _invoke_callable(tool.run, dict(arguments))
     return _normalize_output(result)
 
 
 async def _invoke_callable(callable_: Callable[..., object], *args: object) -> object:
     if inspect.iscoroutinefunction(callable_):
         return await callable_(*args)
-    result = await asyncio.to_thread(callable_, *args)
+    task = asyncio.create_task(asyncio.to_thread(callable_, *args))
+    _IN_FLIGHT_SYNC_CALLS.add(task)
+    task.add_done_callback(_finish_sync_call)
+    try:
+        result = await asyncio.shield(task)
+    except asyncio.CancelledError:
+        for argument in args:
+            if isinstance(argument, ToolExecutionContext):
+                argument.stop_requested.set()
+        if not task.done():
+            raise AgentReconciliationRequired(
+                "synchronous tool is still running after cancellation or timeout"
+            ) from None
+        raise
     if inspect.isawaitable(result):
         return await result
     return result
+
+
+def _finish_sync_call(task: asyncio.Task) -> None:
+    _IN_FLIGHT_SYNC_CALLS.discard(task)
+    if not task.cancelled():
+        task.exception()  # Retrieve a late failure without permitting another attempt.
 
 
 def _normalize_output(value: object) -> dict[str, Any]:

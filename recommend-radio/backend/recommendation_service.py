@@ -20,6 +20,7 @@ from database import DEFAULT_DB_PATH, LEGACY_OWNER_USER_ID, get_connection, init
 from discovery_planner import DiscoveryPlanner
 from discovery_service import DiscoveryService
 from experiments import ExperimentAssignments
+from full_trace import FullTrace, current_trace_id, hash_text
 from keyword_governance import KeywordGovernance
 from library_service import LibraryService
 from memory_lifecycle import SceneMemoryService
@@ -220,6 +221,50 @@ class RecommendationService:
         scene: str = "home",
         limit: int = DEFAULT_RECOMMENDATION_LIMIT,
         request_spec: RequestSpec | None = None,
+        *,
+        parent_trace_id: str | None = None,
+    ) -> dict[str, Any]:
+        normalized_scene = self._normalize_scene(scene)
+        trace = FullTrace(
+            str(self.db_path),
+            trace_type="recommendation",
+            user_id=self.user_id,
+            parent_trace_id=parent_trace_id or current_trace_id(),
+            attributes={
+                "scene": normalized_scene,
+                "limit": min(
+                    max(int(limit or DEFAULT_RECOMMENDATION_LIMIT), 1), MAX_RECOMMENDATION_LIMIT
+                ),
+                "requestTextHash": hash_text("" if request_spec is None else request_spec.raw_text),
+            },
+        )
+        with trace:
+            result = self._list_recommendations(
+                scene=normalized_scene,
+                limit=limit,
+                request_spec=request_spec,
+                full_trace=trace,
+            )
+            result["fullTraceId"] = trace.trace_id
+            trace.event(
+                "recommendation.completed",
+                {
+                    "resultCount": len(result.get("items") or []),
+                    "trackIds": [
+                        str((item.get("track") or {}).get("trackId") or "")
+                        for item in result.get("items") or []
+                    ],
+                },
+            )
+            return result
+
+    def _list_recommendations(
+        self,
+        scene: str,
+        limit: int,
+        request_spec: RequestSpec | None,
+        *,
+        full_trace: FullTrace,
     ) -> dict[str, Any]:
         started_at = time.perf_counter()
         timings: dict[str, Any] = {}
@@ -234,6 +279,16 @@ class RecommendationService:
         timings["l2SceneMemoryMs"] = round((time.perf_counter() - span_started) * 1000, 3)
         timings["l2SceneMemorySource"] = (
             scene_memories[0].get("source") if scene_memories else "sqlite_empty"
+        )
+        full_trace.record_span(
+            "scene_memory.retrieve",
+            timings["l2SceneMemoryMs"],
+            kind="memory",
+            inputs={"scene": normalized_scene, "memoryVariant": memory_variant},
+            outputs={
+                "memoryCount": len(scene_memories),
+                "source": timings["l2SceneMemorySource"],
+            },
         )
         active_scene_spec = (
             RequestSpec.from_dict(scene_memories[0]["requestSpec"])
@@ -268,6 +323,18 @@ class RecommendationService:
         if getattr(projection, "llm_latency_ms", 0):
             timings["profileLlmApiMs"] = round(float(projection.llm_latency_ms), 2)
         music_profile = projection.profile
+        full_trace.record_span(
+            "profile.project",
+            timings["profileProjectionMs"],
+            kind="memory",
+            outputs={
+                "traceId": projection.trace_id,
+                "memoryCount": len(projection.memories),
+                "cacheHit": timings["profileCacheHit"],
+                "profileSource": music_profile.source,
+            },
+            metrics={"llmApiMs": timings.get("profileLlmApiMs", 0.0)},
+        )
         negative_samples = self.candidate_pool.list_negative_sample_texts(limit=12)
         recommendation_request = RecommendationRequest(
             scene=normalized_scene,
@@ -299,10 +366,34 @@ class RecommendationService:
             legacy_profile, resolved_request_spec, context_specs=context_specs
         )
         timings["candidatePoolReadMs"] = round((time.perf_counter() - span_started) * 1000, 2)
+        full_trace.record_span(
+            "candidate_pool.read",
+            timings["candidatePoolReadMs"],
+            kind="retrieval",
+            inputs={"requestSpec": resolved_request_spec.to_dict()},
+            outputs={"candidateCount": len(drafts)},
+            metrics={"poolHit": int(bool(drafts))},
+        )
+        span_started = time.perf_counter()
         discovery_plan = self.discovery_service.planner.plan(
             profile=music_profile,
             request_spec=resolved_request_spec,
             scene=normalized_scene,
+        )
+        timings["discoveryPlanMs"] = round((time.perf_counter() - span_started) * 1000, 3)
+        full_trace.record_span(
+            "discovery.plan",
+            timings["discoveryPlanMs"],
+            kind="planning",
+            outputs={
+                "entityQueries": [
+                    query
+                    for query in discovery_plan.search_queries
+                    if query not in discovery_plan.semantic_queries
+                ],
+                "semanticQueries": discovery_plan.semantic_queries,
+                "externalQueryCount": len(discovery_plan.search_queries),
+            },
         )
         discovery_job_id = None
         if (
@@ -316,6 +407,7 @@ class RecommendationService:
                 request_spec=resolved_request_spec,
                 scene=normalized_scene,
                 limit=bounded_limit,
+                parent_trace_id=full_trace.trace_id,
             )
 
         span_started = time.perf_counter()
@@ -330,6 +422,12 @@ class RecommendationService:
             for draft in drafts.values()
         ]
         timings["candidateScoringMs"] = round((time.perf_counter() - span_started) * 1000, 2)
+        full_trace.record_span(
+            "candidate.score",
+            timings["candidateScoringMs"],
+            kind="ranking",
+            outputs={"candidateCount": len(candidates)},
+        )
         span_started = time.perf_counter()
         reranked, selected, mmr_diagnostics = self.recommendation_engine.rank_and_select(
             candidates,
@@ -354,11 +452,37 @@ class RecommendationService:
         )
         timings["selectionMmrMs"] = round((time.perf_counter() - span_started) * 1000, 2)
         timings["mmr"] = mmr_diagnostics
+        timings["ttfrMs"] = round(full_trace.elapsed_ms(), 2) if selected else None
+        full_trace.record_span(
+            "candidate.rank_select",
+            timings["selectionMmrMs"],
+            kind="ranking",
+            outputs={
+                "rerankedCount": len(reranked),
+                "selectedCount": len(selected),
+                "selectedTrackIds": [item.track.get("trackId") for item in selected],
+            },
+            metrics={**mmr_diagnostics, "ttfrMs": timings["ttfrMs"]},
+        )
+        if selected:
+            full_trace.event(
+                "recommendation.first_valid_result",
+                {
+                    "ttfrMs": timings["ttfrMs"],
+                    "trackId": selected[0].track.get("trackId"),
+                },
+            )
         timings["servingMs"] = round((time.perf_counter() - started_at) * 1000, 2)
 
         span_started = time.perf_counter()
         self._upsert_candidate_tracks(selected)
         timings["candidatePersistenceMs"] = round((time.perf_counter() - span_started) * 1000, 2)
+        full_trace.record_span(
+            "candidate.persist",
+            timings["candidatePersistenceMs"],
+            kind="storage",
+            metrics={"candidateCount": len(selected)},
+        )
         span_started = time.perf_counter()
         trace_id = self._store_recommendation_trace(
             scene=normalized_scene,
@@ -375,8 +499,15 @@ class RecommendationService:
             request_spec=resolved_request_spec,
             timing=timings,
             experiments={"memory_context_v1": memory_variant},
+            trace_id=full_trace.trace_id,
         )
         timings["tracePersistenceMs"] = round((time.perf_counter() - span_started) * 1000, 2)
+        full_trace.record_span(
+            "recommendation_trace.persist",
+            timings["tracePersistenceMs"],
+            kind="storage",
+            outputs={"traceId": trace_id},
+        )
         for item in selected:
             item.recommendation_trace_id = trace_id
         span_started = time.perf_counter()
@@ -396,6 +527,12 @@ class RecommendationService:
             ]
         )
         timings["feedbackWriteMs"] = round((time.perf_counter() - span_started) * 1000, 2)
+        full_trace.record_span(
+            "impression.write",
+            timings["feedbackWriteMs"],
+            kind="feedback",
+            metrics={"impressionCount": len(selected)},
+        )
         timings["totalMs"] = round((time.perf_counter() - started_at) * 1000, 2)
         self._update_recommendation_trace_timing(trace_id, timings)
         return {
@@ -661,6 +798,34 @@ class RecommendationService:
         return events[0] if events else {}
 
     def record_events(self, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        parent_ids = {
+            str(
+                payload.get("recommendationTraceId") or payload.get("recommendation_trace_id") or ""
+            )
+            for payload in payloads
+        } - {""}
+        parent_trace_id = next(iter(parent_ids)) if len(parent_ids) == 1 else current_trace_id()
+        trace = FullTrace(
+            str(self.db_path),
+            trace_type="feedback",
+            user_id=self.user_id,
+            parent_trace_id=parent_trace_id,
+            attributes={"inputEventCount": len(payloads)},
+        )
+        with trace:
+            result = self._record_events(payloads, full_trace=trace)
+            for item in result:
+                item["fullTraceId"] = trace.trace_id
+            trace.event("feedback.completed", {"acceptedEventCount": len(result)})
+            return result
+
+    def _record_events(
+        self,
+        payloads: list[dict[str, Any]],
+        *,
+        full_trace: FullTrace,
+    ) -> list[dict[str, Any]]:
+        normalized_started = time.perf_counter()
         now = _utc_now()
         normalized = []
         for payload in payloads:
@@ -701,7 +866,17 @@ class RecommendationService:
                     "behaviorPayload": dict(payload),
                 }
             )
+        full_trace.record_span(
+            "feedback.normalize",
+            (time.perf_counter() - normalized_started) * 1000,
+            kind="feedback",
+            outputs={
+                "acceptedEventCount": len(normalized),
+                "eventTypes": sorted({item["event"] for item in normalized}),
+            },
+        )
 
+        storage_started = time.perf_counter()
         if normalized:
             with get_connection(self.db_path) as conn:
                 conn.executemany(
@@ -734,7 +909,23 @@ class RecommendationService:
                 )
                 for item in normalized:
                     self._write_history(conn, item)
+                    if item['event'] in MEMORY_EVIDENCE_EVENTS:
+                        from durable_jobs import enqueue_behavior
+                        behavior_payload = dict(item.get('behaviorPayload') or {})
+                        behavior_payload.update({name: item[name] for name in (
+                            'source','reason','score','playedSeconds','completed','skipped')})
+                        enqueue_behavior(conn, user_id=self.user_id, event=item['event'],
+                                         scene=item['scene'], track=item['track'],
+                                         payload=behavior_payload)
+        full_trace.record_span(
+            "feedback.persist",
+            (time.perf_counter() - storage_started) * 1000,
+            kind="storage",
+            metrics={"eventCount": len(normalized)},
+        )
 
+        learning_started = time.perf_counter()
+        memory_evidence_count = 0
         for item in normalized:
             behavior_payload = dict(item.get("behaviorPayload") or {})
             behavior_payload.update(
@@ -750,14 +941,17 @@ class RecommendationService:
             # Exposure is stored locally for fatigue and keyword attribution,
             # but it is not user-preference evidence and must not enter AMEM.
             if item["event"] in MEMORY_EVIDENCE_EVENTS:
-                record_music_behavior(
-                    self.amem_bridge,
-                    user_id=self.user_id,
-                    event=item["event"],
-                    track=item["track"],
-                    scene=item["scene"],
-                    payload=behavior_payload,
-                )
+                memory_evidence_count += 1
+                from rabbitmq_bus import rabbitmq_enabled
+                if not rabbitmq_enabled():
+                    record_music_behavior(
+                        self.amem_bridge,
+                        user_id=self.user_id,
+                        event=item["event"],
+                        track=item["track"],
+                        scene=item["scene"],
+                        payload=behavior_payload,
+                    )
             self.keyword_governance.record_feedback(
                 item["trackId"],
                 item["event"],
@@ -769,8 +963,28 @@ class RecommendationService:
                     [item["track"]],
                     force=True,
                 )
+        full_trace.record_span(
+            "feedback.learn",
+            (time.perf_counter() - learning_started) * 1000,
+            kind="memory",
+            metrics={
+                "eventCount": len(normalized),
+                "memoryEvidenceCount": memory_evidence_count,
+            },
+        )
+        profile_started = time.perf_counter()
         if any(item["event"] in PROFILE_LIFECYCLE_EVENTS for item in normalized):
             self.profile_update_pipeline.process()
+        full_trace.record_span(
+            "profile.lifecycle.update",
+            (time.perf_counter() - profile_started) * 1000,
+            kind="memory",
+            metrics={
+                "triggered": int(
+                    any(item["event"] in PROFILE_LIFECYCLE_EVENTS for item in normalized)
+                )
+            },
+        )
         return [
             {key: value for key, value in item.items() if key not in {"track", "behaviorPayload"}}
             for item in normalized
@@ -1541,10 +1755,11 @@ class RecommendationService:
         request_spec: RequestSpec,
         timing: dict[str, Any],
         experiments: dict[str, str],
+        trace_id: str | None = None,
     ) -> str:
         created_at = _utc_now()
         timestamp_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-        trace_id = f"recommend:{self.user_id}:{scene}:{timestamp_ms}:{uuid4().hex[:8]}"
+        trace_id = trace_id or f"recommend:{self.user_id}:{scene}:{timestamp_ms}:{uuid4().hex[:8]}"
         for candidate in selected:
             candidate.recommendation_trace_id = trace_id
         payload = {

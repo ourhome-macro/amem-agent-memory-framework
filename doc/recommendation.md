@@ -130,6 +130,8 @@ Discovery 还可以从以下独立供给通道补货：
 
 真实日志评测不会用未来画像重建过去决策，也不会把未曝光歌曲当负样本。由于当前没有 selection propensity，它只能报告 exposed-slate 条件指标和有限消融，不能声称无偏反事实收益；未来实施 IPS/SNIPS 前必须先记录真实选择概率。
 
+全链路采用 `evaluation_traces / evaluation_trace_spans / evaluation_trace_events`，把 dialogue、recommendation、Discovery、feedback 与通用 Agent run 组织为父子 trace。Golden Set、门禁与指标口径见 `recommend-radio/doc/AGENT_EVALUATION.md`。
+
 ## 性能与降级
 
 - 推荐 trace 输出 L2、画像、候选池、打分、MMR、持久化和反馈阶段耗时。

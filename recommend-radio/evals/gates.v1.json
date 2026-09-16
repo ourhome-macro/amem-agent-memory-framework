@@ -1,0 +1,21 @@
+{
+  "minimum": {
+    "overallPassRate": 1.0,
+    "capabilityPassRate": 1.0,
+    "businessPassRate": 1.0,
+    "adversarialPassRate": 1.0,
+    "routeAccuracy": 1.0,
+    "requestSpecAccuracy": 1.0,
+    "entityResolutionAccuracy": 1.0,
+    "sceneRestorationAccuracy": 1.0,
+    "groundingRate": 1.0,
+    "groundingDetectionAccuracy": 1.0,
+    "memoryRetrievalAccuracy": 1.0,
+    "rankingNdcgAt8": 0.9,
+    "rankingHitAt8": 1.0,
+    "intraListDiversity": 0.45
+  },
+  "maximum": {
+    "forbiddenViolationRate": 0.0
+  }
+}

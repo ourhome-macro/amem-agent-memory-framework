@@ -50,6 +50,17 @@ class PlaybackService:
         ended_at = now if event in {"pause", "end", "ended", "skip", "next", "stop"} else None
 
         with get_connection(self.db_path) as conn:
+            from durable_jobs import enqueue_behavior
+            import hashlib
+            import json
+            event_key = str(payload.get('eventId') or payload.get('event_id') or
+                            hashlib.sha256(json.dumps([session_id,track_id,event,position_ms,
+                                                       listen_ms,completed,skipped]).encode()).hexdigest())
+            enqueue_behavior(conn, user_id=self.user_id,
+                             event='completed' if completed else 'skipped' if skipped else 'played',
+                             scene='playback', track=track, event_id=event_key,
+                             payload={'sessionId': session_id, 'positionMs': position_ms,
+                                      'listenMs': listen_ms, 'completed': completed, 'skipped': skipped})
             conn.execute(
                 """
                 INSERT INTO playback_sessions (

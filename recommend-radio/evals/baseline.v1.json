@@ -1,0 +1,660 @@
+{
+  "caseCount": 27,
+  "cases": [
+    {
+      "actual": {
+        "grounded": false
+      },
+      "id": "adv-grounding-001",
+      "layer": "adversarial",
+      "metrics": {
+        "groundingRate": 0.0
+      },
+      "mismatches": [],
+      "passed": true,
+      "task": "asset_grounding"
+    },
+    {
+      "actual": "{\"authorization\":\"[REDACTED]\",\"nested\":{\"api_key\":\"[REDACTED]\",\"safe\":\"visible\"}}",
+      "id": "adv-redaction-001",
+      "layer": "adversarial",
+      "mismatches": [],
+      "passed": true,
+      "task": "trace_redaction"
+    },
+    {
+      "actual": {
+        "evidence": [
+          "excluded_topic:rap",
+          "excluded_topic:说唱"
+        ],
+        "excludedLanguages": [],
+        "excludedTopics": [
+          "rap",
+          "说唱"
+        ],
+        "moods": [],
+        "rawText": "不要 Rap，也别放说唱",
+        "requiredGenres": [],
+        "requiredLanguages": [],
+        "requiredRegions": [],
+        "requiredVocals": [],
+        "scope": "request"
+      },
+      "id": "adv-request-001",
+      "layer": "adversarial",
+      "mismatches": [],
+      "passed": true,
+      "task": "request_spec"
+    },
+    {
+      "actual": {
+        "controlAction": "",
+        "needMemory": false,
+        "needProfile": false,
+        "needRecommendationSearch": false,
+        "primaryIntent": "CHAT",
+        "tool": "casual_chat"
+      },
+      "id": "adv-route-001",
+      "layer": "adversarial",
+      "mismatches": [],
+      "passed": true,
+      "task": "dialogue_route"
+    },
+    {
+      "actual": {
+        "requestSpec": {
+          "evidence": [
+            "required_region:japanese",
+            "required_language:japanese",
+            "required_genre:rock"
+          ],
+          "excludedLanguages": [],
+          "excludedTopics": [],
+          "moods": [],
+          "rawText": "改成日语摇滚",
+          "requiredGenres": [
+            "rock"
+          ],
+          "requiredLanguages": [
+            "japanese"
+          ],
+          "requiredRegions": [
+            "japanese"
+          ],
+          "requiredVocals": [],
+          "scope": "request"
+        },
+        "restored": false
+      },
+      "id": "adv-scene-001",
+      "layer": "adversarial",
+      "mismatches": [],
+      "passed": true,
+      "task": "scene_restore"
+    },
+    {
+      "actual": [
+        {
+          "canonicalArtist": "",
+          "canonicalTitle": "Intro",
+          "confidence": 0.38,
+          "versionType": "studio_or_unknown"
+        },
+        {
+          "canonicalArtist": "",
+          "canonicalTitle": "Intro",
+          "confidence": 0.38,
+          "versionType": "studio_or_unknown"
+        }
+      ],
+      "id": "adv-entity-001",
+      "layer": "adversarial",
+      "mismatches": [],
+      "passed": true,
+      "task": "entity_resolution"
+    },
+    {
+      "actual": {
+        "diagnostics": {
+          "candidateCount": 1,
+          "eligibleCount": 1,
+          "embeddingMs": 0.0,
+          "hardFilteredCount": 1,
+          "inputCandidateCount": 2,
+          "mode": "none",
+          "requestFacetFilteredCount": 0
+        },
+        "selectedIds": [
+          "grounded"
+        ]
+      },
+      "id": "adv-ranking-001",
+      "layer": "adversarial",
+      "metrics": {
+        "forbiddenViolations": 0,
+        "groundingRate": 1,
+        "hitAt8": 1.0,
+        "intraListDiversity": 0.0,
+        "ndcgAt8": 1.0,
+        "selectedCount": 1
+      },
+      "mismatches": [],
+      "passed": true,
+      "task": "ranking"
+    },
+    {
+      "actual": {
+        "error": "agent graph contains a dependency cycle: a, b",
+        "valid": false
+      },
+      "id": "adv-dag-001",
+      "layer": "adversarial",
+      "mismatches": [],
+      "passed": true,
+      "task": "agent_graph"
+    },
+    {
+      "actual": {
+        "blockedCount": 0,
+        "candidateCount": 1,
+        "selectedIds": [
+          "allowed"
+        ]
+      },
+      "id": "adv-retrieval-001",
+      "layer": "adversarial",
+      "metrics": {
+        "forbiddenHits": 0,
+        "retrievalRecall": 1.0
+      },
+      "mismatches": [],
+      "passed": true,
+      "task": "memory_retrieval"
+    },
+    {
+      "actual": {
+        "diagnostics": {
+          "candidateCount": 2,
+          "candidateVectors": "persisted",
+          "diversitySpace": "text",
+          "eligibleCount": 2,
+          "embeddingMs": 0.0,
+          "hardFilteredCount": 1,
+          "inputCandidateCount": 3,
+          "mode": "bge_m3_vector",
+          "model": "golden-vector",
+          "negativeSampleCount": 0,
+          "requestFacetFilteredCount": 0
+        },
+        "selectedIds": [
+          "good-a",
+          "good-b"
+        ]
+      },
+      "id": "biz-ranking-001",
+      "layer": "business",
+      "metrics": {
+        "forbiddenViolations": 0,
+        "groundingRate": 1,
+        "hitAt8": 1.0,
+        "intraListDiversity": 0.7143,
+        "ndcgAt8": 1.0,
+        "selectedCount": 2
+      },
+      "mismatches": [],
+      "passed": true,
+      "task": "ranking"
+    },
+    {
+      "actual": {
+        "diagnostics": {
+          "candidateCount": 2,
+          "candidateVectors": "persisted",
+          "diversitySpace": "text",
+          "eligibleCount": 2,
+          "embeddingMs": 0.0,
+          "hardFilteredCount": 1,
+          "inputCandidateCount": 3,
+          "mode": "bge_m3_vector",
+          "model": "golden-vector",
+          "negativeSampleCount": 0,
+          "requestFacetFilteredCount": 0
+        },
+        "selectedIds": [
+          "safe-a",
+          "safe-b"
+        ]
+      },
+      "id": "biz-ranking-002",
+      "layer": "business",
+      "metrics": {
+        "forbiddenViolations": 0,
+        "groundingRate": 1,
+        "hitAt8": 1.0,
+        "intraListDiversity": 1.0,
+        "ndcgAt8": 1.0,
+        "selectedCount": 2
+      },
+      "mismatches": [],
+      "passed": true,
+      "task": "ranking"
+    },
+    {
+      "actual": {
+        "diagnostics": {
+          "candidateCount": 3,
+          "candidateVectors": "persisted",
+          "diversitySpace": "text",
+          "eligibleCount": 3,
+          "embeddingMs": 0.0,
+          "hardFilteredCount": 0,
+          "inputCandidateCount": 3,
+          "mode": "bge_m3_vector",
+          "model": "golden-vector",
+          "negativeSampleCount": 0,
+          "requestFacetFilteredCount": 0
+        },
+        "selectedIds": [
+          "asset-a",
+          "asset-b"
+        ]
+      },
+      "id": "biz-ranking-003",
+      "layer": "business",
+      "metrics": {
+        "forbiddenViolations": 0,
+        "groundingRate": 1,
+        "hitAt8": 1.0,
+        "intraListDiversity": 1.0,
+        "ndcgAt8": 0.7789,
+        "selectedCount": 2
+      },
+      "mismatches": [],
+      "passed": true,
+      "task": "ranking"
+    },
+    {
+      "actual": {
+        "evidence": [
+          "required_language:english",
+          "required_genre:rnb",
+          "mood:放松",
+          "excluded_topic:rap"
+        ],
+        "excludedLanguages": [],
+        "excludedTopics": [
+          "rap"
+        ],
+        "moods": [
+          "放松"
+        ],
+        "rawText": "来点舒缓的英文 R&B，不要 Rap",
+        "requiredGenres": [
+          "rnb"
+        ],
+        "requiredLanguages": [
+          "english"
+        ],
+        "requiredRegions": [],
+        "requiredVocals": [],
+        "scope": "request"
+      },
+      "id": "cap-request-001",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "request_spec"
+    },
+    {
+      "actual": {
+        "evidence": [
+          "required_region:chinese",
+          "required_language:chinese",
+          "required_genre:rock"
+        ],
+        "excludedLanguages": [],
+        "excludedTopics": [],
+        "moods": [],
+        "rawText": "推荐一些华语摇滚",
+        "requiredGenres": [
+          "rock"
+        ],
+        "requiredLanguages": [
+          "chinese"
+        ],
+        "requiredRegions": [
+          "chinese"
+        ],
+        "requiredVocals": [],
+        "scope": "request"
+      },
+      "id": "cap-request-002",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "request_spec"
+    },
+    {
+      "actual": {
+        "controlAction": "",
+        "needMemory": true,
+        "needProfile": true,
+        "needRecommendationSearch": true,
+        "primaryIntent": "RECOMMEND",
+        "tool": "recommend_music"
+      },
+      "id": "cap-route-001",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "dialogue_route"
+    },
+    {
+      "actual": {
+        "controlAction": "",
+        "needMemory": true,
+        "needProfile": true,
+        "needRecommendationSearch": false,
+        "primaryIntent": "CHAT",
+        "tool": "explain_recommendation"
+      },
+      "id": "cap-route-002",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "dialogue_route"
+    },
+    {
+      "actual": {
+        "controlAction": "",
+        "needMemory": true,
+        "needProfile": false,
+        "needRecommendationSearch": false,
+        "primaryIntent": "CHAT",
+        "tool": "recall_memory"
+      },
+      "id": "cap-route-003",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "dialogue_route"
+    },
+    {
+      "actual": {
+        "controlAction": "next",
+        "needMemory": false,
+        "needProfile": false,
+        "needRecommendationSearch": false,
+        "primaryIntent": "CONTROL",
+        "tool": "control"
+      },
+      "id": "cap-route-004",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "dialogue_route"
+    },
+    {
+      "actual": [
+        {
+          "canonicalArtist": "Adele",
+          "canonicalTitle": "Hello",
+          "confidence": 0.7,
+          "versionType": "studio_or_unknown"
+        },
+        {
+          "canonicalArtist": "Adele",
+          "canonicalTitle": "Hello",
+          "confidence": 0.7,
+          "versionType": "live"
+        }
+      ],
+      "id": "cap-entity-001",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "entity_resolution"
+    },
+    {
+      "actual": [
+        {
+          "canonicalArtist": "",
+          "canonicalTitle": "同名歌曲",
+          "confidence": 0.38,
+          "versionType": "studio_or_unknown"
+        },
+        {
+          "canonicalArtist": "",
+          "canonicalTitle": "同名歌曲",
+          "confidence": 0.38,
+          "versionType": "studio_or_unknown"
+        }
+      ],
+      "id": "cap-entity-002",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "entity_resolution"
+    },
+    {
+      "actual": {
+        "requestSpec": {
+          "evidence": [],
+          "excludedLanguages": [],
+          "excludedTopics": [],
+          "moods": [],
+          "rawText": "来点英文 R&B",
+          "requiredGenres": [
+            "rnb"
+          ],
+          "requiredLanguages": [
+            "english"
+          ],
+          "requiredRegions": [],
+          "requiredVocals": [],
+          "scope": "request"
+        },
+        "restored": true
+      },
+      "id": "cap-scene-001",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "scene_restore"
+    },
+    {
+      "actual": {
+        "requestSpec": {
+          "evidence": [],
+          "excludedLanguages": [],
+          "excludedTopics": [],
+          "moods": [],
+          "rawText": "随便推荐一些歌",
+          "requiredGenres": [],
+          "requiredLanguages": [],
+          "requiredRegions": [],
+          "requiredVocals": [],
+          "scope": "request"
+        },
+        "restored": false
+      },
+      "id": "cap-scene-002",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "scene_restore"
+    },
+    {
+      "actual": {
+        "externalQueryCount": 1,
+        "queries": [
+          "calm 音乐"
+        ],
+        "requestFirst": false,
+        "semanticExternalCount": 1,
+        "semanticQueryCount": 3
+      },
+      "id": "cap-plan-001",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "discovery_plan"
+    },
+    {
+      "actual": {
+        "externalQueryCount": 3,
+        "queries": [
+          "R&B 音乐",
+          "Neo Soul 音乐",
+          "Funk Soul 音乐"
+        ],
+        "requestFirst": false,
+        "semanticExternalCount": 0,
+        "semanticQueryCount": 0
+      },
+      "id": "cap-plan-002",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "discovery_plan"
+    },
+    {
+      "actual": {
+        "grounded": true
+      },
+      "id": "cap-grounding-001",
+      "layer": "capability",
+      "metrics": {
+        "groundingRate": 1.0
+      },
+      "mismatches": [],
+      "passed": true,
+      "task": "asset_grounding"
+    },
+    {
+      "actual": {
+        "maximumDepth": 3,
+        "maximumFanOut": 2,
+        "outputTaskIds": [
+          "rank"
+        ],
+        "valid": true
+      },
+      "id": "cap-dag-001",
+      "layer": "capability",
+      "mismatches": [],
+      "passed": true,
+      "task": "agent_graph"
+    },
+    {
+      "actual": {
+        "blockedCount": 0,
+        "candidateCount": 2,
+        "selectedIds": [
+          "memory-rnb"
+        ]
+      },
+      "id": "cap-retrieval-001",
+      "layer": "capability",
+      "metrics": {
+        "forbiddenHits": 0,
+        "retrievalRecall": 1.0
+      },
+      "mismatches": [],
+      "passed": true,
+      "task": "memory_retrieval"
+    }
+  ],
+  "failedCount": 0,
+  "gates": {
+    "failures": [],
+    "passed": true
+  },
+  "generatedAt": "2026-09-12T13:41:22.051657+00:00",
+  "goldenHash": "d0b14dbf64d0f21100c480ad8ad3e0a5964cf1342cf894df018c1046c789568a",
+  "layers": {
+    "adversarial": {
+      "count": 9,
+      "passRate": 1,
+      "passed": 9
+    },
+    "business": {
+      "count": 3,
+      "passRate": 1,
+      "passed": 3
+    },
+    "capability": {
+      "count": 15,
+      "passRate": 1,
+      "passed": 15
+    }
+  },
+  "limitations": [
+    "Programmatic golden cases measure deterministic contracts, not online retention.",
+    "Ranking cases use frozen candidate slates and cannot estimate unexposed counterfactual reward.",
+    "LLM-as-judge is intentionally excluded until calibrated against human labels."
+  ],
+  "metrics": {
+    "adversarialPassRate": 1,
+    "businessPassRate": 1,
+    "capabilityPassRate": 1,
+    "entityResolutionAccuracy": 1,
+    "forbiddenViolationRate": 0.0,
+    "groundingDetectionAccuracy": 1,
+    "groundingRate": 1.0,
+    "intraListDiversity": 0.6786,
+    "memoryRetrievalAccuracy": 1,
+    "overallPassRate": 1.0,
+    "rankingHitAt8": 1.0,
+    "rankingNdcgAt8": 0.9447,
+    "requestSpecAccuracy": 1,
+    "routeAccuracy": 1,
+    "sceneRestorationAccuracy": 1
+  },
+  "passedCount": 27,
+  "suiteVersion": "music-agent-golden-v1",
+  "tasks": {
+    "agent_graph": {
+      "count": 2,
+      "passRate": 1
+    },
+    "asset_grounding": {
+      "count": 2,
+      "passRate": 1
+    },
+    "dialogue_route": {
+      "count": 5,
+      "passRate": 1
+    },
+    "discovery_plan": {
+      "count": 2,
+      "passRate": 1
+    },
+    "entity_resolution": {
+      "count": 3,
+      "passRate": 1
+    },
+    "memory_retrieval": {
+      "count": 2,
+      "passRate": 1
+    },
+    "ranking": {
+      "count": 4,
+      "passRate": 1
+    },
+    "request_spec": {
+      "count": 3,
+      "passRate": 1
+    },
+    "scene_restore": {
+      "count": 3,
+      "passRate": 1
+    },
+    "trace_redaction": {
+      "count": 1,
+      "passRate": 1
+    }
+  }
+}

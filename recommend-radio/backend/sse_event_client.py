@@ -27,6 +27,35 @@ class SSEEventPublisher:
 
     def publish(
         self,
+        connection: Any = None,
+        **event: Any,
+    ) -> str | None:
+        if not self.enabled:
+            return None
+        from database import get_connection
+        from durable_jobs import enqueue
+
+        if connection is not None:
+            return enqueue(
+                connection,
+                kind="sse",
+                user_id=event["user_id"],
+                lane=f"sse:{event['user_id']}:{event['task_id']}",
+                payload=event,
+                retry_safe=True,
+            )
+        with get_connection() as conn:
+            return enqueue(
+                conn,
+                kind="sse",
+                user_id=event["user_id"],
+                lane=f"sse:{event['user_id']}:{event['task_id']}",
+                payload=event,
+                retry_safe=True,
+            )
+
+    def publish_http(
+        self,
         *,
         task_id: str,
         session_id: str,
@@ -58,7 +87,7 @@ class SSEEventPublisher:
             return None
         except Exception as exc:
             LOGGER.warning("SSE event publish failed: %s", exc)
-            return None
+            raise
 
     def close(self) -> None:
         self.session.close()
