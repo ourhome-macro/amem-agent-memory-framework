@@ -1,0 +1,10 @@
+groups:
+  - name: radio
+    rules:
+      - alert: RadioBackendUnavailable
+        expr: up{job="radio"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Radio backend metrics endpoint is unavailable

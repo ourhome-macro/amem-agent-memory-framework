@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+
+def _token_count(value):
+    # Older traces redacted every key containing 'token', including numeric usage.
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
 import json
 import math
 import statistics
@@ -97,8 +105,8 @@ def summarize_traces(db_path: str, *, since: str | None = None) -> dict[str, Any
         if name == "candidate.rank_select":
             ranking_spans.append(row)
         span_metrics = _json_object(row["metrics_json"])
-        input_tokens += int(span_metrics.get("inputTokens") or 0)
-        output_tokens += int(span_metrics.get("outputTokens") or 0)
+        input_tokens += _token_count(span_metrics.get("inputTokens"))
+        output_tokens += _token_count(span_metrics.get("outputTokens"))
 
     pool_hits = sum(
         int(int(_json_object(row["output_json"]).get("candidateCount") or 0) > 0)

@@ -55,28 +55,46 @@ app.conf.update(
 
 
 def publish_job(job_id: str, kind: str) -> None:
+    from telemetry_setup import setup
+    from agent_memory_runtime.telemetry import carrier, span
+    setup('radio-outbox')
     queue = "radio.events.v2" if kind in {"behavior", "sse"} else "radio.jobs.v2"
-    execute_job.apply_async(
-        args=[job_id], task_id=job_id, queue=queue, routing_key=queue, delivery_mode=2
-    )
+    with get_connection() as conn:
+        row = conn.execute('SELECT trace_context FROM durable_jobs WHERE job_id=?', (job_id,)).fetchone()
+    parent = json.loads(row['trace_context']) if row else {}
+    with span('messaging.publish', parent=parent, attributes={'job.kind':kind,'job.id':job_id}):
+        execute_job.apply_async(args=[job_id], task_id=job_id, queue=queue,
+                               routing_key=queue, delivery_mode=2, headers=carrier())
 
 
-@app.task(name="radio.execute_job")
-def execute_job(job_id: str) -> None:
+@app.task(bind=True, name="radio.execute_job")
+def execute_job(self, job_id: str) -> None:
+    from telemetry_setup import setup
+    from agent_memory_runtime.telemetry import span, flush
+    from music_agent import current_job_id
+    setup('radio-worker')
     init_db()
     with get_connection() as conn:
         job = claim(conn, job_id)
     if job is None:
         return
+    parent = self.request.headers or json.loads(job['trace_context'])
+    token = current_job_id.set(job_id)
     try:
-        result = dispatch(job)
-    except Exception as error:
-        LOGGER.exception("Job failed: %s", job_id)
-        with get_connection() as conn:
-            finish(conn, job, error=error)
-    else:
-        with get_connection() as conn:
-            finish(conn, job, result=result)
+        with span('task.execute', parent=parent, attributes={'job.id':job_id,'job.kind':job['kind']}):
+            try:
+                result = dispatch(job)
+            except Exception as error:
+                LOGGER.exception("Job failed: %s", job_id)
+                with get_connection() as conn:
+                    finish(conn, job, error=error)
+                raise
+            else:
+                with get_connection() as conn:
+                    finish(conn, job, result=result)
+    finally:
+        current_job_id.reset(token)
+        flush()
 
 
 def dispatch(job: dict):
@@ -100,18 +118,14 @@ def dispatch(job: dict):
 
     # Never deserialize request cookies, Python service instances or caller-owned
     # paths from broker payloads. Identity and input come from the durable row.
-    from auth_service import AuthService
-    from bili_client import BiliClient
+    from service_factory import MusicServices
 
     user_id = job["user_id"]
-    auth = AuthService(user_id=user_id)
-    client = BiliClient(cookie_provider=auth.get_cookie_header)
-    try:
+    with MusicServices(user_id=user_id) as services:
         if job["kind"] in {"discovery", "evolution"}:
-            from discovery_service import DiscoveryService
             from request_spec import RequestSpec
 
-            service = DiscoveryService(str(DEFAULT_DB_PATH), user_id=user_id, bili_client=client)
+            service = services.discovery
             if job["kind"] == "evolution":
                 if service.keyword_governance.evolution_due():
                     service._run_evolution(payload["blocked_topics"])
@@ -130,17 +144,10 @@ def dispatch(job: dict):
                 raise RuntimeError("DiscoveryFailed")
             return status
         if job["kind"] in {"dialogue", "discovery_watch"}:
-            from amem_runtime import build_amem_runtime
-            from dialogue_service import MusicDialogueService
             from dialogue_task_service import DialogueTaskService
-            from recommendation_service import RecommendationService
             from sse_event_client import SSEEventPublisher
 
-            bridge, projector = build_amem_runtime()
-            recommendations = RecommendationService(
-                user_id=user_id, bili_client=client, amem_bridge=bridge, profile_projector=projector
-            )
-            service = MusicDialogueService(user_id=user_id, recommendation_service=recommendations)
+            service = services.dialogue
             publisher = SSEEventPublisher()
             tasks = DialogueTaskService(publisher)
             try:
@@ -153,8 +160,4 @@ def dispatch(job: dict):
                 )
             finally:
                 tasks.close()
-                getattr(bridge, "close", lambda: None)()
         raise ValueError("unknown durable job kind")
-    finally:
-        client.close()
-        auth.session.close()

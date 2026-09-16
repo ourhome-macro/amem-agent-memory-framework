@@ -1,4 +1,5 @@
-﻿import { defineStore } from 'pinia'
+﻿import { findActiveSubtitleLineIndex } from '@/utils/subtitles'
+import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import type {
   VideoInfo,
@@ -845,23 +846,6 @@ export const usePlayerStore = defineStore('player', () => {
     return `${track.bvid}:${track.cid ?? ''}`
   }
 
-  function findActiveSubtitleLineIndex(lines: TrackSubtitleLine[], playbackTime: number): number {
-    let low = 0
-    let high = lines.length - 1
-    let candidate = -1
-
-    while (low <= high) {
-      const middle = Math.floor((low + high) / 2)
-      if (lines[middle].from <= playbackTime) {
-        candidate = middle
-        low = middle + 1
-      } else {
-        high = middle - 1
-      }
-    }
-
-    return candidate >= 0 && playbackTime < lines[candidate].to ? candidate : -1
-  }
 
   async function hydrateTrackMetadata(track: Track): Promise<Track> {
     let nextTrack = track

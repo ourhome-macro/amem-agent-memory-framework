@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import contextvars
+import threading
+from contextlib import contextmanager
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any
 from uuid import uuid4
@@ -29,6 +32,39 @@ _SENSITIVE_KEYS = {
 
 def current_trace_id() -> str | None:
     return _CURRENT_TRACE_ID.get()
+
+
+@dataclass
+class StepMeasurement:
+    outputs: dict[str, Any] = field(default_factory=dict)
+    duration_ms: float = 0.0
+
+
+@contextmanager
+def measure_step(trace, name: str, *, kind: str = "internal"):
+    """One timing scope feeds operational spans and the evaluation projection."""
+    from agent_memory_runtime.telemetry import span
+
+    measurement = StepMeasurement()
+    started = perf_counter()
+    error_type = None
+    try:
+        with span("business.step." + name):
+            yield measurement
+    except BaseException as error:
+        error_type = type(error).__name__
+        raise
+    finally:
+        measurement.duration_ms = round((perf_counter() - started) * 1000, 3)
+        if trace is not None:
+            trace.record_span(
+                name,
+                measurement.duration_ms,
+                kind=kind,
+                status="failed" if error_type else "completed",
+                outputs=measurement.outputs,
+                error_type=error_type,
+            )
 
 
 class FullTrace:
@@ -57,6 +93,9 @@ class FullTrace:
         self.started_at = _utc_now()
         self._started_perf = perf_counter()
         self._sequence = 0
+        self._pending = []
+        self._batch_depth = 0
+        self._lock = threading.RLock()
         self._token: contextvars.Token[str | None] | None = None
         self._write_trace(initial_status=initial_status, attributes=attributes or {})
 
@@ -68,8 +107,10 @@ class FullTrace:
                 (trace_id,),
             ).fetchone()
             sequence = conn.execute(
-                "SELECT COALESCE(MAX(sequence), 0) FROM evaluation_trace_events WHERE trace_id=?",
-                (trace_id,),
+                "SELECT COALESCE(MAX(sequence), 0) FROM ("
+                "SELECT sequence FROM evaluation_trace_events WHERE trace_id=? UNION ALL "
+                "SELECT sequence FROM evaluation_trace_spans WHERE trace_id=?)",
+                (trace_id, trace_id),
             ).fetchone()[0]
         if row is None:
             raise KeyError(trace_id)
@@ -84,6 +125,9 @@ class FullTrace:
         value.started_at = str(row["started_at"])
         value._started_perf = perf_counter()
         value._sequence = int(sequence or 0)
+        value._pending = []
+        value._batch_depth = 0
+        value._lock = threading.RLock()
         value._token = None
         with get_connection(db_path) as conn:
             conn.execute(
@@ -93,10 +137,19 @@ class FullTrace:
         return value
 
     def __enter__(self) -> FullTrace:
+        from agent_memory_runtime.telemetry import span
+
+        self._otel_scope = span(
+            "business." + self.trace_type, attributes={"business.trace_id": self.trace_id}
+        )
+        self._otel_scope.__enter__()
         self._token = _CURRENT_TRACE_ID.set(self.trace_id)
+        self._batch_depth += 1
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> bool:
+        self._batch_depth -= 1
+        self.flush()
         if exc_value is None:
             self.finish("completed")
         else:
@@ -104,7 +157,43 @@ class FullTrace:
         if self._token is not None:
             _CURRENT_TRACE_ID.reset(self._token)
             self._token = None
+        if hasattr(self, "_otel_scope"):
+            self._otel_scope.__exit__(exc_type, exc_value, traceback)
         return False
+
+    @contextmanager
+    def batch(self):
+        """Batch evaluation projections, never domain audit/tool/outbox records."""
+        with self._lock:
+            self._batch_depth += 1
+        try:
+            yield self
+        finally:
+            with self._lock:
+                self._batch_depth -= 1
+                if self._batch_depth == 0:
+                    self.flush()
+
+    def _append(self, sql, parameters):
+        with self._lock:
+            self._pending.append((sql, parameters))
+            if not self._batch_depth or len(self._pending) >= 128:
+                self.flush()
+
+    def flush(self):
+        with self._lock:
+            if not self._pending:
+                return
+            pending, self._pending = self._pending, []
+            try:
+                with get_connection(self.db_path) as conn:
+                    for sql, parameters in pending:
+                        conn.execute(sql, parameters)
+            except Exception:
+                # Evaluation telemetry is best effort, unlike the durable audit journal.
+                import logging
+
+                logging.getLogger(__name__).warning("Evaluation trace batch write failed")
 
     def record_span(
         self,
@@ -123,32 +212,31 @@ class FullTrace:
         ended_at = datetime.now(timezone.utc)
         started_at = ended_at - timedelta(milliseconds=max(float(duration_ms), 0.0))
         try:
-            with get_connection(self.db_path) as conn:
-                conn.execute(
-                    """
-                    INSERT INTO evaluation_trace_spans (
-                        span_id, trace_id, parent_span_id, sequence, name, kind,
-                        status, started_at, ended_at, duration_ms, input_json,
-                        output_json, metrics_json, error_type
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        span_id,
-                        self.trace_id,
-                        parent_span_id,
-                        self._next_sequence(),
-                        name[:120],
-                        kind[:40],
-                        status[:32],
-                        started_at.isoformat(),
-                        ended_at.isoformat(),
-                        round(max(float(duration_ms), 0.0), 4),
-                        _safe_json(inputs or {}),
-                        _safe_json(outputs or {}),
-                        _safe_json(metrics or {}),
-                        error_type,
-                    ),
-                )
+            self._append(
+                """
+                INSERT INTO evaluation_trace_spans (
+                    span_id, trace_id, parent_span_id, sequence, name, kind,
+                    status, started_at, ended_at, duration_ms, input_json,
+                    output_json, metrics_json, error_type
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    span_id,
+                    self.trace_id,
+                    parent_span_id,
+                    self._next_sequence(),
+                    name[:120],
+                    kind[:40],
+                    status[:32],
+                    started_at.isoformat(),
+                    ended_at.isoformat(),
+                    round(max(float(duration_ms), 0.0), 4),
+                    _safe_json(inputs or {}),
+                    _safe_json(outputs or {}),
+                    _safe_json(metrics or {}),
+                    error_type,
+                ),
+            )
         except Exception:
             return span_id
         return span_id
@@ -161,24 +249,23 @@ class FullTrace:
         span_id: str | None = None,
     ) -> None:
         try:
-            with get_connection(self.db_path) as conn:
-                conn.execute(
-                    """
-                    INSERT INTO evaluation_trace_events (
-                        event_id, trace_id, span_id, sequence, event_type,
-                        occurred_at, payload_json
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        f"trace-event:{uuid4().hex}",
-                        self.trace_id,
-                        span_id,
-                        self._next_sequence(),
-                        event_type[:120],
-                        _utc_now(),
-                        _safe_json(payload or {}),
-                    ),
-                )
+            self._append(
+                """
+                INSERT INTO evaluation_trace_events (
+                    event_id, trace_id, span_id, sequence, event_type,
+                    occurred_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    f"trace-event:{uuid4().hex}",
+                    self.trace_id,
+                    span_id,
+                    self._next_sequence(),
+                    event_type[:120],
+                    _utc_now(),
+                    _safe_json(payload or {}),
+                ),
+            )
         except Exception:
             return
 
@@ -270,8 +357,9 @@ class FullTrace:
             return
 
     def _next_sequence(self) -> int:
-        self._sequence += 1
-        return self._sequence
+        with self._lock:
+            self._sequence += 1
+            return self._sequence
 
 
 def hash_text(value: str) -> str:
@@ -341,6 +429,8 @@ def _safe_json(value: Any) -> str:
 
 
 def _sanitize(value: Any, *, key: str = "", depth: int = 0) -> Any:
+    if key in {"inputTokens", "outputTokens", "totalTokens"} and isinstance(value, (int, float)):
+        return value
     if key.casefold() in _SENSITIVE_KEYS or any(
         marker in key.casefold() for marker in ("password", "secret", "token", "cookie")
     ):

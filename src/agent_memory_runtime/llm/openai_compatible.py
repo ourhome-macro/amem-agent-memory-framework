@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from typing import Any
 
@@ -32,9 +31,7 @@ class OpenAICompatibleChatClient:
 
         content = response.choices[0].message.content
         if not isinstance(content, str) or not content.strip():
-            raise LLMResponseError(
-                f"{self.config.provider} returned an empty assistant message."
-            )
+            raise LLMResponseError(f"{self.config.provider} returned an empty assistant message.")
 
         usage = getattr(response, "usage", None)
         return LLMResponse(
@@ -116,36 +113,13 @@ class OpenAICompatibleChatClient:
     def _get_client(self) -> Any:
         if self._client is not None:
             return self._client
+        from agent_memory_runtime.llm.transport import get_openai_client
 
-        api_key = os.environ.get(self.config.api_key_env)
-        if not api_key:
-            self._load_dotenv()
-            api_key = os.environ.get(self.config.api_key_env)
-        if not api_key:
-            raise LLMConfigurationError(
-                f"Missing {self.config.api_key_env}. Set it before calling runtime.respond()."
-            )
-        if not self.config.base_url.startswith("https://"):
-            raise LLMConfigurationError(f"{self.config.provider} base_url must use HTTPS.")
-
-        try:
-            from openai import OpenAI
-        except ImportError as error:
-            raise LLMConfigurationError(
-                "The OpenAI-compatible client is unavailable. Run: pip install -e ."
-            ) from error
-
-        try:
-            self._client = OpenAI(
-                api_key=api_key,
-                base_url=self.config.base_url,
-                timeout=self.config.timeout_seconds,
-            )
-        except Exception as error:
-            raise LLMConfigurationError(
-                f"Could not initialize the {self.config.provider} client."
-            ) from error
-        return self._client
+        return get_openai_client(
+            base_url=self.config.base_url,
+            api_key_env=self.config.api_key_env,
+            timeout_seconds=self.config.timeout_seconds,
+        )
 
     @staticmethod
     def _load_dotenv() -> None:

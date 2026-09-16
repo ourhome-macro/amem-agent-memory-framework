@@ -24,7 +24,7 @@ from amem_bridge import _ensure_amem_import_path  # noqa: E402
 
 _ensure_amem_import_path()
 
-from dialogue_service import _route_message  # noqa: E402
+from dialogue_rules import _route_message  # noqa: E402
 from discovery_planner import DiscoveryPlanner  # noqa: E402
 from full_trace import _safe_json  # noqa: E402
 from models import Track  # noqa: E402
@@ -32,6 +32,8 @@ from music_entity import resolve_track_entity  # noqa: E402
 from music_profile import MusicProfile  # noqa: E402
 from recommendation_engine import RecommendationEngine, RecommendationRequest  # noqa: E402
 from recommendation_service import RecommendationCandidate, RecommendationService  # noqa: E402
+from recommendation_contracts import UserProfile  # noqa: E402
+from recommendation_policy import RecommendationPolicy  # noqa: E402
 from request_spec import RequestInterpreter, RequestSpec  # noqa: E402
 from trace_metrics import summarize_traces  # noqa: E402
 
@@ -351,7 +353,22 @@ def _ranking_case(inputs: dict[str, Any], expected: dict[str, Any]) -> dict[str,
         )
     forbidden = {str(item) for item in expected.get("forbiddenIds") or []}
     limit = int(expected.get("limit") or 8)
-    engine = RecommendationEngine(embedding_service=_GoldenEmbeddingService(query_vector))
+    class GoldenRankingPolicy(RecommendationPolicy):
+        # These fixtures isolate MMR/diversity, not music admission or exploration.
+        # Preserve their original contract and expected values after policy extraction.
+        def _is_hard_filtered(self, item, *_args):
+            return str(item.track.get('trackId')) in forbidden
+
+        def _select_epsilon_greedy(self, values, limit, *_args):
+            return values[:limit]
+
+        def _apply_diversity_limits(self, values, _same_uploader_limit, limit, **_kwargs):
+            return super()._apply_diversity_limits(values,
+                same_uploader_limit=int(inputs.get('sameUploaderLimit') or 2),
+                limit=limit, request_scoped_limit=None)
+
+    engine = RecommendationEngine(embedding_service=_GoldenEmbeddingService(query_vector),
+                                  policy=GoldenRankingPolicy('golden'))
     _reranked, selected, diagnostics = engine.rank_and_select(
         candidates,
         request=RecommendationRequest(
@@ -362,14 +379,7 @@ def _ranking_case(inputs: dict[str, Any], expected: dict[str, Any]) -> dict[str,
             exclude_track_ids=set(),
             recent_context={},
         ),
-        hard_filtered=lambda item: str(item.track.get("trackId")) in forbidden,
-        select=lambda values: values[:limit],
-        diversity=lambda values: RecommendationService._apply_diversity_limits(
-            values,
-            same_uploader_limit=int(inputs.get("sameUploaderLimit") or 2),
-            limit=limit,
-            request_scoped_limit=None,
-        ),
+        legacy_profile=UserProfile(),
     )
     selected_ids = [str(item.track.get("trackId") or "") for item in selected]
     relevance = {str(key): int(value) for key, value in (expected.get("relevance") or {}).items()}

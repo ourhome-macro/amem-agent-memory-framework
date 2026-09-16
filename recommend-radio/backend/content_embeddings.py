@@ -317,15 +317,24 @@ class ContentEmbeddingService:
         return {"enabled": True, "processed": processed, "failed": failed}
 
     def _embed_texts(self, texts: list[str]) -> list[list[float]]:
-        response = requests.post(
-            f"{self.text_base_url}/embeddings",
-            json={"model": self.text_model, "input": texts},
-            headers={"Authorization": f"Bearer {os.getenv('BGE_M3_API_KEY', 'local-embedding')}"},
-            timeout=self.timeout_seconds,
-        )
-        response.raise_for_status()
-        data = sorted(response.json().get("data") or [], key=lambda item: int(item["index"]))
-        return [_vector(item.get("embedding")) for item in data]
+        batch_size = int(os.getenv("RECOMMEND_EMBEDDING_BATCH_SIZE", "8"))
+        if not 1 <= batch_size <= 64:
+            raise ValueError("RECOMMEND_EMBEDDING_BATCH_SIZE must be between 1 and 64")
+        vectors: list[list[float]] = []
+        for offset in range(0, len(texts), batch_size):
+            batch = texts[offset:offset + batch_size]
+            response = requests.post(
+                f"{self.text_base_url}/embeddings",
+                json={"model": self.text_model, "input": batch},
+                headers={"Authorization": f"Bearer {os.getenv('BGE_M3_API_KEY', 'local-embedding')}"},
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+            data = sorted(response.json().get("data") or [], key=lambda item: int(item["index"]))
+            if len(data) != len(batch) or [int(item["index"]) for item in data] != list(range(len(batch))):
+                raise ValueError("embedding response does not match the input batch")
+            vectors.extend(_vector(item.get("embedding")) for item in data)
+        return vectors
 
     @staticmethod
     def _save_vector(

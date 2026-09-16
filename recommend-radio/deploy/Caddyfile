@@ -1,0 +1,11 @@
+{
+    email {$ACME_EMAIL}
+}
+{$APP_DOMAIN} {
+    handle /grafana/* {
+        reverse_proxy grafana:3000
+    }
+    handle {
+        reverse_proxy frontend:3000
+    }
+}

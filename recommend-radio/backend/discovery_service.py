@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+
 import json
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -20,7 +20,6 @@ from keyword_governance import KeywordGovernance
 from models import Track
 from music_profile import MusicProfile
 from request_spec import RequestSpec
-
 
 
 class DiscoveryService:
@@ -94,14 +93,22 @@ class DiscoveryService:
                     now,
                 ),
             )
-            enqueue(conn, kind='discovery', job_id=job_id, user_id=self.user_id,
-                    lane=f'discovery:{self.user_id}', payload={
-                        'queries': plan.search_queries,
-                        'negative_queries': plan.negative_queries,
-                        'keyword_specs': plan.keyword_specs,
-                        'negative_keyword_specs': plan.negative_keyword_specs,
-                        'request_spec': request_spec.to_dict(), 'limit': limit,
-                    })
+            enqueue(
+                conn,
+                kind="discovery",
+                job_id=job_id,
+                user_id=self.user_id,
+                retry_safe=True,
+                lane=f"discovery:{self.user_id}",
+                payload={
+                    "queries": plan.search_queries,
+                    "negative_queries": plan.negative_queries,
+                    "keyword_specs": plan.keyword_specs,
+                    "negative_keyword_specs": plan.negative_keyword_specs,
+                    "request_spec": request_spec.to_dict(),
+                    "limit": limit,
+                },
+            )
         return job_id
 
     def discover_now(
@@ -144,16 +151,17 @@ class DiscoveryService:
         if row is None:
             return {"jobId": job_id, "available": False}
         with get_connection(self.db_path) as conn:
-            execution = conn.execute('SELECT status,error FROM durable_jobs WHERE job_id=?',
-                                     (job_id,)).fetchone()
-        terminal_failure = execution and execution['status'] in {'failed','needs_reconciliation'}
+            execution = conn.execute(
+                "SELECT status,error FROM durable_jobs WHERE job_id=?", (job_id,)
+            ).fetchone()
+        terminal_failure = execution and execution["status"] in {"failed", "needs_reconciliation"}
         return {
             "jobId": row["job_id"],
             "fullTraceId": row["job_id"],
             "available": True,
-            "status": execution['status'] if terminal_failure else row["status"],
+            "status": execution["status"] if terminal_failure else row["status"],
             "result": _json_object(row["result_json"]),
-            "error": execution['error'] if terminal_failure else row["error"],
+            "error": execution["error"] if terminal_failure else row["error"],
         }
 
     def _run_job(
@@ -204,7 +212,7 @@ class DiscoveryService:
                     "UPDATE discovery_jobs SET status = 'failed', error = ?, updated_at = ? WHERE job_id = ?",
                     (str(exc)[:300], _utc_now(), job_id),
                 )
-            return
+            raise
         with get_connection(self.db_path) as conn:
             conn.execute(
                 "UPDATE discovery_jobs SET status = 'completed', result_json = ?, updated_at = ? WHERE job_id = ?",
@@ -212,9 +220,14 @@ class DiscoveryService:
             )
         if self.keyword_governance.evolution_due():
             with get_connection(self.db_path) as conn:
-                enqueue(conn, kind='evolution', user_id=self.user_id,
-                        lane=f'evolution:{self.user_id}', job_id=f'evolution:{job_id}',
-                        payload={'blocked_topics': list(spec.excluded_topics)})
+                enqueue(
+                    conn,
+                    kind="evolution",
+                    user_id=self.user_id,
+                    lane=f"evolution:{self.user_id}",
+                    job_id=f"evolution:{job_id}",
+                    payload={"blocked_topics": list(spec.excluded_topics)},
+                )
 
     def _run_evolution(self, blocked_topics: list[str]) -> None:
         try:
@@ -235,237 +248,24 @@ class DiscoveryService:
         negative_keyword_specs: dict[str, dict[str, object]] | None = None,
         full_trace: FullTrace | None = None,
     ) -> dict[str, Any]:
-        started = time.perf_counter()
-        keyword_specs = dict(keyword_specs or {})
-        governance_started = time.perf_counter()
-        governance_variant = self.experiments.keyword_governance_variant()
-        apply_governance = governance_variant != "control"
-        if not spec.constrained and apply_governance:
-            for reusable in self.keyword_governance.reusable_keywords(limit=32):
-                query = str(reusable.get("query") or "").strip()
-                if not query:
-                    continue
-                if query not in queries:
-                    queries.append(query)
-                canonical = reusable.get("canonicalSpec")
-                if isinstance(canonical, dict):
-                    keyword_specs.setdefault(query, canonical)
-        governed = self.keyword_governance.prepare(
-            queries,
-            source="request" if spec.constrained else "profile",
-            preserve_order=spec.constrained,
-            family_specs=keyword_specs,
-            limit=self.planner.search_budget,
-            apply_governance=apply_governance,
-        )
-        queries = [item["query"] for item in governed]
-        keyword_ids = {item["query"]: item["keywordId"] for item in governed}
-        query_pages = {
-            item["query"]: int(item.get("searchCount") or 0) % 10 + 1 for item in governed
-        }
-        negative_governed = self.keyword_governance.prepare(
-            negative_queries or [],
-            source="negative_probe",
-            preserve_order=True,
-            family_specs=negative_keyword_specs,
-            limit=1,
-            apply_governance=apply_governance,
-        )
-        negative_queries = [item["query"] for item in negative_governed]
-        negative_keyword_ids = {item["query"]: item["keywordId"] for item in negative_governed}
-        negative_query_pages = {
-            item["query"]: int(item.get("searchCount") or 0) % 10 + 1 for item in negative_governed
-        }
-        if full_trace is not None:
-            full_trace.record_span(
-                "keyword_governance.select",
-                (time.perf_counter() - governance_started) * 1000,
-                kind="governance",
-                outputs={
-                    "selectedQueries": queries,
-                    "negativeQueries": negative_queries,
-                    "variant": governance_variant,
-                },
-                metrics={"selectedQueryCount": len(queries)},
-            )
-        per_query = max(4, min(16, max(limit, 1) * 2))
-        total = {"enqueued": 0, "admitted": 0}
-        query_timings = []
+        from discovery_workflow import DiscoveryWorkflow
+        from music_agent import execute_operation
 
-        def search(kind: str, query: str) -> tuple[str, str, int, list[Track], float, str | None]:
-            query_started = time.perf_counter()
-            page_size = min(per_query, 8) if kind == "negative" else per_query
-            page = negative_query_pages[query] if kind == "negative" else query_pages[query]
-            tracks, error_type = self._safe_search_result(query, page_size, page=page)
-            return (
-                kind,
-                query,
-                page,
-                tracks,
-                (time.perf_counter() - query_started) * 1000,
-                error_type,
-            )
-
-        search_tasks = [("positive", query) for query in queries] + [
-            ("negative", query) for query in negative_queries
-        ]
-        search_results: list[tuple[str, str, int, list[Track], float, str | None]] = []
-        with ThreadPoolExecutor(
-            max_workers=min(4, len(search_tasks) or 1), thread_name_prefix="music-search"
-        ) as executor:
-            futures = [executor.submit(search, kind, query) for kind, query in search_tasks]
-            for future in as_completed(futures):
-                search_results.append(future.result())
-        negative_sample_count = 0
-        admitted_tracks: list[Track] = []
-        for kind, query, page, tracks, search_ms, error_type in search_results:
-            if full_trace is not None:
-                full_trace.record_span(
-                    "bilibili.search",
-                    search_ms,
-                    kind="tool",
-                    status="failed" if error_type else "completed",
-                    inputs={"query": query, "page": page, "queryKind": kind},
-                    outputs={"resultCount": len(tracks)},
-                    error_type=error_type,
-                )
-            admit_started = time.perf_counter()
-            if kind == "negative":
-                recorded = self.pool.record_negative_samples(tracks, query=query)
-                self.keyword_governance.record_discovery(
-                    negative_keyword_ids[query],
-                    tracks=tracks,
-                    admitted_count=0,
-                    discovery_job_id=trace_id,
-                    admitted_track_ids=[],
-                )
-                negative_sample_count += recorded
-                query_timings.append(
-                    {
-                        "query": query,
-                        "kind": kind,
-                        "page": page,
-                        "searchMs": round(search_ms, 2),
-                        "admissionMs": round((time.perf_counter() - admit_started) * 1000, 2),
-                        "resultCount": len(tracks),
-                        "errorType": error_type,
-                    }
-                )
-                continue
-            result = self.pool.admit(
-                tracks, source="discovery_search", request_spec=spec, query=query
-            )
-            admitted_ids = set(result.get("admittedTrackIds") or [])
-            admitted_tracks.extend(track for track in tracks if track.track_id in admitted_ids)
-            self.keyword_governance.record_discovery(
-                keyword_ids[query],
-                tracks=tracks,
-                admitted_count=result["admitted"],
-                discovery_job_id=trace_id,
-                admitted_track_ids=result.get("admittedTrackIds") or [],
-                scope_kind=str(result.get("scopeKind") or "default"),
-                scope_key=str(result.get("scopeKey") or ""),
-            )
-            admit_ms = (time.perf_counter() - admit_started) * 1000
-            total["enqueued"] += result["enqueued"]
-            total["admitted"] += result["admitted"]
-            query_timings.append(
-                {
-                    "query": query,
-                    "kind": kind,
-                    "page": page,
-                    "searchMs": round(search_ms, 2),
-                    "admissionMs": round(admit_ms, 2),
-                    "resultCount": len(tracks),
-                    "errorType": error_type,
-                }
-            )
-            if full_trace is not None:
-                full_trace.record_span(
-                    "candidate.admit",
-                    admit_ms,
-                    kind="retrieval",
-                    inputs={"source": "discovery_search", "query": query},
-                    outputs={
-                        "resultCount": len(tracks),
-                        "admittedCount": result["admitted"],
-                    },
-                    metrics={"invalidRecallCount": max(len(tracks) - result["admitted"], 0)},
-                )
-        supply_lanes = []
-        for source, query, tracks in self._supply_lane_tracks(
-            limit=max(limit * 2, 8),
-            full_trace=full_trace,
-        ):
-            admit_started = time.perf_counter()
-            result = self.pool.admit(
-                tracks,
-                source=source,
-                request_spec=spec,
-                query=query,
-            )
-            admitted_ids = set(result.get("admittedTrackIds") or [])
-            admitted_tracks.extend(track for track in tracks if track.track_id in admitted_ids)
-            total["enqueued"] += result["enqueued"]
-            total["admitted"] += result["admitted"]
-            supply_lanes.append(
-                {
-                    "source": source,
-                    "query": query,
-                    "resultCount": len(tracks),
-                    "admittedCount": result["admitted"],
-                    "admissionMs": round((time.perf_counter() - admit_started) * 1000, 2),
-                }
-            )
-            if full_trace is not None:
-                full_trace.record_span(
-                    "candidate.admit",
-                    supply_lanes[-1]["admissionMs"],
-                    kind="retrieval",
-                    inputs={"source": source, "query": query},
-                    outputs={
-                        "resultCount": len(tracks),
-                        "admittedCount": result["admitted"],
-                    },
-                    metrics={"invalidRecallCount": max(len(tracks) - result["admitted"], 0)},
-                )
-        embedding_started = time.perf_counter()
-        embedding_result = self.content_embeddings.ensure_text_embeddings(admitted_tracks[:64])
-        audio_queued = self.content_embeddings.enqueue_audio_embeddings(admitted_tracks[:64])
-        embedding_ms = round((time.perf_counter() - embedding_started) * 1000, 2)
-        available = self.pool.availability(spec)
-        if full_trace is not None:
-            full_trace.record_span(
-                "candidate.embedding.persist",
-                embedding_ms,
-                kind="embedding",
-                outputs={**embedding_result, "audioQueued": audio_queued},
-            )
-            full_trace.event(
-                "discovery.completed",
-                {
-                    "admitted": total["admitted"],
-                    "enqueued": total["enqueued"],
-                    "available": available,
-                },
-            )
-        return {
-            "traceId": trace_id,
-            "queries": queries,
-            "negativeQueries": negative_queries or [],
-            "negativeSampleCount": negative_sample_count,
-            "keywords": [*governed, *negative_governed],
-            "keywordGovernanceVariant": governance_variant,
-            "supplyLanes": supply_lanes,
-            **total,
-            "available": available,
-            "embedding": {**embedding_result, "audioQueued": audio_queued},
-            "timing": {
-                "queries": query_timings,
-                "embeddingPersistMs": embedding_ms,
-                "totalMs": round((time.perf_counter() - started) * 1000, 2),
+        workflow = DiscoveryWorkflow(self, full_trace)
+        return execute_operation(
+            self,
+            "discovery",
+            {
+                "queries": queries,
+                "spec": spec.to_dict(),
+                "limit": limit,
+                "trace_id": trace_id,
+                "negative_queries": negative_queries,
+                "keyword_specs": keyword_specs,
+                "negative_keyword_specs": negative_keyword_specs,
             },
-        }
+            stages=workflow.stages(),
+        )
 
     def _supply_lane_tracks(
         self,

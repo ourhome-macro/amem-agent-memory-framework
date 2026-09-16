@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from agent_memory_runtime.telemetry import traced
+
 import json
 import os
 import re
@@ -63,17 +65,18 @@ class RecommendationOpenAIChatClient:
         self.extra_body = extra_body or {}
         self.json_response = json_response
 
+    @traced('llm.chat')
     def complete(self, *, system_prompt: str, user_prompt: str) -> _ChatResponse:
         api_key = os.getenv(self.api_key_env, "").strip()
         if not api_key:
             raise RuntimeError(f"{self.api_key_env} is required for recommendation LLM")
 
-        from openai import OpenAI
+        from agent_memory_runtime.llm.transport import get_openai_client
 
-        client = OpenAI(
+        client = get_openai_client(
             base_url=self.base_url,
-            api_key=api_key,
-            timeout=self.timeout_seconds,
+            api_key_env=self.api_key_env,
+            timeout_seconds=self.timeout_seconds,
         )
         kwargs: dict[str, Any] = {
             "model": self.model,
@@ -93,6 +96,7 @@ class RecommendationOpenAIChatClient:
         completion = client.chat.completions.create(**kwargs)
         return _ChatResponse(content=completion.choices[0].message.content or "", latency_ms=(time.perf_counter() - started) * 1000)
 
+    @traced('llm.route')
     def complete_tool(
         self,
         *,
@@ -103,9 +107,10 @@ class RecommendationOpenAIChatClient:
         api_key = os.getenv(self.api_key_env, "").strip()
         if not api_key:
             raise RuntimeError(f"{self.api_key_env} is required for recommendation LLM")
-        from openai import OpenAI
+        from agent_memory_runtime.llm.transport import get_openai_client
 
-        client = OpenAI(base_url=self.base_url, api_key=api_key, timeout=self.timeout_seconds)
+        client = get_openai_client(base_url=self.base_url, api_key_env=self.api_key_env,
+                                   timeout_seconds=self.timeout_seconds)
         started = time.perf_counter()
         completion = client.chat.completions.create(
             model=self.model,

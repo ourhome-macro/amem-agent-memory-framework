@@ -65,11 +65,12 @@ def enqueue(
     if count >= limit:
         raise ValueError("background task capacity exceeded; retry later")
     now = time.time()
+    from agent_memory_runtime.telemetry import carrier
     conn.execute(
         """INSERT INTO durable_jobs
-        (job_id,kind,user_id,lane,payload_json,input_hash,retry_safe,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?)""",
-        (job_id, kind, user_id, lane, raw, digest, int(retry_safe), now, now),
+        (job_id,kind,user_id,lane,payload_json,input_hash,retry_safe,created_at,updated_at,trace_context)
+        VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (job_id, kind, user_id, lane, raw, digest, int(retry_safe), now, now, json.dumps(carrier())),
     )
     return job_id
 
@@ -169,6 +170,11 @@ def finish(conn, job: dict, *, result: Any = None, error: Exception | None = Non
             if job["retry_safe"]
             else "needs_reconciliation"
         )
+        from job_errors import JobPermanentFailure, JobReconciliationRequired
+        if isinstance(error, JobReconciliationRequired):
+            status = 'needs_reconciliation'
+        elif isinstance(error, JobPermanentFailure):
+            status = 'failed'
     conn.execute(
         """UPDATE durable_jobs SET status=?,result_json=?,error=?,lease_token=NULL,
         lease_until=0,next_publish_at=?,available_at=?,updated_at=?

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	_ "modernc.org/sqlite"
 )
 
@@ -289,6 +290,7 @@ func (s *Server) Router() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()
 	router.Use(gin.Recovery())
+	router.Use(otelgin.Middleware("radio-sse"))
 	router.GET("/health/live", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "live"})
 	})
@@ -522,6 +524,15 @@ func envInt(name string, fallback int) int {
 }
 
 func main() {
+	shutdownTracing, traceErr := setupTelemetry(context.Background())
+	if traceErr != nil {
+		panic(traceErr)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(ctx)
+	}()
 	config := loadConfig()
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	store, err := openStore(config.DBPath)

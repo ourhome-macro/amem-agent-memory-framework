@@ -17,3 +17,6 @@ jsonschema[format-nongpl]>=4.23
 sqlite-vec==0.1.9
 grpcio==1.83.0
 grpcio-tools==1.83.0
+opentelemetry-instrumentation-flask==0.65b0
+opentelemetry-instrumentation-grpc==0.65b0
+opentelemetry-instrumentation-requests==0.65b0

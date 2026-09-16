@@ -45,6 +45,7 @@ from request_spec import RequestInterpreter
 from requests.adapters import HTTPAdapter
 from result import Result
 from settings_service import SettingsService
+from service_factory import MusicServices
 from sse_event_client import SSEEventPublisher
 from stream_service import StreamService
 from trace_metrics import summarize_traces
@@ -61,6 +62,14 @@ def record_music_behavior(*args, **kwargs):
         return _record_music_behavior(*args, **kwargs)
 
 app = Flask(__name__)
+from telemetry_setup import setup as setup_telemetry
+setup_telemetry('recommend-radio-api', app)
+
+@app.after_request
+def attach_trace_id(response):
+    from agent_memory_runtime.telemetry import trace_id
+    response.headers['X-Trace-ID'] = trace_id()
+    return response
 app.secret_key = os.getenv("APP_SECRET_KEY") or secrets.token_urlsafe(48)
 _secure_cookie_default = os.getenv("AUTH_MODE", "disabled").strip().lower() == "oidc"
 _secure_cookie_value = os.getenv("SESSION_COOKIE_SECURE")
@@ -116,7 +125,6 @@ auth_service = AuthService()
 library_service = LibraryService()
 playback_service = PlaybackService()
 queue_service = PlayerQueueService()
-recommendation_service = RecommendationService()
 settings_service = SettingsService()
 analysis_service = AnalysisService()
 admin_service = AdminService()
@@ -166,25 +174,19 @@ def _queue_for_request() -> PlayerQueueService:
 
 
 def _recommendations_for_request() -> RecommendationService:
-    return _request_service(
-        "_recommendation_service",
-        recommendation_service,
-        lambda user_id: RecommendationService(
-            user_id=user_id,
-            bili_client=bili_client,
-            amem_bridge=amem_bridge,
-            profile_projector=profile_projector,
-        ),
-    )
+    return _music_services_for_request().recommendations
 
 
 def _dialogue_for_request() -> MusicDialogueService:
+    return _music_services_for_request().dialogue
+
+
+def _music_services_for_request() -> MusicServices:
     return _request_service(
-        "_dialogue_service",
-        dialogue_service,
-        lambda user_id: MusicDialogueService(
-            user_id=user_id,
-            recommendation_service=_recommendations_for_request(),
+        "_music_services", music_services,
+        lambda user_id: MusicServices(
+            user_id=user_id, bili_client=bili_client,
+            amem_runtime=(amem_bridge, profile_projector),
         ),
     )
 
@@ -203,12 +205,9 @@ def _analysis_for_request() -> AnalysisService:
 
 bili_client = BiliClient(cookie_provider=lambda: _auth_for_request().get_cookie_header())
 amem_bridge, profile_projector = build_amem_runtime()
-recommendation_service = RecommendationService(
-    bili_client=bili_client,
-    amem_bridge=amem_bridge,
-    profile_projector=profile_projector,
-)
-dialogue_service = MusicDialogueService(recommendation_service=recommendation_service)
+music_services = MusicServices(bili_client=bili_client, amem_runtime=(amem_bridge, profile_projector))
+recommendation_service = music_services.recommendations
+dialogue_service = music_services.dialogue
 dialogue_task_service = DialogueTaskService(SSEEventPublisher())
 stream_service = StreamService(bili_client)
 register_monitoring(app, user_stats_provider=admin_service.monitoring_user_stats)
@@ -232,6 +231,7 @@ _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 def _close_runtime_clients() -> None:
     for client in (
+        profile_projector,
         amem_bridge,
         dialogue_task_service,
         stream_service,
@@ -282,6 +282,9 @@ def enforce_loopback_binding(host: str, *, auth_enabled: bool = oidc_auth.enable
 
 @app.teardown_request
 def close_request_services(_error=None):
+    scoped_music = getattr(g, "_music_services", None)
+    if scoped_music is not None:
+        scoped_music.close()
     scoped_auth = getattr(g, "_auth_service", None)
     if scoped_auth is not None:
         try:
