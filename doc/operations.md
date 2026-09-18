@@ -1,5 +1,7 @@
 # 运维
 
+业务库和 AMEM 存储已接入 Alembic；应用启动先运行 Compose 的 `migrate` 服务。OpenTelemetry 的 Collector、真实本机账号端到端测试和 trace 使用方式见 [框架迁移说明](framework-unification-2026-09-16.md)。
+
 运维能力由 runtime 配置、后台 worker、retry 机制和状态 API 共同提供。
 
 ## 模块职责

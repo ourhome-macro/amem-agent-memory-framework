@@ -151,6 +151,8 @@ class AmemGrpcService(amem_pb2_grpc.AmemServiceServicer):
 
 def build_server(service: AmemGrpcService | None = None) -> grpc.Server:
     max_workers = _env_int("AMEM_GRPC_WORKERS", 8)
+    from telemetry_setup import setup
+    setup('amem-grpc')
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
     amem_pb2_grpc.add_AmemServiceServicer_to_server(service or AmemGrpcService(), server)
     return server

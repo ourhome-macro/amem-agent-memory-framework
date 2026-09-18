@@ -194,11 +194,12 @@ class CandidatePool:
         provenance = self._provenance_for_tracks(rows)
         for row in rows:
             facets = _json_object(row["facets_json"])
-            if not request_spec.matches_facets(facets):
+            track = self.library._track_from_row(row)
+            if not request_spec.matches_candidate(track.to_dict(), facets):
                 continue
             result.append(
                 PoolCandidate(
-                    track=self.library._track_from_row(row),
+                    track=track,
                     source=str(row["cache_source"] or "candidate_pool"),
                     facets={
                         key: [str(item) for item in value]

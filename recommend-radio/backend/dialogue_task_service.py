@@ -106,6 +106,12 @@ class DialogueTaskService:
             )
 
         try:
+            from settings_service import SettingsService
+
+            if not SettingsService(
+                db_path=service.db_path, user_id=user_id
+            ).has_deepseek_api_key():
+                raise RuntimeError("Personal DeepSeek API Key is required")
             publish("progress", {"stage": "routing", "label": "正在理解你的需求"})
             result = service.send_message(
                 message,

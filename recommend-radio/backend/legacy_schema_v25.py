@@ -1,0 +1,1679 @@
+"""Frozen schema upgrades through v25; only Alembic baseline may call this module."""
+from __future__ import annotations
+
+import os
+import sqlite3
+import threading
+import time
+from pathlib import Path
+from typing import Optional
+
+from env_loader import load_recommend_radio_env
+from monitoring import record_database_operation
+
+load_recommend_radio_env()
+
+def _ensure_durable_jobs_v25(conn) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS durable_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL UNIQUE,
+            kind TEXT NOT NULL, user_id TEXT NOT NULL,
+            lane TEXT NOT NULL DEFAULT '', payload_json TEXT NOT NULL,
+            input_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued',
+            retry_safe INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0,
+            next_publish_at REAL NOT NULL DEFAULT 0, lease_until REAL NOT NULL DEFAULT 0,
+            available_at REAL NOT NULL DEFAULT 0,
+            lease_token TEXT, result_json TEXT, error TEXT,
+            created_at REAL NOT NULL, updated_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_durable_jobs_pending
+            ON durable_jobs(status, next_publish_at);
+        CREATE INDEX IF NOT EXISTS idx_durable_jobs_lane ON durable_jobs(lane, status);
+        CREATE INDEX IF NOT EXISTS idx_durable_jobs_user ON durable_jobs(user_id, status);
+        CREATE TABLE IF NOT EXISTS durable_job_resolutions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL,
+            decision TEXT NOT NULL, reason TEXT NOT NULL, operator TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
+    """)
+
+BASE_DIR = Path(__file__).resolve().parent
+
+
+def resolve_data_dir(
+    *,
+    configured_data_dir: Optional[str] = None,
+) -> Path:
+    explicit_data_dir = (
+        configured_data_dir if configured_data_dir is not None else os.getenv("APP_DATA_DIR", "")
+    ).strip()
+    if explicit_data_dir:
+        return Path(explicit_data_dir).expanduser()
+    return BASE_DIR / "data"
+
+
+DATA_DIR = resolve_data_dir()
+DEFAULT_DB_PATH = DATA_DIR / "bili_radio.sqlite3"
+SQLITE_BUSY_TIMEOUT_MS = 30_000
+LEGACY_OWNER_USER_ID = "legacy-owner"
+
+_init_lock = threading.Lock()
+_initialized_paths: set[Path] = set()
+
+
+class ClosingConnection(sqlite3.Connection):
+    def __enter__(self):
+        self._monitoring_started_at = time.perf_counter()
+        return super().__enter__()
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        outcome = "success"
+        if exc_value is not None:
+            message = str(exc_value).lower()
+            outcome = "busy" if "locked" in message or "busy" in message else "error"
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        except sqlite3.Error as error:
+            message = str(error).lower()
+            outcome = "busy" if "locked" in message or "busy" in message else "error"
+            raise
+        finally:
+            self.close()
+            started_at = getattr(self, "_monitoring_started_at", None)
+            if started_at is not None:
+                record_database_operation(
+                    "transaction",
+                    outcome,
+                    time.perf_counter() - started_at,
+                )
+
+
+def get_connection(db_path: Optional[Path | str] = None) -> sqlite3.Connection:
+    path = Path(db_path) if db_path else DEFAULT_DB_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(
+        path,
+        timeout=SQLITE_BUSY_TIMEOUT_MS / 1_000,
+        factory=ClosingConnection,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    return conn
+
+
+def upgrade_legacy_v25(db_path: Optional[Path | str] = None) -> None:
+    path = (Path(db_path) if db_path else DEFAULT_DB_PATH).resolve()
+    with _init_lock:
+        if path in _initialized_paths and path.exists():
+            return
+
+        with get_connection(path) as conn:
+            conn.execute("PRAGMA journal_mode = WAL")
+            current_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            if current_version == 25:
+                _initialized_paths.add(path)
+                return
+            if current_version > 25:
+                raise RuntimeError('database schema is newer than this application')
+            if False:  # Frozen baseline is called only by Alembic.
+                raise RuntimeError('Run the migrate Compose service before starting workers')
+            if current_version < 1:
+                conn.executescript(
+                    """
+            CREATE TABLE IF NOT EXISTS tracks (
+                track_id TEXT PRIMARY KEY,
+                bvid TEXT NOT NULL,
+                cid INTEGER,
+                title TEXT NOT NULL,
+                owner TEXT NOT NULL DEFAULT '',
+                owner_mid INTEGER,
+                cover TEXT NOT NULL DEFAULT '',
+                duration INTEGER NOT NULL DEFAULT 0,
+                play_count INTEGER NOT NULL DEFAULT 0,
+                published_at TEXT,
+                page INTEGER,
+                page_title TEXT,
+                source TEXT NOT NULL DEFAULT 'bili',
+                raw_json TEXT,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_tracks_bvid_cid
+                ON tracks (bvid, cid);
+
+            CREATE TABLE IF NOT EXISTS likes (
+                track_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS recent (
+                track_id TEXT PRIMARY KEY,
+                last_played_at TEXT NOT NULL,
+                play_count INTEGER NOT NULL DEFAULT 1,
+                position_ms INTEGER NOT NULL DEFAULT 0,
+                listen_ms INTEGER NOT NULL DEFAULT 0,
+                completed INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS playlists (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                cover TEXT,
+                source_type TEXT NOT NULL DEFAULT 'user-created',
+                source_bvid TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS playlist_items (
+                playlist_id TEXT NOT NULL,
+                track_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                added_at TEXT NOT NULL,
+                PRIMARY KEY (playlist_id, track_id),
+                FOREIGN KEY(playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
+                FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS playback_sessions (
+                session_id TEXT PRIMARY KEY,
+                track_id TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                last_position_ms INTEGER NOT NULL DEFAULT 0,
+                listen_ms INTEGER NOT NULL DEFAULT 0,
+                completed INTEGER NOT NULL DEFAULT 0,
+                skipped INTEGER NOT NULL DEFAULT 0,
+                last_event TEXT NOT NULL,
+                FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS playback_recent (
+                track_id TEXT PRIMARY KEY,
+                last_played_at TEXT NOT NULL,
+                position_ms INTEGER NOT NULL DEFAULT 0,
+                listen_ms INTEGER NOT NULL DEFAULT 0,
+                completed INTEGER NOT NULL DEFAULT 0,
+                skipped INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS playback_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                track_id TEXT NOT NULL,
+                event TEXT NOT NULL,
+                position_ms INTEGER NOT NULL DEFAULT 0,
+                listen_ms INTEGER NOT NULL DEFAULT 0,
+                completed INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS auth_state (
+                provider TEXT PRIMARY KEY,
+                cookie_encrypted TEXT,
+                refresh_token_encrypted TEXT,
+                user_mid INTEGER,
+                user_name TEXT,
+                user_face TEXT,
+                cookie_updated_at TEXT,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS auth_qr_sessions (
+                qrcode_key TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                status TEXT NOT NULL,
+                message TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                expires_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS analysis_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event TEXT NOT NULL,
+                track_id TEXT,
+                session_id TEXT,
+                payload_json TEXT,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS player_queue_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                current_index INTEGER NOT NULL DEFAULT -1,
+                play_mode TEXT NOT NULL DEFAULT 'order',
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS player_queue_items (
+                position INTEGER PRIMARY KEY,
+                track_id TEXT NOT NULL,
+                added_at TEXT NOT NULL,
+                FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+            );
+                    """
+                )
+                conn.execute("PRAGMA user_version = 1")
+                current_version = 1
+
+            if current_version < 2:
+                conn.executescript(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_recent_last_played_at
+                        ON recent (last_played_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_likes_created_at
+                        ON likes (created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_playlists_created_at
+                        ON playlists (created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_playback_recent_last_played_at
+                        ON playback_recent (last_played_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_playback_sessions_track_started
+                        ON playback_sessions (track_id, started_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_playback_events_track_created
+                        ON playback_events (track_id, created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_playback_events_session_id
+                        ON playback_events (session_id, id);
+                    CREATE INDEX IF NOT EXISTS idx_analysis_events_event_created
+                        ON analysis_events (event, created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_analysis_events_track_created
+                        ON analysis_events (track_id, created_at DESC);
+                    """
+                )
+                conn.execute("PRAGMA user_version = 2")
+                current_version = 2
+
+            if current_version < 3:
+                conn.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_playlist_items_playlist_position
+                        ON playlist_items (playlist_id, position)
+                    """
+                )
+                conn.execute("PRAGMA user_version = 3")
+                current_version = 3
+
+            if current_version < 4:
+                conn.commit()
+                _migrate_to_v4(conn)
+                current_version = 4
+
+            if current_version < 5:
+                conn.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS track_reviews (
+                        user_id TEXT NOT NULL,
+                        track_id TEXT NOT NULL,
+                        rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+                        mood TEXT NOT NULL,
+                        note TEXT NOT NULL DEFAULT '',
+                        visibility TEXT NOT NULL DEFAULT 'private'
+                            CHECK (visibility = 'private'),
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY (user_id, track_id),
+                        FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+                        FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_track_reviews_user_updated
+                        ON track_reviews (user_id, updated_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_track_reviews_track
+                        ON track_reviews (track_id, updated_at DESC);
+                    """
+                )
+                conn.execute("PRAGMA user_version = 5")
+                current_version = 5
+
+            if current_version < 6:
+                conn.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS recommendation_events (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id TEXT NOT NULL,
+                        track_id TEXT NOT NULL,
+                        event TEXT NOT NULL,
+                        scene TEXT NOT NULL DEFAULT 'home',
+                        source TEXT NOT NULL DEFAULT '',
+                        reason TEXT NOT NULL DEFAULT '',
+                        score REAL NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL,
+                        FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+                        FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+                    );
+
+                    CREATE INDEX IF NOT EXISTS idx_recommendation_events_user_created
+                        ON recommendation_events (user_id, created_at DESC);
+                    CREATE INDEX IF NOT EXISTS idx_recommendation_events_track_event
+                        ON recommendation_events (user_id, track_id, event, created_at DESC);
+                    """
+                )
+                conn.execute("PRAGMA user_version = 6")
+                current_version = 6
+
+            if current_version < 7:
+                _add_column_if_missing(conn, "tracks", "owner_mid", "INTEGER")
+                _add_column_if_missing(
+                    conn,
+                    "playlists",
+                    "source_type",
+                    "TEXT NOT NULL DEFAULT 'user-created'",
+                )
+                _add_column_if_missing(conn, "playlists", "source_bvid", "TEXT")
+                conn.execute("PRAGMA user_version = 7")
+                current_version = 7
+
+            if current_version < 8:
+                _ensure_recommendation_history_table(conn)
+                conn.execute("PRAGMA user_version = 8")
+                current_version = 8
+
+            if current_version < 9:
+                _ensure_recommendation_traces_table(conn)
+                conn.execute("PRAGMA user_version = 9")
+                current_version = 9
+
+            if current_version < 10:
+                _ensure_agent_dialogue_tables(conn)
+                conn.execute("PRAGMA user_version = 10")
+                current_version = 10
+
+            if current_version < 11:
+                _ensure_discovery_pool_tables(conn)
+                conn.execute("PRAGMA user_version = 11")
+                current_version = 11
+
+            if current_version < 12:
+                _ensure_music_profile_update_state(conn)
+                conn.execute("PRAGMA user_version = 12")
+                current_version = 12
+
+            if current_version < 13:
+                _ensure_memory_lifecycle_tables(conn)
+                conn.execute("PRAGMA user_version = 13")
+                current_version = 13
+
+            if current_version < 14:
+                _ensure_conversation_memory_tables(conn)
+                conn.execute("PRAGMA user_version = 14")
+                current_version = 14
+
+            if current_version < 15:
+                _ensure_candidate_scope_columns(conn)
+                conn.execute("PRAGMA user_version = 15")
+                current_version = 15
+
+            if current_version < 16:
+                _ensure_keyword_governance_tables(conn)
+                conn.execute("PRAGMA user_version = 16")
+                current_version = 16
+
+            if current_version < 17:
+                _ensure_keyword_feedback_columns(conn)
+                conn.execute("PRAGMA user_version = 17")
+                current_version = 17
+
+            if current_version < 18:
+                _ensure_profile_snapshot_table(conn)
+                conn.execute("PRAGMA user_version = 18")
+                current_version = 18
+
+            if current_version < 19:
+                _ensure_lifecycle_decay_column(conn)
+                conn.execute("PRAGMA user_version = 19")
+                current_version = 19
+
+            if current_version < 20:
+                _ensure_l3_demotion_outbox(conn)
+                conn.execute("PRAGMA user_version = 20")
+                current_version = 20
+
+            if current_version < 21:
+                _ensure_keyword_family_governance(conn)
+                conn.execute("PRAGMA user_version = 21")
+                current_version = 21
+
+            if current_version < 22:
+                _ensure_keyword_learning_tables(conn)
+                conn.execute("PRAGMA user_version = 22")
+                current_version = 22
+
+            if current_version < 23:
+                _ensure_music_entity_tables(conn)
+                _ensure_content_embedding_tables(conn)
+                _ensure_recommendation_evaluation_tables(conn)
+                conn.execute("PRAGMA user_version = 23")
+                current_version = 23
+
+            if current_version < 24:
+                _ensure_full_trace_tables(conn)
+                conn.execute("PRAGMA user_version = 24")
+                current_version = 24
+
+            _ensure_current_schema_columns(conn)
+            # The old in-process executor did not persist sufficient input to
+            # reconstruct abandoned jobs. Make that state explicit on upgrade.
+            conn.execute("""UPDATE discovery_jobs SET status='failed',
+                error='LegacyWorkerLost: task input was not durably queued'
+                WHERE status IN ('queued','running')
+                AND job_id NOT IN (SELECT job_id FROM durable_jobs)""")
+            conn.execute('PRAGMA user_version = 25')
+
+        _initialized_paths.add(path)
+
+
+def _ensure_current_schema_columns(conn: sqlite3.Connection) -> None:
+    _ensure_durable_jobs_v25(conn)
+    _add_column_if_missing(conn, "tracks", "owner_mid", "INTEGER")
+    _add_column_if_missing(
+        conn,
+        "playlists",
+        "source_type",
+        "TEXT NOT NULL DEFAULT 'user-created'",
+    )
+    _add_column_if_missing(conn, "playlists", "source_bvid", "TEXT")
+    _ensure_recommendation_history_table(conn)
+    _ensure_recommendation_traces_table(conn)
+    _ensure_agent_dialogue_tables(conn)
+    _ensure_discovery_pool_tables(conn)
+    _ensure_music_profile_update_state(conn)
+    _ensure_memory_lifecycle_tables(conn)
+    _ensure_conversation_memory_tables(conn)
+    _ensure_candidate_scope_columns(conn)
+    _ensure_content_cache_scope_identity(conn)
+    _ensure_keyword_governance_tables(conn)
+    _ensure_keyword_feedback_columns(conn)
+    _ensure_profile_snapshot_table(conn)
+    _ensure_lifecycle_decay_column(conn)
+    _ensure_l3_demotion_outbox(conn)
+    _ensure_keyword_family_governance(conn)
+    _ensure_keyword_learning_tables(conn)
+    _ensure_music_entity_tables(conn)
+    _ensure_content_embedding_tables(conn)
+    _ensure_recommendation_evaluation_tables(conn)
+    _ensure_full_trace_tables(conn)
+
+
+def _ensure_full_trace_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS evaluation_traces (
+            trace_id TEXT PRIMARY KEY,
+            root_trace_id TEXT NOT NULL,
+            parent_trace_id TEXT,
+            trace_type TEXT NOT NULL,
+            user_id TEXT NOT NULL DEFAULT '',
+            session_id TEXT,
+            request_id TEXT,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            duration_ms REAL,
+            attributes_json TEXT NOT NULL DEFAULT '{}',
+            error_type TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_evaluation_traces_root
+            ON evaluation_traces(root_trace_id, started_at);
+        CREATE INDEX IF NOT EXISTS idx_evaluation_traces_type_status
+            ON evaluation_traces(trace_type, status, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS evaluation_trace_spans (
+            span_id TEXT PRIMARY KEY,
+            trace_id TEXT NOT NULL,
+            parent_span_id TEXT,
+            sequence INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT NOT NULL,
+            duration_ms REAL NOT NULL,
+            input_json TEXT NOT NULL DEFAULT '{}',
+            output_json TEXT NOT NULL DEFAULT '{}',
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            error_type TEXT,
+            FOREIGN KEY(trace_id) REFERENCES evaluation_traces(trace_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_evaluation_trace_spans_trace_sequence
+            ON evaluation_trace_spans(trace_id, sequence);
+        CREATE INDEX IF NOT EXISTS idx_evaluation_trace_spans_name_status
+            ON evaluation_trace_spans(name, status, started_at DESC);
+
+        CREATE TABLE IF NOT EXISTS evaluation_trace_events (
+            event_id TEXT PRIMARY KEY,
+            trace_id TEXT NOT NULL,
+            span_id TEXT,
+            sequence INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(trace_id) REFERENCES evaluation_traces(trace_id) ON DELETE CASCADE,
+            FOREIGN KEY(span_id) REFERENCES evaluation_trace_spans(span_id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_evaluation_trace_events_trace_sequence
+            ON evaluation_trace_events(trace_id, sequence);
+        """
+    )
+
+
+def _ensure_music_entity_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS song_works (
+            work_id TEXT PRIMARY KEY,
+            canonical_title TEXT NOT NULL,
+            canonical_artist TEXT NOT NULL DEFAULT '',
+            normalized_title TEXT NOT NULL,
+            normalized_artist TEXT NOT NULL DEFAULT '',
+            resolver_version TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_song_works_identity
+            ON song_works(normalized_title, normalized_artist);
+
+        CREATE TABLE IF NOT EXISTS song_recordings (
+            recording_id TEXT PRIMARY KEY,
+            work_id TEXT NOT NULL,
+            performer TEXT NOT NULL DEFAULT '',
+            version_type TEXT NOT NULL DEFAULT 'studio_or_unknown',
+            duration_bucket INTEGER NOT NULL DEFAULT 0,
+            resolver_version TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(work_id) REFERENCES song_works(work_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_song_recordings_work
+            ON song_recordings(work_id, version_type, duration_bucket);
+
+        CREATE TABLE IF NOT EXISTS track_entity_links (
+            track_id TEXT PRIMARY KEY,
+            recording_id TEXT NOT NULL,
+            resolver_version TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0,
+            evidence_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE,
+            FOREIGN KEY(recording_id) REFERENCES song_recordings(recording_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_track_entity_recording
+            ON track_entity_links(recording_id, confidence DESC);
+        """
+    )
+    for column, definition in (
+        ("description", "TEXT NOT NULL DEFAULT ''"),
+        ("tags_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("type_name", "TEXT NOT NULL DEFAULT ''"),
+        ("hit_columns_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("work_id", "TEXT"),
+        ("recording_id", "TEXT"),
+        ("canonical_title", "TEXT NOT NULL DEFAULT ''"),
+        ("canonical_artist", "TEXT NOT NULL DEFAULT ''"),
+        ("version_type", "TEXT NOT NULL DEFAULT 'studio_or_unknown'"),
+        ("entity_confidence", "REAL NOT NULL DEFAULT 0"),
+    ):
+        _add_column_if_missing(conn, "tracks", column, definition)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_work_id ON tracks(work_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tracks_recording_id ON tracks(recording_id)")
+    from music_entity import backfill_track_entities
+
+    backfill_track_entities(conn)
+
+
+def _ensure_content_embedding_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS content_embeddings (
+            recording_id TEXT NOT NULL,
+            modality TEXT NOT NULL,
+            model_name TEXT NOT NULL,
+            model_version TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            vector_json TEXT NOT NULL,
+            dimension INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'ready',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(recording_id, modality, model_name, model_version),
+            FOREIGN KEY(recording_id) REFERENCES song_recordings(recording_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_content_embeddings_lookup
+            ON content_embeddings(modality, model_name, model_version, status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS content_embedding_jobs (
+            job_id TEXT PRIMARY KEY,
+            recording_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            modality TEXT NOT NULL,
+            model_name TEXT NOT NULL,
+            model_version TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(recording_id, modality, model_name, model_version, content_hash),
+            FOREIGN KEY(recording_id) REFERENCES song_recordings(recording_id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_content_embedding_jobs_ready
+            ON content_embedding_jobs(status, modality, updated_at);
+        """
+    )
+
+
+def _ensure_recommendation_evaluation_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS recommendation_impressions (
+            recommendation_trace_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            rank_position INTEGER NOT NULL,
+            score REAL NOT NULL DEFAULT 0,
+            score_signals_json TEXT NOT NULL DEFAULT '{}',
+            candidate_snapshot_json TEXT NOT NULL DEFAULT '{}',
+            policy_json TEXT NOT NULL DEFAULT '{}',
+            selection_propensity REAL,
+            shown_at TEXT NOT NULL,
+            PRIMARY KEY(recommendation_trace_id, track_id),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_recommendation_impressions_user_time
+            ON recommendation_impressions(user_id, shown_at, rank_position);
+
+        CREATE TABLE IF NOT EXISTS recommendation_experiment_assignments (
+            user_id TEXT NOT NULL,
+            experiment_name TEXT NOT NULL,
+            variant TEXT NOT NULL,
+            assigned_at TEXT NOT NULL,
+            PRIMARY KEY(user_id, experiment_name),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS discovery_search_observations (
+            observation_id TEXT PRIMARY KEY,
+            keyword_id TEXT NOT NULL,
+            family_id TEXT NOT NULL DEFAULT '',
+            user_id TEXT NOT NULL,
+            candidate_count INTEGER NOT NULL DEFAULT 0,
+            new_candidate_count INTEGER NOT NULL DEFAULT 0,
+            admitted_count INTEGER NOT NULL DEFAULT 0,
+            result_overlap REAL NOT NULL DEFAULT 0,
+            observed_at TEXT NOT NULL,
+            FOREIGN KEY(keyword_id) REFERENCES discovery_keywords(keyword_id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_search_observations_keyword_time
+            ON discovery_search_observations(keyword_id, observed_at DESC);
+        """
+    )
+    _add_column_if_missing(conn, "recommendation_impressions", "selection_propensity", "REAL")
+    _add_column_if_missing(
+        conn, "recommendation_events", "played_seconds", "INTEGER NOT NULL DEFAULT 0"
+    )
+    _add_column_if_missing(conn, "recommendation_events", "completed", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(conn, "recommendation_events", "negative", "INTEGER NOT NULL DEFAULT 0")
+
+
+def _ensure_recommendation_history_table(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS recommendation_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            recommended_at TEXT NOT NULL,
+            clicked INTEGER NOT NULL DEFAULT 0,
+            played_seconds INTEGER NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            liked INTEGER NOT NULL DEFAULT 0,
+            skipped INTEGER NOT NULL DEFAULT 0,
+            scene TEXT NOT NULL DEFAULT 'home',
+            source TEXT NOT NULL DEFAULT '',
+            score REAL NOT NULL DEFAULT 0,
+            reason TEXT NOT NULL DEFAULT '',
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_recommendation_history_user_recent
+            ON recommendation_history (user_id, recommended_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_recommendation_history_track_recent
+            ON recommendation_history (user_id, track_id, recommended_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_recommendation_history_feedback
+            ON recommendation_history (user_id, track_id, skipped, completed, liked);
+        """
+    )
+
+
+def _ensure_recommendation_traces_table(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS recommendation_traces (
+            trace_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            scene TEXT NOT NULL DEFAULT 'home',
+            profile_trace_id TEXT NOT NULL DEFAULT '',
+            agent_trace_id TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_recommendation_traces_user_created
+            ON recommendation_traces (user_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_recommendation_traces_user_scene_created
+            ON recommendation_traces (user_id, scene, created_at DESC);
+        """
+    )
+
+
+def _ensure_discovery_pool_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_candidates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            query_text TEXT NOT NULL DEFAULT '',
+            request_spec_json TEXT NOT NULL DEFAULT '{}',
+            facets_json TEXT NOT NULL DEFAULT '{}',
+            evidence_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'queued',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id, track_id, query_text),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_candidates_user_status
+            ON discovery_candidates (user_id, status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS content_cache (
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            facets_json TEXT NOT NULL DEFAULT '{}',
+            evidence_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'ready',
+            scope_kind TEXT NOT NULL DEFAULT 'default',
+            scope_key TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, track_id, scope_kind, scope_key),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_content_cache_user_status
+            ON content_cache (user_id, status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS discovery_jobs (
+            job_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            scene TEXT NOT NULL DEFAULT 'home',
+            request_spec_json TEXT NOT NULL DEFAULT '{}',
+            plan_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'queued',
+            result_json TEXT NOT NULL DEFAULT '{}',
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_jobs_user_status
+            ON discovery_jobs (user_id, status, updated_at DESC);
+        """
+    )
+
+
+def _ensure_music_profile_update_state(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS music_profile_update_state (
+            user_id TEXT PRIMARY KEY,
+            last_event_id INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        """
+    )
+
+
+def _ensure_memory_lifecycle_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS music_scene_memories (
+            memory_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            scene TEXT NOT NULL,
+            request_spec_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_music_scene_memories_active
+            ON music_scene_memories (user_id, scene, expires_at DESC);
+
+        CREATE TABLE IF NOT EXISTS music_preference_lifecycle (
+            user_id TEXT NOT NULL,
+            polarity TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            support_count INTEGER NOT NULL DEFAULT 0,
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            l1_written_count INTEGER NOT NULL DEFAULT 0,
+            l3_promoted_at TEXT,
+            PRIMARY KEY (user_id, polarity, topic),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_music_preference_lifecycle_promotion
+            ON music_preference_lifecycle (user_id, support_count, l3_promoted_at);
+        """
+    )
+
+
+def _ensure_conversation_memory_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS conversation_warm_topics (
+            session_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            topic_key TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            keywords_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'active',
+            updated_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            PRIMARY KEY (session_id, topic_key),
+            FOREIGN KEY(session_id) REFERENCES agent_dialogue_sessions(session_id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_conversation_warm_topics_active
+            ON conversation_warm_topics (session_id, status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS conversation_warm_memories (
+            memory_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            scope_type TEXT NOT NULL,
+            scope_key TEXT NOT NULL,
+            memory_type TEXT NOT NULL,
+            memory_key TEXT NOT NULL,
+            source_session_id TEXT,
+            summary TEXT NOT NULL,
+            keywords_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'active',
+            updated_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            UNIQUE(user_id, scope_type, scope_key, memory_type, memory_key),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(source_session_id) REFERENCES agent_dialogue_sessions(session_id)
+                ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_conversation_warm_memories_active
+            ON conversation_warm_memories (
+                user_id, scope_type, scope_key, memory_type, status, updated_at DESC
+            );
+
+        INSERT OR IGNORE INTO conversation_warm_memories (
+            memory_id, user_id, scope_type, scope_key, memory_type, memory_key,
+            source_session_id, summary, keywords_json, status, updated_at, expires_at
+        )
+        SELECT 'warm-legacy:' || lower(hex(randomblob(16))), user_id,
+               'session', session_id, 'topic_summary', topic_key,
+               session_id, summary, keywords_json, status, updated_at, expires_at
+        FROM conversation_warm_topics;
+        """
+    )
+
+
+def _ensure_candidate_scope_columns(conn: sqlite3.Connection) -> None:
+    _add_column_if_missing(conn, "content_cache", "scope_kind", "TEXT NOT NULL DEFAULT 'default'")
+    _add_column_if_missing(conn, "content_cache", "scope_key", "TEXT NOT NULL DEFAULT ''")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_content_cache_scope ON content_cache (user_id, status, scope_kind, scope_key, updated_at DESC)"
+    )
+
+
+def _ensure_content_cache_scope_identity(conn: sqlite3.Connection) -> None:
+    primary_key = [
+        str(row["name"])
+        for row in sorted(
+            conn.execute("PRAGMA table_info(content_cache)").fetchall(),
+            key=lambda row: int(row["pk"] or 0),
+        )
+        if int(row["pk"] or 0) > 0
+    ]
+    expected = ["user_id", "track_id", "scope_kind", "scope_key"]
+    if primary_key == expected:
+        return
+    conn.executescript(
+        """
+        CREATE TABLE content_cache_v23 (
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            facets_json TEXT NOT NULL DEFAULT '{}',
+            evidence_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'ready',
+            scope_kind TEXT NOT NULL DEFAULT 'default',
+            scope_key TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, track_id, scope_kind, scope_key),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        INSERT OR IGNORE INTO content_cache_v23 (
+            user_id, track_id, source, facets_json, evidence_json, status,
+            scope_kind, scope_key, created_at, updated_at
+        )
+        SELECT user_id, track_id, source, facets_json, evidence_json, status,
+               COALESCE(scope_kind, 'default'), COALESCE(scope_key, ''),
+               created_at, updated_at
+        FROM content_cache;
+        DROP TABLE content_cache;
+        ALTER TABLE content_cache_v23 RENAME TO content_cache;
+        CREATE INDEX idx_content_cache_user_status
+            ON content_cache (user_id, status, updated_at DESC);
+        CREATE INDEX idx_content_cache_scope
+            ON content_cache (user_id, status, scope_kind, scope_key, updated_at DESC);
+        """
+    )
+
+
+def _ensure_keyword_governance_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_keywords (
+            keyword_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            platform TEXT NOT NULL DEFAULT 'bilibili',
+            keyword TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'profile',
+            status TEXT NOT NULL DEFAULT 'active',
+            search_count INTEGER NOT NULL DEFAULT 0,
+            candidate_count INTEGER NOT NULL DEFAULT 0,
+            admitted_count INTEGER NOT NULL DEFAULT 0,
+            clicked_count INTEGER NOT NULL DEFAULT 0,
+            liked_count INTEGER NOT NULL DEFAULT 0,
+            quality_score REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT,
+            last_evaluated_at TEXT,
+            UNIQUE(user_id, platform, keyword),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_keywords_rank
+            ON discovery_keywords (user_id, platform, status, quality_score DESC, last_used_at DESC);
+
+        CREATE TABLE IF NOT EXISTS discovery_keyword_candidates (
+            keyword_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            discovered_at TEXT NOT NULL,
+            PRIMARY KEY(keyword_id, track_id),
+            FOREIGN KEY(keyword_id) REFERENCES discovery_keywords(keyword_id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_keyword_candidates_track
+            ON discovery_keyword_candidates (user_id, track_id, discovered_at DESC);
+        """
+    )
+
+
+def _ensure_keyword_feedback_columns(conn: sqlite3.Connection) -> None:
+    _add_column_if_missing(conn, "discovery_keywords", "shown_count", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(
+        conn, "discovery_keywords", "dismissed_count", "INTEGER NOT NULL DEFAULT 0"
+    )
+    _add_column_if_missing(
+        conn, "discovery_keywords", "completed_count", "INTEGER NOT NULL DEFAULT 0"
+    )
+
+
+def _ensure_keyword_family_governance(conn: sqlite3.Connection) -> None:
+    for column, definition in (
+        ("family_id", "TEXT NOT NULL DEFAULT ''"),
+        ("canonical_spec_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("exploration_axis", "TEXT NOT NULL DEFAULT 'base'"),
+        ("new_candidate_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("duplicate_candidate_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("last_marginal_yield", "REAL NOT NULL DEFAULT 0"),
+        ("last_result_overlap", "REAL NOT NULL DEFAULT 0"),
+        ("consecutive_low_novelty", "INTEGER NOT NULL DEFAULT 0"),
+        ("last_result_track_ids_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ("cooldown_until", "TEXT"),
+    ):
+        _add_column_if_missing(conn, "discovery_keywords", column, definition)
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_keyword_families (
+            family_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            platform TEXT NOT NULL DEFAULT 'bilibili',
+            canonical_spec_json TEXT NOT NULL,
+            exploration_axis TEXT NOT NULL DEFAULT 'base',
+            status TEXT NOT NULL DEFAULT 'active',
+            search_count INTEGER NOT NULL DEFAULT 0,
+            candidate_count INTEGER NOT NULL DEFAULT 0,
+            new_candidate_count INTEGER NOT NULL DEFAULT 0,
+            quality_score REAL NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_used_at TEXT,
+            cooldown_until TEXT,
+            UNIQUE(user_id, platform, canonical_spec_json),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_keyword_families_rank
+            ON discovery_keyword_families (
+                user_id, platform, status, quality_score DESC, last_used_at DESC
+            );
+        CREATE INDEX IF NOT EXISTS idx_discovery_keywords_family
+            ON discovery_keywords (user_id, family_id, status, quality_score DESC);
+        """
+    )
+
+
+def _ensure_keyword_learning_tables(conn: sqlite3.Connection) -> None:
+    for table in ("discovery_keywords", "discovery_keyword_families"):
+        for column, definition in (
+            ("keyword_kind", "TEXT NOT NULL DEFAULT 'probe'"),
+            ("origin", "TEXT NOT NULL DEFAULT 'legacy'"),
+            ("affinity_score", "REAL NOT NULL DEFAULT 0.5"),
+            ("yield_score", "REAL NOT NULL DEFAULT 0"),
+            ("evolution_action", "TEXT NOT NULL DEFAULT 'observe'"),
+        ):
+            _add_column_if_missing(conn, table, column, definition)
+    for column, definition in (
+        ("parent_keyword_id", "TEXT"),
+        ("affinity_exposure", "REAL NOT NULL DEFAULT 0"),
+        ("affinity_positive", "REAL NOT NULL DEFAULT 0"),
+        ("affinity_negative", "REAL NOT NULL DEFAULT 0"),
+    ):
+        _add_column_if_missing(conn, "discovery_keywords", column, definition)
+    _add_column_if_missing(
+        conn, "recommendation_events", "recommendation_trace_id", "TEXT NOT NULL DEFAULT ''"
+    )
+    _add_column_if_missing(
+        conn, "recommendation_events", "source_keyword_ids_json", "TEXT NOT NULL DEFAULT '[]'"
+    )
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS discovery_item_sources (
+            discovery_job_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            keyword_id TEXT NOT NULL,
+            family_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            search_rank INTEGER NOT NULL,
+            admitted INTEGER NOT NULL DEFAULT 0,
+            scope_kind TEXT NOT NULL DEFAULT 'default',
+            scope_key TEXT NOT NULL DEFAULT '',
+            discovered_at TEXT NOT NULL,
+            PRIMARY KEY (discovery_job_id, keyword_id, track_id),
+            FOREIGN KEY(keyword_id) REFERENCES discovery_keywords(keyword_id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_item_sources_track
+            ON discovery_item_sources (user_id, track_id, discovered_at DESC);
+
+        CREATE TABLE IF NOT EXISTS recommendation_keyword_attributions (
+            recommendation_trace_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            keyword_id TEXT NOT NULL,
+            family_id TEXT NOT NULL,
+            credit_weight REAL NOT NULL,
+            shown INTEGER NOT NULL DEFAULT 1,
+            clicked INTEGER NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            liked INTEGER NOT NULL DEFAULT 0,
+            negative INTEGER NOT NULL DEFAULT 0,
+            shown_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (recommendation_trace_id, track_id, keyword_id),
+            FOREIGN KEY(recommendation_trace_id) REFERENCES recommendation_traces(trace_id) ON DELETE CASCADE,
+            FOREIGN KEY(keyword_id) REFERENCES discovery_keywords(keyword_id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_recommendation_keyword_attribution_track
+            ON recommendation_keyword_attributions (user_id, track_id, shown_at DESC);
+
+        CREATE TABLE IF NOT EXISTS discovery_keyword_proposals (
+            proposal_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            query_text TEXT NOT NULL,
+            canonical_spec_json TEXT NOT NULL DEFAULT '{}',
+            parent_keyword_id TEXT,
+            family_id TEXT NOT NULL DEFAULT '',
+            reason TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'accepted',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_keyword_proposals_user
+            ON discovery_keyword_proposals (user_id, status, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS discovery_keyword_evolution_runs (
+            run_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            proposed_count INTEGER NOT NULL DEFAULT 0,
+            accepted_count INTEGER NOT NULL DEFAULT 0,
+            error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_discovery_keyword_evolution_runs_user
+            ON discovery_keyword_evolution_runs (user_id, created_at DESC);
+        """
+    )
+    _add_column_if_missing(
+        conn, "discovery_keyword_proposals", "evolution_run_id", "TEXT NOT NULL DEFAULT ''"
+    )
+
+
+def _ensure_profile_snapshot_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS music_profile_snapshots (
+            user_id TEXT PRIMARY KEY,
+            profile_json TEXT NOT NULL,
+            source TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+
+def _ensure_lifecycle_decay_column(conn: sqlite3.Connection) -> None:
+    _add_column_if_missing(conn, "music_preference_lifecycle", "last_decay_at", "TEXT")
+
+
+def _ensure_l3_demotion_outbox(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS music_l3_demotion_outbox (
+            user_id TEXT NOT NULL,
+            polarity TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, polarity, topic),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_music_l3_demotion_pending
+            ON music_l3_demotion_outbox (user_id, status, updated_at);
+        """
+    )
+
+
+def _ensure_agent_dialogue_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS agent_dialogue_sessions (
+            session_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'active',
+            focus TEXT NOT NULL DEFAULT 'onboarding',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            pending_context_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_dialogue_sessions_user_updated
+            ON agent_dialogue_sessions (user_id, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS agent_dialogue_turns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('assistant', 'user', 'system')),
+            content TEXT NOT NULL,
+            card_id TEXT,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES agent_dialogue_sessions(session_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_dialogue_turns_session_created
+            ON agent_dialogue_turns (session_id, id);
+
+        CREATE TABLE IF NOT EXISTS agent_dialogue_cards (
+            card_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            title TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            statement TEXT NOT NULL DEFAULT '',
+            topic TEXT NOT NULL DEFAULT '',
+            polarity TEXT NOT NULL DEFAULT 'neutral',
+            source_text TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(session_id) REFERENCES agent_dialogue_sessions(session_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_dialogue_cards_session_status
+            ON agent_dialogue_cards (session_id, status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS agent_dialogue_signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            topic TEXT NOT NULL DEFAULT '',
+            statement TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0,
+            status TEXT NOT NULL DEFAULT 'shadow',
+            source_text TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(session_id)
+                REFERENCES agent_dialogue_sessions(session_id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_dialogue_signals_session_created
+            ON agent_dialogue_signals (session_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_agent_dialogue_signals_user_topic
+            ON agent_dialogue_signals (user_id, topic, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS agent_dialogue_checkpoints (
+            checkpoint_id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            reason TEXT NOT NULL DEFAULT '',
+            snapshot_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(session_id)
+                REFERENCES agent_dialogue_sessions(session_id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_dialogue_checkpoints_session_created
+            ON agent_dialogue_checkpoints (session_id, created_at DESC);
+        """
+    )
+
+
+def _add_column_if_missing(
+    conn: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    column_definition: str,
+) -> None:
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()}
+    if column_name not in columns:
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
+
+
+def _migrate_to_v4(conn: sqlite3.Connection) -> None:
+    legacy_user_id = LEGACY_OWNER_USER_ID.replace("'", "''")
+    conn.executescript(
+        f"""
+        PRAGMA foreign_keys = OFF;
+        BEGIN IMMEDIATE;
+
+        CREATE TABLE app_users (
+            id TEXT PRIMARY KEY,
+            oidc_issuer TEXT,
+            oidc_subject TEXT,
+            display_name TEXT NOT NULL DEFAULT '',
+            email TEXT,
+            avatar_url TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+            status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+            role_source TEXT NOT NULL DEFAULT 'local'
+                CHECK (role_source IN ('local', 'oidc_group', 'bootstrap')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            last_login_at TEXT,
+            UNIQUE (oidc_issuer, oidc_subject)
+        );
+
+        INSERT INTO app_users (
+            id, display_name, avatar_url, role, status, role_source,
+            created_at, updated_at, last_login_at
+        )
+        VALUES (
+            '{legacy_user_id}',
+            COALESCE((SELECT user_name FROM auth_state WHERE provider = 'bilibili'), 'Legacy Owner'),
+            COALESCE((SELECT user_face FROM auth_state WHERE provider = 'bilibili'), ''),
+            'admin', 'active', 'bootstrap',
+            COALESCE(
+                (SELECT updated_at FROM auth_state WHERE provider = 'bilibili'),
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            ),
+            COALESCE(
+                (SELECT updated_at FROM auth_state WHERE provider = 'bilibili'),
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            ),
+            NULL
+        );
+
+        CREATE TABLE app_sessions (
+            token_hash TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            revoked_at TEXT,
+            ip_hash TEXT,
+            user_agent_hash TEXT,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_app_sessions_user_expires
+            ON app_sessions (user_id, expires_at DESC);
+
+        CREATE TABLE admin_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor_user_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT,
+            request_id TEXT,
+            details_json TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(actor_user_id) REFERENCES app_users(id) ON DELETE RESTRICT
+        );
+
+        CREATE INDEX idx_admin_audit_created
+            ON admin_audit_log (created_at DESC);
+        CREATE INDEX idx_admin_audit_actor_created
+            ON admin_audit_log (actor_user_id, created_at DESC);
+
+        CREATE TABLE bili_accounts (
+            user_id TEXT PRIMARY KEY,
+            provider TEXT NOT NULL DEFAULT 'bilibili' CHECK (provider = 'bilibili'),
+            cookie_encrypted TEXT,
+            refresh_token_encrypted TEXT,
+            user_mid INTEGER,
+            user_name TEXT,
+            user_face TEXT,
+            cookie_updated_at TEXT,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO bili_accounts (
+            user_id, provider, cookie_encrypted, refresh_token_encrypted,
+            user_mid, user_name, user_face, cookie_updated_at, updated_at
+        )
+        SELECT
+            '{legacy_user_id}', provider, cookie_encrypted, refresh_token_encrypted,
+            user_mid, user_name, user_face, cookie_updated_at, updated_at
+        FROM auth_state
+        WHERE provider = 'bilibili';
+
+        CREATE TABLE likes_v4 (
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, track_id),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        INSERT INTO likes_v4 SELECT '{legacy_user_id}', track_id, created_at FROM likes;
+        DROP TABLE likes;
+        ALTER TABLE likes_v4 RENAME TO likes;
+
+        CREATE TABLE recent_v4 (
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            last_played_at TEXT NOT NULL,
+            play_count INTEGER NOT NULL DEFAULT 1,
+            position_ms INTEGER NOT NULL DEFAULT 0,
+            listen_ms INTEGER NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (user_id, track_id),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        INSERT INTO recent_v4
+            SELECT '{legacy_user_id}', track_id, last_played_at, play_count,
+                   position_ms, listen_ms, completed
+            FROM recent;
+        DROP TABLE recent;
+        ALTER TABLE recent_v4 RENAME TO recent;
+
+        CREATE TABLE playlists_v4 (
+            user_id TEXT NOT NULL,
+            id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            cover TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, id),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        INSERT INTO playlists_v4
+            SELECT '{legacy_user_id}', id, name, cover, created_at, updated_at
+            FROM playlists;
+
+        CREATE TABLE playlist_items_v4 (
+            user_id TEXT NOT NULL,
+            playlist_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            added_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, playlist_id, track_id),
+            FOREIGN KEY(user_id, playlist_id)
+                REFERENCES playlists_v4(user_id, id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        INSERT INTO playlist_items_v4
+            SELECT '{legacy_user_id}', playlist_id, track_id, position, added_at
+            FROM playlist_items;
+        DROP TABLE playlist_items;
+        DROP TABLE playlists;
+        ALTER TABLE playlists_v4 RENAME TO playlists;
+        ALTER TABLE playlist_items_v4 RENAME TO playlist_items;
+
+        CREATE TABLE playback_sessions_v4 (
+            user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            last_position_ms INTEGER NOT NULL DEFAULT 0,
+            listen_ms INTEGER NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            skipped INTEGER NOT NULL DEFAULT 0,
+            last_event TEXT NOT NULL,
+            PRIMARY KEY (user_id, session_id),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        INSERT INTO playback_sessions_v4
+            SELECT '{legacy_user_id}', session_id, track_id, started_at, ended_at,
+                   last_position_ms, listen_ms, completed, skipped, last_event
+            FROM playback_sessions;
+        DROP TABLE playback_sessions;
+        ALTER TABLE playback_sessions_v4 RENAME TO playback_sessions;
+
+        CREATE TABLE playback_recent_v4 (
+            user_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            last_played_at TEXT NOT NULL,
+            position_ms INTEGER NOT NULL DEFAULT 0,
+            listen_ms INTEGER NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            skipped INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (user_id, track_id),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        INSERT INTO playback_recent_v4
+            SELECT '{legacy_user_id}', track_id, last_played_at, position_ms,
+                   listen_ms, completed, skipped
+            FROM playback_recent;
+        DROP TABLE playback_recent;
+        ALTER TABLE playback_recent_v4 RENAME TO playback_recent;
+
+        CREATE TABLE playback_events_v4 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            track_id TEXT NOT NULL,
+            event TEXT NOT NULL,
+            position_ms INTEGER NOT NULL DEFAULT 0,
+            listen_ms INTEGER NOT NULL DEFAULT 0,
+            completed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        INSERT INTO playback_events_v4
+            SELECT id, '{legacy_user_id}', session_id, track_id, event, position_ms,
+                   listen_ms, completed, created_at
+            FROM playback_events;
+        DROP TABLE playback_events;
+        ALTER TABLE playback_events_v4 RENAME TO playback_events;
+
+        CREATE TABLE settings_v4 (
+            user_id TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, key),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        INSERT INTO settings_v4
+            SELECT '{legacy_user_id}', key, value, updated_at FROM settings;
+        DROP TABLE settings;
+        ALTER TABLE settings_v4 RENAME TO settings;
+
+        CREATE TABLE auth_qr_sessions_v4 (
+            user_id TEXT NOT NULL,
+            qrcode_key TEXT NOT NULL,
+            url TEXT NOT NULL,
+            status TEXT NOT NULL,
+            message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            expires_at TEXT,
+            PRIMARY KEY (user_id, qrcode_key),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        INSERT INTO auth_qr_sessions_v4
+            SELECT '{legacy_user_id}', qrcode_key, url, status, message,
+                   created_at, updated_at, expires_at
+            FROM auth_qr_sessions;
+        DROP TABLE auth_qr_sessions;
+        ALTER TABLE auth_qr_sessions_v4 RENAME TO auth_qr_sessions;
+
+        CREATE TABLE analysis_events_v4 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            event TEXT NOT NULL,
+            track_id TEXT,
+            session_id TEXT,
+            payload_json TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        INSERT INTO analysis_events_v4
+            SELECT id, '{legacy_user_id}', event, track_id, session_id,
+                   payload_json, created_at
+            FROM analysis_events;
+        DROP TABLE analysis_events;
+        ALTER TABLE analysis_events_v4 RENAME TO analysis_events;
+
+        CREATE TABLE player_queue_state_v4 (
+            user_id TEXT PRIMARY KEY,
+            current_index INTEGER NOT NULL DEFAULT -1,
+            play_mode TEXT NOT NULL DEFAULT 'order',
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE
+        );
+        INSERT INTO player_queue_state_v4
+            SELECT '{legacy_user_id}', current_index, play_mode, updated_at
+            FROM player_queue_state WHERE id = 1;
+        DROP TABLE player_queue_state;
+        ALTER TABLE player_queue_state_v4 RENAME TO player_queue_state;
+
+        CREATE TABLE player_queue_items_v4 (
+            user_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            track_id TEXT NOT NULL,
+            added_at TEXT NOT NULL,
+            PRIMARY KEY (user_id, position),
+            FOREIGN KEY(user_id) REFERENCES app_users(id) ON DELETE CASCADE,
+            FOREIGN KEY(track_id) REFERENCES tracks(track_id) ON DELETE CASCADE
+        );
+        INSERT INTO player_queue_items_v4
+            SELECT '{legacy_user_id}', position, track_id, added_at
+            FROM player_queue_items;
+        DROP TABLE player_queue_items;
+        ALTER TABLE player_queue_items_v4 RENAME TO player_queue_items;
+
+        DROP TABLE auth_state;
+        CREATE VIEW auth_state AS
+            SELECT provider, cookie_encrypted, refresh_token_encrypted, user_mid,
+                   user_name, user_face, cookie_updated_at, updated_at
+            FROM bili_accounts
+            WHERE user_id = '{legacy_user_id}';
+
+        CREATE INDEX idx_recent_last_played_at
+            ON recent (user_id, last_played_at DESC);
+        CREATE INDEX idx_likes_created_at
+            ON likes (user_id, created_at DESC);
+        CREATE INDEX idx_playlists_created_at
+            ON playlists (user_id, created_at DESC);
+        CREATE INDEX idx_playlist_items_playlist_position
+            ON playlist_items (user_id, playlist_id, position);
+        CREATE INDEX idx_playback_recent_last_played_at
+            ON playback_recent (user_id, last_played_at DESC);
+        CREATE INDEX idx_playback_sessions_track_started
+            ON playback_sessions (user_id, track_id, started_at DESC);
+        CREATE INDEX idx_playback_events_track_created
+            ON playback_events (user_id, track_id, created_at DESC);
+        CREATE INDEX idx_playback_events_session_id
+            ON playback_events (user_id, session_id, id);
+        CREATE INDEX idx_analysis_events_event_created
+            ON analysis_events (user_id, event, created_at DESC);
+        CREATE INDEX idx_analysis_events_track_created
+            ON analysis_events (user_id, track_id, created_at DESC);
+        CREATE INDEX idx_auth_qr_sessions_user_created
+            ON auth_qr_sessions (user_id, created_at DESC);
+
+        """
+    )
+
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        conn.rollback()
+        conn.execute("PRAGMA foreign_keys = ON")
+        raise sqlite3.IntegrityError(
+            f"Tenant migration produced foreign key violations: {violations[:5]}"
+        )
+    conn.execute("PRAGMA user_version = 4")
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = ON")

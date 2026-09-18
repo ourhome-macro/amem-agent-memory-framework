@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import hashlib
+from music_agent import music_operation
 import json
-import os
-import random
-import re
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
-
 from amem_bridge import NoopAmemBridge, record_music_behavior
 from bili_client import BiliClient
 from candidate_pool import CandidatePool
@@ -25,150 +20,32 @@ from keyword_governance import KeywordGovernance
 from library_service import LibraryService
 from memory_lifecycle import SceneMemoryService
 from models import Track
-from music_keyword_pool import (
-    has_gossip_exclusion,
-    has_music_relevance_signal,
-    has_non_music_context,
-    is_music_relevant,
-    matched_artist_names,
-)
 from music_profile import MusicProfile
 from profile_projector import ProfileProjection, ProfileProjector
 from profile_statement_service import ProfileStatementService
 from profile_update import MusicProfileUpdatePipeline
 from recommendation_engine import RecommendationEngine, RecommendationRequest
 from request_spec import RequestSpec
-
-RECENT_LISTEN_DAYS = 7
-RECENT_RECOMMEND_DAYS = 7
-DEFAULT_RECOMMENDATION_LIMIT = 8
-MAX_RECOMMENDATION_LIMIT = 8
-DEFAULT_POOL_TARGET = 32
-EXPLORE_SLOT_COUNT = 5
-HIGH_SCORE_SLOT_COUNT = MAX_RECOMMENDATION_LIMIT - EXPLORE_SLOT_COUNT
-POPULAR_MUSIC_QUERY = "音乐"
-TAG_SEARCH_SUFFIX = "音乐"
-NEGATIVE_OWNER_SUPPRESSION_THRESHOLD = 3
-NEGATIVE_OWNER_SCORE_PENALTY = 6
-SERVICE_DEFAULT_SAME_UPLOADER_LIMIT = 2
-SERVICE_DEFAULT_SAME_ARTIST_LIMIT = 2
-SEARCH_BACKED_SOURCES = {"discovery_search", "tag_search", "popular_music"}
-EXPLORE_SOURCES = {
-    "frequent_up",
-    "liked_up",
-    "tag_search",
-    "popular_music",
-    "discovery_search",
-}
-MEMORY_EVIDENCE_EVENTS = {
-    "played",
-    "accepted",
-    "dismissed",
-    "dislike",
-    "skipped",
-    "completed",
-    "liked",
-    "unliked",
-    "collection_added",
-    "track_reviewed",
-}
-PROFILE_LIFECYCLE_EVENTS = {
-    "played",
-    "accepted",
-    "dismissed",
-    "dislike",
-    "skipped",
-    "completed",
-    "liked",
-    "collection_added",
-}
-
-
-@dataclass
-class UserProfile:
-    frequent_owner_mids: set[int] = field(default_factory=set)
-    liked_owner_mids: set[int] = field(default_factory=set)
-    common_tags: set[str] = field(default_factory=set)
-    repeated_owner_mids: set[int] = field(default_factory=set)
-    completed_owner_mids: set[int] = field(default_factory=set)
-    negative_owner_mids: set[int] = field(default_factory=set)
-    recently_heard_track_ids: set[str] = field(default_factory=set)
-    recently_recommended_track_ids: set[str] = field(default_factory=set)
-    skipped_track_ids: set[str] = field(default_factory=set)
-    recently_heard_recording_ids: set[str] = field(default_factory=set)
-    recently_recommended_work_ids: set[str] = field(default_factory=set)
-    skipped_recording_ids: set[str] = field(default_factory=set)
-
-
-@dataclass
-class CandidateDraft:
-    track: Track
-    sources: set[str] = field(default_factory=set)
-    tags: set[str] = field(default_factory=set)
-    llm_reason: str = ""
-    profile_signals: list[str] = field(default_factory=list)
-    facets: dict[str, list[str]] = field(default_factory=dict)
-    scope_evidence: list[str] = field(default_factory=list)
-    scope_kind: str = "default"
-    source_keyword_ids: set[str] = field(default_factory=set)
-    source_keyword_family_ids: set[str] = field(default_factory=set)
-    source_discovery_job_ids: set[str] = field(default_factory=set)
-    text_embedding: list[float] = field(default_factory=list)
-    audio_embedding: list[float] = field(default_factory=list)
-
-
-@dataclass
-class RecommendationCandidate:
-    track: dict[str, Any]
-    score: float
-    source: str
-    reason: str
-    llm_reason: str = ""
-    profile_signals: list[str] = field(default_factory=list)
-    agent_trace_id: str | None = None
-    tags: list[str] = field(default_factory=list)
-    score_signals: dict[str, float] = field(default_factory=dict)
-    matched_preferences: list[str] = field(default_factory=list)
-    evidence: list[str] = field(default_factory=list)
-    penalties: list[str] = field(default_factory=list)
-    facets: dict[str, list[str]] = field(default_factory=dict)
-    scope_evidence: list[str] = field(default_factory=list)
-    scope_kind: str = "default"
-    source_keyword_ids: list[str] = field(default_factory=list)
-    source_keyword_family_ids: list[str] = field(default_factory=list)
-    source_discovery_job_ids: list[str] = field(default_factory=list)
-    recommendation_trace_id: str = ""
-    text_embedding: list[float] = field(default_factory=list, repr=False)
-    audio_embedding: list[float] = field(default_factory=list, repr=False)
-
-    def to_dict(self) -> dict[str, Any]:
-        value = {
-            "track": self.track,
-            "score": round(self.score, 2),
-            "source": self.source,
-            "reason": self.reason,
-            "sourceKeywordIds": self.source_keyword_ids,
-            "sourceKeywordFamilyIds": self.source_keyword_family_ids,
-            "sourceDiscoveryJobIds": self.source_discovery_job_ids,
-            "recommendationTraceId": self.recommendation_trace_id,
-        }
-        if self.llm_reason:
-            value["llmReason"] = self.llm_reason
-        if self.profile_signals:
-            value["profileSignals"] = self.profile_signals
-        if self.agent_trace_id:
-            value["agentTraceId"] = self.agent_trace_id
-        if self.score_signals:
-            value["scoreSignals"] = self.score_signals
-        if self.matched_preferences:
-            value["matchedPreferences"] = self.matched_preferences
-        if self.evidence:
-            value["evidence"] = self.evidence
-        if self.penalties:
-            value["penalties"] = self.penalties
-        if self.scope_evidence:
-            value["scopeEvidence"] = self.scope_evidence
-        return value
+from settings_service import SettingsService
+from recommendation_contracts import (
+    CandidateDraft,
+    DEFAULT_POOL_TARGET,
+    DEFAULT_RECOMMENDATION_LIMIT,
+    MAX_RECOMMENDATION_LIMIT,
+    MEMORY_EVIDENCE_EVENTS,
+    PROFILE_LIFECYCLE_EVENTS,
+    RecommendationCandidate,
+    UserProfile,
+    _candidate_to_trace,
+    _coerce_tracks,
+    _env_bool,
+    _json_loads,
+    _payload_string_list,
+    _profile_summary,
+    _profile_version,
+    _utc_now,
+)
+from user_profile_reader import UserProfileReader
 
 
 class RecommendationService:
@@ -201,8 +78,11 @@ class RecommendationService:
             bili_client=self.bili_client,
             planner=discovery_planner,
         )
-        self.recommendation_engine = RecommendationEngine(embedding_service=self.content_embeddings)
-        self.profile_statement_service = ProfileStatementService(self.amem_bridge)
+        self.recommendation_engine = RecommendationEngine(
+            embedding_service=self.content_embeddings, user_id=self.user_id
+        )
+        self.profile_reader = UserProfileReader(self.db_path, self.user_id)
+        self.profile_statement_service = ProfileStatementService(self.amem_bridge, db_path=str(self.db_path))
         self.profile_update_pipeline = MusicProfileUpdatePipeline(
             str(self.db_path),
             user_id=self.user_id,
@@ -216,6 +96,7 @@ class RecommendationService:
             else auto_discovery
         )
 
+    @music_operation("recommendation")
     def list_recommendations(
         self,
         scene: str = "home",
@@ -303,14 +184,23 @@ class RecommendationService:
             max(int(limit or DEFAULT_RECOMMENDATION_LIMIT), 1),
             MAX_RECOMMENDATION_LIMIT,
         )
-        legacy_profile = self._load_user_profile()
-        fallback_profile = self._fallback_music_profile(legacy_profile)
+        legacy_profile = self.profile_reader._load_user_profile()
+        fallback_profile = self.profile_reader._fallback_music_profile(legacy_profile)
+        has_personal_key = SettingsService(
+            db_path=self.db_path, user_id=self.user_id
+        ).has_deepseek_api_key()
         span_started = time.perf_counter()
         if memory_variant == "control":
             projection = ProfileProjection(
                 profile=MusicProfile.empty(),
                 memories=[],
                 trace_id=f"profile-control:{self.user_id}:{normalized_scene}",
+            )
+        elif not has_personal_key:
+            projection = ProfileProjection(
+                profile=fallback_profile,
+                memories=[],
+                trace_id=f"profile-rules:{self.user_id}:{normalized_scene}",
             )
         else:
             projection = self.profile_projector.project(
@@ -412,7 +302,7 @@ class RecommendationService:
 
         span_started = time.perf_counter()
         candidates = [
-            self._score_candidate(
+            self.recommendation_engine.score(
                 draft,
                 legacy_profile,
                 music_profile,
@@ -432,23 +322,7 @@ class RecommendationService:
         reranked, selected, mmr_diagnostics = self.recommendation_engine.rank_and_select(
             candidates,
             request=recommendation_request,
-            hard_filtered=lambda item: (
-                self._is_hard_filtered(item, music_profile, legacy_profile)
-                or item.track["trackId"] in legacy_profile.recently_recommended_track_ids
-            ),
-            select=lambda values: self._select_epsilon_greedy(
-                values,
-                bounded_limit,
-                normalized_scene,
-                legacy_profile,
-                music_profile,
-            ),
-            diversity=lambda values: self._apply_diversity_limits(
-                values,
-                music_profile.same_uploader_limit,
-                bounded_limit,
-                request_scoped_limit=None if resolved_request_spec.constrained else 2,
-            ),
+            legacy_profile=legacy_profile,
         )
         timings["selectionMmrMs"] = round((time.perf_counter() - span_started) * 1000, 2)
         timings["mmr"] = mmr_diagnostics
@@ -595,8 +469,8 @@ class RecommendationService:
 
     def music_profile_analysis(self, scene: str = "home") -> dict[str, Any]:
         normalized_scene = self._normalize_scene(scene)
-        legacy_profile = self._load_user_profile()
-        fallback_profile = self._fallback_music_profile(legacy_profile)
+        legacy_profile = self.profile_reader._load_user_profile()
+        fallback_profile = self.profile_reader._fallback_music_profile(legacy_profile)
         projection = self.profile_projector.project(
             user_id=self.user_id,
             scene=normalized_scene,
@@ -725,11 +599,11 @@ class RecommendationService:
         request_spec: RequestSpec | None = None,
     ) -> str | None:
         normalized_scene = self._normalize_scene(scene)
-        legacy_profile = self._load_user_profile()
+        legacy_profile = self.profile_reader._load_user_profile()
         projection = self.profile_projector.project(
             user_id=self.user_id,
             scene=normalized_scene,
-            fallback_profile=self._fallback_music_profile(legacy_profile),
+            fallback_profile=self.profile_reader._fallback_music_profile(legacy_profile),
         )
         return self.discovery_service.enqueue(
             profile=projection.profile,
@@ -746,11 +620,11 @@ class RecommendationService:
         request_spec: RequestSpec | None = None,
     ) -> dict[str, Any]:
         normalized_scene = self._normalize_scene(scene)
-        legacy_profile = self._load_user_profile()
+        legacy_profile = self.profile_reader._load_user_profile()
         projection = self.profile_projector.project(
             user_id=self.user_id,
             scene=normalized_scene,
-            fallback_profile=self._fallback_music_profile(legacy_profile),
+            fallback_profile=self.profile_reader._fallback_music_profile(legacy_profile),
         )
         return self.discovery_service.discover_now(
             profile=projection.profile,
@@ -766,31 +640,6 @@ class RecommendationService:
         return self.scene_memory_service.remember_request(
             scene=self._normalize_scene(scene),
             request_spec=request_spec,
-        )
-
-    def validate_and_finalize(
-        self,
-        candidates: list[RecommendationCandidate],
-        *,
-        profile: MusicProfile,
-        legacy_profile: UserProfile,
-        limit: int,
-        scene: str,
-        request_spec: RequestSpec | None = None,
-    ) -> list[RecommendationCandidate]:
-        resolved_request_spec = request_spec or RequestSpec()
-        filtered = self._filter_candidates(
-            candidates,
-            profile=profile,
-            legacy_profile=legacy_profile,
-        )
-        filtered = [item for item in filtered if resolved_request_spec.matches_facets(item.facets)]
-        selected = self._select_epsilon_greedy(filtered, limit, scene, legacy_profile, profile)
-        return self._apply_diversity_limits(
-            selected,
-            profile.same_uploader_limit,
-            limit,
-            request_scoped_limit=None if resolved_request_spec.constrained else 2,
         )
 
     def record_event(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -909,14 +758,31 @@ class RecommendationService:
                 )
                 for item in normalized:
                     self._write_history(conn, item)
-                    if item['event'] in MEMORY_EVIDENCE_EVENTS:
+                    if item["event"] in MEMORY_EVIDENCE_EVENTS:
                         from durable_jobs import enqueue_behavior
-                        behavior_payload = dict(item.get('behaviorPayload') or {})
-                        behavior_payload.update({name: item[name] for name in (
-                            'source','reason','score','playedSeconds','completed','skipped')})
-                        enqueue_behavior(conn, user_id=self.user_id, event=item['event'],
-                                         scene=item['scene'], track=item['track'],
-                                         payload=behavior_payload)
+
+                        behavior_payload = dict(item.get("behaviorPayload") or {})
+                        behavior_payload.update(
+                            {
+                                name: item[name]
+                                for name in (
+                                    "source",
+                                    "reason",
+                                    "score",
+                                    "playedSeconds",
+                                    "completed",
+                                    "skipped",
+                                )
+                            }
+                        )
+                        enqueue_behavior(
+                            conn,
+                            user_id=self.user_id,
+                            event=item["event"],
+                            scene=item["scene"],
+                            track=item["track"],
+                            payload=behavior_payload,
+                        )
         full_trace.record_span(
             "feedback.persist",
             (time.perf_counter() - storage_started) * 1000,
@@ -943,6 +809,7 @@ class RecommendationService:
             if item["event"] in MEMORY_EVIDENCE_EVENTS:
                 memory_evidence_count += 1
                 from rabbitmq_bus import rabbitmq_enabled
+
                 if not rabbitmq_enabled():
                     record_music_behavior(
                         self.amem_bridge,
@@ -1024,588 +891,6 @@ class RecommendationService:
             if track_id in candidates:
                 candidates[track_id].audio_embedding = vector
         return candidates
-
-    def _score_candidate(
-        self,
-        draft: CandidateDraft,
-        profile: UserProfile,
-        music_profile: MusicProfile,
-        agent_trace_id: str,
-        request_spec: RequestSpec | None = None,
-    ) -> RecommendationCandidate:
-        track = draft.track
-        score = 0.0
-        score_signals: dict[str, float] = {}
-        matched_preferences: list[str] = []
-        evidence: list[str] = []
-        penalties: list[str] = []
-        text = (
-            f"{track.title} {track.owner} {' '.join(draft.tags)} {' '.join(draft.profile_signals)}"
-        )
-
-        if track.owner_mid and track.owner_mid in profile.frequent_owner_mids:
-            score += _add_score_signal(score_signals, "frequent_owner", 3)
-            evidence.append("来自你最近常听的 UP 或相近来源")
-
-        matched_tags = sorted(draft.tags & profile.common_tags)
-        if matched_tags:
-            score += _add_score_signal(score_signals, "tag_match", 3)
-            matched_preferences.extend(matched_tags[:2])
-            evidence.append(f"命中你近期标过的标签：{'、'.join(matched_tags[:2])}")
-
-        if track.owner_mid and track.owner_mid in profile.repeated_owner_mids:
-            score += _add_score_signal(score_signals, "recent_owner_repeat", 2)
-            evidence.append("最近重复听过相近来源")
-
-        if track.owner_mid and track.owner_mid in profile.completed_owner_mids:
-            score += _add_score_signal(score_signals, "recent_completion", 2)
-            evidence.append("最近完整听完过相近来源")
-
-        positive_weight = music_profile.topic_weight(text, positive=True)
-        if positive_weight:
-            score += _add_score_signal(score_signals, "profile_match", 4 * positive_weight)
-            profile_topics = _matched_profile_topics(text, music_profile.positive_topics)
-            matched_preferences.extend(profile_topics)
-            if profile_topics:
-                evidence.append(f"贴近你稳定偏好的 {'、'.join(profile_topics[:3])}")
-            else:
-                evidence.append("贴近你稳定偏好的听感")
-
-        negative_weight = music_profile.topic_weight(text, positive=False)
-        if set((request_spec or RequestSpec()).required_genres) & set(
-            draft.facets.get("genres") or []
-        ):
-            negative_weight = 0.0
-        if negative_weight:
-            score += _add_score_signal(
-                score_signals, "negative_preference_penalty", -3 * negative_weight
-            )
-            negative_topics = _matched_profile_topics(text, music_profile.negative_topics)
-            if negative_topics:
-                penalties.append(f"命中你回避的 {'、'.join(negative_topics[:2])}")
-            else:
-                penalties.append("命中近期负反馈方向")
-
-        uploader_key = _uploader_key(track)
-        uploader_weight = music_profile.uploader_weight(uploader_key)
-        if uploader_weight:
-            score += _add_score_signal(score_signals, "preferred_uploader", 3 * uploader_weight)
-            evidence.append("来自你更容易接受的 UP 或来源")
-
-        if track.track_id in profile.recently_heard_track_ids:
-            score += _add_score_signal(score_signals, "recently_heard_penalty", -3)
-            penalties.append("最近已经听过")
-        if track.track_id in profile.recently_recommended_track_ids:
-            score += _add_score_signal(score_signals, "fatigue_penalty", -4)
-            penalties.append("近期已经推荐过")
-        if track.track_id in profile.skipped_track_ids:
-            score += _add_score_signal(score_signals, "skip_penalty", -5)
-            penalties.append("你之前跳过或点过不感兴趣")
-        if track.owner_mid and track.owner_mid in profile.negative_owner_mids:
-            score += _add_score_signal(
-                score_signals,
-                "negative_owner_penalty",
-                -NEGATIVE_OWNER_SCORE_PENALTY,
-            )
-            penalties.append("该 UP 近期负反馈较多")
-
-        if (request_spec or RequestSpec()).constrained and draft.scope_evidence:
-            evidence.append("满足本轮范围约束")
-        if "discovery_search" in draft.sources and draft.llm_reason:
-            matched_preferences.extend(_profile_signal_names(draft.profile_signals))
-            evidence.append(f"搜索计划命中：{_clean_agent_reason(draft.llm_reason)}")
-        elif "tag_search" in draft.sources and matched_tags:
-            evidence.append(f"按 {matched_tags[0]} 扩展探索")
-        elif "popular_music" in draft.sources and score <= 0:
-            evidence.append("来自最近热门音乐候选")
-
-        if not evidence:
-            evidence.append(self._source_reason(draft.sources))
-
-        return RecommendationCandidate(
-            track=track.to_dict(),
-            score=score,
-            source=self._primary_source(draft.sources),
-            reason=_candidate_reason(evidence, penalties),
-            llm_reason=draft.llm_reason,
-            profile_signals=draft.profile_signals,
-            agent_trace_id=agent_trace_id if "discovery_search" in draft.sources else None,
-            tags=sorted(draft.tags),
-            score_signals=score_signals,
-            matched_preferences=list(dict.fromkeys(matched_preferences)),
-            evidence=list(dict.fromkeys(evidence)),
-            penalties=list(dict.fromkeys(penalties)),
-            facets=draft.facets,
-            scope_evidence=draft.scope_evidence,
-            scope_kind=draft.scope_kind,
-            source_keyword_ids=sorted(draft.source_keyword_ids),
-            source_keyword_family_ids=sorted(draft.source_keyword_family_ids),
-            source_discovery_job_ids=sorted(draft.source_discovery_job_ids),
-            text_embedding=list(draft.text_embedding),
-            audio_embedding=list(draft.audio_embedding),
-        )
-
-    def _select_epsilon_greedy(
-        self,
-        candidates: list[RecommendationCandidate],
-        limit: int,
-        scene: str,
-        profile: UserProfile,
-        music_profile: MusicProfile,
-    ) -> list[RecommendationCandidate]:
-        if not candidates:
-            return []
-
-        if music_profile.exploration_ratio > 0:
-            explore_count = min(limit, max(0, round(limit * music_profile.exploration_ratio)))
-        else:
-            explore_count = min(EXPLORE_SLOT_COUNT, max(limit - HIGH_SCORE_SLOT_COUNT, 0))
-        high_count = limit - explore_count
-        selected_ids: set[str] = set()
-        explore_selected: list[RecommendationCandidate] = []
-        high_selected: list[RecommendationCandidate] = []
-
-        explore_pool = [
-            item
-            for item in candidates
-            if self._is_unfamiliar(item, profile) and item.source in EXPLORE_SOURCES
-        ][:50]
-
-        seed = f"{self.user_id}:{scene}:{datetime.now(timezone.utc).date().isoformat()}"
-        rng = random.Random(seed)
-        rng.shuffle(explore_pool)
-
-        for item in explore_pool[:explore_count]:
-            item.source = "explore"
-            if not item.reason.startswith("探索"):
-                item.reason = f"探索：{item.reason}"
-            explore_selected.append(item)
-            selected_ids.add(item.track["trackId"])
-
-        high_pool = [
-            item
-            for item in candidates
-            if item.track["trackId"] not in selected_ids
-            and not self._is_skipped(item, profile)
-            and item.track["trackId"] not in profile.recently_recommended_track_ids
-        ]
-        for item in high_pool[:high_count]:
-            high_selected.append(item)
-            selected_ids.add(item.track["trackId"])
-
-        if len(high_selected) < high_count:
-            for item in candidates:
-                track_id = item.track["trackId"]
-                if (
-                    track_id in selected_ids
-                    or self._is_skipped(item, profile)
-                    or track_id in profile.recently_recommended_track_ids
-                ):
-                    continue
-                high_selected.append(item)
-                selected_ids.add(track_id)
-                if len(high_selected) >= high_count:
-                    break
-
-        return (high_selected + explore_selected)[:limit]
-
-    @staticmethod
-    def _apply_diversity_limits(
-        candidates: list[RecommendationCandidate],
-        same_uploader_limit: int,
-        limit: int,
-        *,
-        request_scoped_limit: int | None = 2,
-    ) -> list[RecommendationCandidate]:
-        uploader_limit = (
-            same_uploader_limit if same_uploader_limit > 0 else SERVICE_DEFAULT_SAME_UPLOADER_LIMIT
-        )
-        uploader_counts: dict[str, int] = {}
-        artist_counts: dict[str, int] = {}
-        selected_work_ids: set[str] = set()
-        contextual_count = 0
-        selected: list[RecommendationCandidate] = []
-        for item in candidates:
-            uploader = str(item.track.get("ownerMid") or item.track.get("owner") or "")
-            artist_keys = _candidate_artist_keys(item)
-            work_id = str(item.track.get("workId") or "")
-            if work_id and work_id in selected_work_ids:
-                continue
-            if uploader and uploader_counts.get(uploader, 0) >= uploader_limit:
-                continue
-            if any(
-                artist_counts.get(artist, 0) >= SERVICE_DEFAULT_SAME_ARTIST_LIMIT
-                for artist in artist_keys
-            ):
-                continue
-            if (
-                request_scoped_limit is not None
-                and item.scope_kind == "request"
-                and contextual_count >= request_scoped_limit
-            ):
-                continue
-            selected.append(item)
-            if uploader:
-                uploader_counts[uploader] = uploader_counts.get(uploader, 0) + 1
-            for artist in artist_keys:
-                artist_counts[artist] = artist_counts.get(artist, 0) + 1
-            if work_id:
-                selected_work_ids.add(work_id)
-            if item.scope_kind == "request":
-                contextual_count += 1
-            if len(selected) >= limit:
-                break
-        return selected
-
-    @staticmethod
-    def _filter_candidates(
-        candidates: list[RecommendationCandidate],
-        *,
-        profile: MusicProfile,
-        legacy_profile: UserProfile,
-    ) -> list[RecommendationCandidate]:
-        return [
-            item
-            for item in candidates
-            if not RecommendationService._is_hard_filtered(item, profile, legacy_profile)
-        ]
-
-    @staticmethod
-    def _is_hard_filtered(
-        item: RecommendationCandidate,
-        profile: MusicProfile,
-        legacy_profile: UserProfile,
-    ) -> bool:
-        track_id = str(item.track.get("trackId") or "")
-        if track_id in legacy_profile.skipped_track_ids:
-            return True
-        recording_id = str(item.track.get("recordingId") or "")
-        if recording_id and recording_id in legacy_profile.skipped_recording_ids:
-            return True
-        if not RecommendationService._is_music_candidate(item, legacy_profile):
-            return True
-        owner_mid = _candidate_owner_mid(item)
-        trusted_owner_mids = (
-            set(getattr(legacy_profile, "frequent_owner_mids", set()))
-            | set(getattr(legacy_profile, "liked_owner_mids", set()))
-            | set(getattr(legacy_profile, "completed_owner_mids", set()))
-        )
-        if (
-            owner_mid in set(getattr(legacy_profile, "negative_owner_mids", set()))
-            and owner_mid not in trusted_owner_mids
-        ):
-            return True
-        uploader = str(item.track.get("ownerMid") or item.track.get("owner") or "")
-        return profile.hard_blocked_uploader(uploader) or profile.avoided_uploader(uploader)
-
-    @staticmethod
-    def _is_music_candidate(item: RecommendationCandidate, profile: UserProfile) -> bool:
-        text = _candidate_text(item)
-        if has_gossip_exclusion(text):
-            return False
-        if item.source in SEARCH_BACKED_SOURCES:
-            if has_non_music_context(text) and not has_music_relevance_signal(text):
-                return False
-            return has_music_relevance_signal(text) or bool(item.facets.get("genres"))
-        if has_non_music_context(text) and not has_music_relevance_signal(text):
-            return False
-        owner_mid = _candidate_owner_mid(item)
-        trusted_owner_mids = (
-            set(getattr(profile, "frequent_owner_mids", set()))
-            | set(getattr(profile, "liked_owner_mids", set()))
-            | set(getattr(profile, "completed_owner_mids", set()))
-        )
-        if owner_mid in trusted_owner_mids:
-            return True
-        return is_music_relevant(text)
-
-    @staticmethod
-    def _is_unfamiliar(item: RecommendationCandidate, profile: UserProfile) -> bool:
-        track_id = item.track["trackId"]
-        recording_id = str(item.track.get("recordingId") or "")
-        work_id = str(item.track.get("workId") or "")
-        return (
-            track_id not in profile.recently_heard_track_ids
-            and track_id not in profile.recently_recommended_track_ids
-            and track_id not in profile.skipped_track_ids
-            and (not recording_id or recording_id not in profile.recently_heard_recording_ids)
-            and (not work_id or work_id not in profile.recently_recommended_work_ids)
-        )
-
-    @staticmethod
-    def _is_skipped(item: RecommendationCandidate, profile: UserProfile) -> bool:
-        recording_id = str(item.track.get("recordingId") or "")
-        return item.track["trackId"] in profile.skipped_track_ids or (
-            bool(recording_id) and recording_id in profile.skipped_recording_ids
-        )
-
-    def _load_user_profile(self) -> UserProfile:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=RECENT_LISTEN_DAYS)).isoformat()
-        recommend_cutoff = (
-            datetime.now(timezone.utc) - timedelta(days=RECENT_RECOMMEND_DAYS)
-        ).isoformat()
-        profile = UserProfile()
-
-        with get_connection(self.db_path) as conn:
-            profile.frequent_owner_mids = {
-                int(row["owner_mid"])
-                for row in conn.execute(
-                    """
-                    SELECT t.owner_mid, COUNT(*) + COALESCE(SUM(r.play_count), 0) AS weight
-                    FROM tracks t
-                    LEFT JOIN recent r ON r.user_id = ? AND r.track_id = t.track_id
-                    LEFT JOIN playback_recent pr ON pr.user_id = ? AND pr.track_id = t.track_id
-                    WHERE t.owner_mid IS NOT NULL
-                      AND (r.track_id IS NOT NULL OR pr.track_id IS NOT NULL)
-                    GROUP BY t.owner_mid
-                    ORDER BY weight DESC
-                    LIMIT 10
-                    """,
-                    (self.user_id, self.user_id),
-                ).fetchall()
-                if row["owner_mid"]
-            }
-            profile.liked_owner_mids = {
-                int(row["owner_mid"])
-                for row in conn.execute(
-                    """
-                    SELECT DISTINCT t.owner_mid
-                    FROM likes l
-                    JOIN tracks t ON t.track_id = l.track_id
-                    WHERE l.user_id = ? AND t.owner_mid IS NOT NULL
-                    LIMIT 20
-                    """,
-                    (self.user_id,),
-                ).fetchall()
-                if row["owner_mid"]
-            }
-            profile.common_tags = {
-                str(row["mood"]).strip()
-                for row in conn.execute(
-                    """
-                    SELECT mood, COUNT(*) AS weight
-                    FROM track_reviews
-                    WHERE user_id = ? AND TRIM(mood) <> ''
-                    GROUP BY mood
-                    ORDER BY weight DESC, MAX(updated_at) DESC
-                    LIMIT 10
-                    """,
-                    (self.user_id,),
-                ).fetchall()
-                if str(row["mood"]).strip()
-            }
-            profile.repeated_owner_mids = {
-                int(row["owner_mid"])
-                for row in conn.execute(
-                    """
-                    SELECT t.owner_mid
-                    FROM recent r
-                    JOIN tracks t ON t.track_id = r.track_id
-                    WHERE r.user_id = ? AND r.play_count >= 2 AND t.owner_mid IS NOT NULL
-                    GROUP BY t.owner_mid
-                    LIMIT 10
-                    """,
-                    (self.user_id,),
-                ).fetchall()
-                if row["owner_mid"]
-            }
-            profile.completed_owner_mids = {
-                int(row["owner_mid"])
-                for row in conn.execute(
-                    """
-                    SELECT DISTINCT t.owner_mid
-                    FROM tracks t
-                    LEFT JOIN recent r ON r.user_id = ? AND r.track_id = t.track_id
-                    LEFT JOIN playback_recent pr ON pr.user_id = ? AND pr.track_id = t.track_id
-                    WHERE t.owner_mid IS NOT NULL
-                      AND (COALESCE(r.completed, 0) = 1 OR COALESCE(pr.completed, 0) = 1)
-                    LIMIT 20
-                    """,
-                    (self.user_id, self.user_id),
-                ).fetchall()
-                if row["owner_mid"]
-            }
-            profile.recently_heard_track_ids = {
-                str(row["track_id"])
-                for row in conn.execute(
-                    """
-                    SELECT track_id FROM recent
-                    WHERE user_id = ? AND last_played_at >= ?
-                    UNION
-                    SELECT track_id FROM playback_recent
-                    WHERE user_id = ? AND last_played_at >= ?
-                    """,
-                    (self.user_id, cutoff, self.user_id, cutoff),
-                ).fetchall()
-            }
-            profile.recently_recommended_track_ids = {
-                str(row["track_id"])
-                for row in conn.execute(
-                    """
-                    SELECT track_id FROM recommendation_history
-                    WHERE user_id = ? AND recommended_at >= ?
-                    UNION
-                    SELECT track_id FROM recommendation_events
-                    WHERE user_id = ? AND event = 'shown' AND created_at >= ?
-                    """,
-                    (self.user_id, recommend_cutoff, self.user_id, recommend_cutoff),
-                ).fetchall()
-            }
-            profile.skipped_track_ids = {
-                str(row["track_id"])
-                for row in conn.execute(
-                    """
-                    SELECT track_id FROM playback_recent
-                    WHERE user_id = ? AND skipped = 1
-                    UNION
-                    SELECT track_id FROM recommendation_history
-                    WHERE user_id = ? AND skipped = 1
-                    UNION
-                    SELECT track_id FROM recommendation_events
-                    WHERE user_id = ? AND event IN ('skipped', 'dismissed', 'dislike')
-                    """,
-                    (self.user_id, self.user_id, self.user_id),
-                ).fetchall()
-            }
-            profile.recently_heard_recording_ids = {
-                str(row["recording_id"])
-                for row in conn.execute(
-                    """
-                    SELECT DISTINCT t.recording_id
-                    FROM tracks t
-                    WHERE t.recording_id IS NOT NULL AND t.track_id IN (
-                        SELECT track_id FROM recent
-                        WHERE user_id=? AND last_played_at>=?
-                        UNION
-                        SELECT track_id FROM playback_recent
-                        WHERE user_id=? AND last_played_at>=?
-                    )
-                    """,
-                    (self.user_id, cutoff, self.user_id, cutoff),
-                ).fetchall()
-                if row["recording_id"]
-            }
-            profile.recently_recommended_work_ids = {
-                str(row["work_id"])
-                for row in conn.execute(
-                    """
-                    SELECT DISTINCT t.work_id
-                    FROM tracks t
-                    WHERE t.work_id IS NOT NULL AND t.track_id IN (
-                        SELECT track_id FROM recommendation_history
-                        WHERE user_id=? AND recommended_at>=?
-                        UNION
-                        SELECT track_id FROM recommendation_events
-                        WHERE user_id=? AND event='shown' AND created_at>=?
-                    )
-                    """,
-                    (self.user_id, recommend_cutoff, self.user_id, recommend_cutoff),
-                ).fetchall()
-                if row["work_id"]
-            }
-            profile.skipped_recording_ids = {
-                str(row["recording_id"])
-                for row in conn.execute(
-                    """
-                    SELECT DISTINCT t.recording_id
-                    FROM tracks t
-                    WHERE t.recording_id IS NOT NULL AND t.track_id IN (
-                        SELECT track_id FROM playback_recent
-                        WHERE user_id=? AND skipped=1
-                        UNION
-                        SELECT track_id FROM recommendation_history
-                        WHERE user_id=? AND skipped=1
-                        UNION
-                        SELECT track_id FROM recommendation_events
-                        WHERE user_id=? AND event IN ('skipped', 'dismissed', 'dislike')
-                    )
-                    """,
-                    (self.user_id, self.user_id, self.user_id),
-                ).fetchall()
-                if row["recording_id"]
-            }
-            profile.negative_owner_mids = {
-                int(row["owner_mid"])
-                for row in conn.execute(
-                    """
-                    SELECT owner_mid
-                    FROM (
-                        SELECT t.owner_mid AS owner_mid
-                        FROM recommendation_events e
-                        JOIN tracks t ON t.track_id = e.track_id
-                        WHERE e.user_id = ?
-                          AND e.event IN ('skipped', 'dismissed', 'dislike')
-                          AND t.owner_mid IS NOT NULL
-                        UNION ALL
-                        SELECT t.owner_mid AS owner_mid
-                        FROM recommendation_history h
-                        JOIN tracks t ON t.track_id = h.track_id
-                        WHERE h.user_id = ?
-                          AND h.skipped = 1
-                          AND t.owner_mid IS NOT NULL
-                    )
-                    GROUP BY owner_mid
-                    HAVING COUNT(*) >= ?
-                    LIMIT 50
-                    """,
-                    (
-                        self.user_id,
-                        self.user_id,
-                        NEGATIVE_OWNER_SUPPRESSION_THRESHOLD,
-                    ),
-                ).fetchall()
-                if row["owner_mid"]
-            }
-
-        return profile
-
-    def _fallback_music_profile(self, profile: UserProfile) -> MusicProfile:
-        fallback = MusicProfile(
-            positive_topics={tag: 0.72 for tag in profile.common_tags},
-            preferred_uploaders={
-                str(mid): 0.75 for mid in (profile.liked_owner_mids | profile.frequent_owner_mids)
-            },
-            confidence=0.45 if profile.common_tags or profile.liked_owner_mids else 0.0,
-            source="fallback",
-        )
-        with get_connection(self.db_path) as conn:
-            row = conn.execute(
-                "SELECT profile_json FROM music_profile_snapshots WHERE user_id = ?",
-                (self.user_id,),
-            ).fetchone()
-        if row is None:
-            return fallback
-        stored = _json_loads(row["profile_json"])
-        snapshot = MusicProfile.from_dict(stored, source="profile_snapshot")
-        for name in (
-            "positive_topics",
-            "negative_topics",
-            "preferred_uploaders",
-            "avoid_uploaders",
-            "blocked_uploaders",
-            "mood_weights",
-        ):
-            getattr(fallback, name).update(getattr(snapshot, name))
-        for name in (
-            "mbti",
-            "music_persona",
-            "current_music_phase",
-            "core_traits",
-            "psychological_needs",
-            "persona_evidence",
-            "persona_confidence",
-        ):
-            value = getattr(snapshot, name)
-            if value:
-                setattr(fallback, name, value)
-        fallback.recent_intents = list(snapshot.recent_intents)
-        fallback.positive_interest_texts = list(snapshot.positive_interest_texts)
-        fallback.negative_interest_texts = list(snapshot.negative_interest_texts)
-        fallback.same_uploader_limit = snapshot.same_uploader_limit
-        fallback.exploration_ratio = snapshot.exploration_ratio
-        fallback.confidence = max(fallback.confidence, snapshot.confidence)
-        fallback.source = "profile_snapshot"
-        return fallback
 
     def _safe_list_user_tracks(self, mid: int, order: str, page_size: int) -> list[Track]:
         try:
@@ -1954,33 +1239,6 @@ class RecommendationService:
         )
 
     @staticmethod
-    def _primary_source(sources: set[str]) -> str:
-        for source in [
-            "discovery_search",
-            "frequent_up",
-            "liked_up",
-            "tag_search",
-            "tag_match",
-            "popular_music",
-            "library",
-        ]:
-            if source in sources:
-                return source
-        return next(iter(sources), "library")
-
-    @staticmethod
-    def _source_reason(sources: set[str]) -> str:
-        source = RecommendationService._primary_source(sources)
-        return {
-            "discovery_search": "候选池中的发现结果",
-            "frequent_up": "常听 UP 的其他稿件",
-            "liked_up": "喜欢歌曲 UP 的其他稿件",
-            "tag_search": "同标签搜索结果",
-            "tag_match": "标签相同的歌曲",
-            "popular_music": "最近热门音乐稿件",
-        }.get(source, "来自你的播放和收藏记录")
-
-    @staticmethod
     def _normalize_scene(scene: str) -> str:
         value = (scene or "home").strip().lower()
         return value[:32] or "home"
@@ -2002,178 +1260,3 @@ class RecommendationService:
             "track_reviewed",
         }
         return value if value in allowed else "shown"
-
-
-def _coerce_tracks(values: list[Any]) -> list[Track]:
-    result = []
-    for item in values:
-        try:
-            result.append(item if isinstance(item, Track) else Track.from_dict(item))
-        except Exception:
-            continue
-    return result
-
-
-def _uploader_key(track: Track) -> str:
-    return str(track.owner_mid or track.owner or "")
-
-
-def _candidate_owner_mid(candidate: RecommendationCandidate) -> int | None:
-    value = candidate.track.get("ownerMid")
-    try:
-        return int(value) if value not in (None, "") else None
-    except (TypeError, ValueError):
-        return None
-
-
-def _candidate_text(candidate: RecommendationCandidate) -> str:
-    track = candidate.track
-    values = [
-        track.get("title"),
-        track.get("pageTitle"),
-        track.get("owner"),
-        candidate.llm_reason,
-        " ".join(candidate.profile_signals),
-        " ".join(candidate.tags),
-    ]
-    if candidate.source != "popular_music":
-        values.append(candidate.reason)
-    return " ".join(str(value) for value in values if value)
-
-
-def _candidate_artist_keys(candidate: RecommendationCandidate) -> list[str]:
-    return matched_artist_names(_candidate_text(candidate))
-
-
-def _add_score_signal(signals: dict[str, float], name: str, delta: float) -> float:
-    value = round(float(delta), 4)
-    signals[name] = round(signals.get(name, 0.0) + value, 4)
-    return value
-
-
-def _matched_profile_topics(text: str, values: dict[str, float], *, limit: int = 3) -> list[str]:
-    normalized = text.casefold()
-    result = [
-        topic
-        for topic, _weight in sorted(values.items(), key=lambda item: item[1], reverse=True)
-        if topic and topic.casefold() in normalized
-    ]
-    return result[:limit]
-
-
-def _profile_signal_names(signals: list[str]) -> list[str]:
-    result: list[str] = []
-    for signal in signals:
-        if ":" not in signal:
-            continue
-        _kind, value = signal.split(":", 1)
-        value = value.strip()
-        if value:
-            result.append(value)
-    return list(dict.fromkeys(result))
-
-
-def _clean_agent_reason(value: str) -> str:
-    text = re.sub(r"^search\s+intent\s*:\s*", "", value, flags=re.IGNORECASE).strip()
-    return text[:80] or "主动搜索候选"
-
-
-def _candidate_reason(evidence: list[str], penalties: list[str]) -> str:
-    clean_evidence = [item for item in evidence if item]
-    if clean_evidence:
-        return "；".join(clean_evidence[:2])
-    clean_penalties = [item for item in penalties if item]
-    if clean_penalties:
-        return f"已降权后仍保留少量探索：{clean_penalties[0]}"
-    return "来自你的播放和收藏记录"
-
-
-def _candidate_to_trace(candidate: RecommendationCandidate) -> dict[str, Any]:
-    track = candidate.track
-    return {
-        "trackId": track.get("trackId"),
-        "bvid": track.get("bvid"),
-        "cid": track.get("cid"),
-        "title": track.get("title"),
-        "owner": track.get("owner"),
-        "ownerMid": track.get("ownerMid"),
-        "workId": track.get("workId"),
-        "recordingId": track.get("recordingId"),
-        "canonicalTitle": track.get("canonicalTitle"),
-        "canonicalArtist": track.get("canonicalArtist"),
-        "versionType": track.get("versionType"),
-        "score": round(candidate.score, 4),
-        "source": candidate.source,
-        "reason": candidate.reason,
-        "tags": candidate.tags,
-        "llmReason": candidate.llm_reason,
-        "profileSignals": candidate.profile_signals,
-        "agentTraceId": candidate.agent_trace_id,
-        "scoreSignals": candidate.score_signals,
-        "matchedPreferences": candidate.matched_preferences,
-        "evidence": candidate.evidence,
-        "penalties": candidate.penalties,
-        "facets": candidate.facets,
-        "scopeEvidence": candidate.scope_evidence,
-        "sourceKeywordIds": candidate.source_keyword_ids,
-        "sourceKeywordFamilyIds": candidate.source_keyword_family_ids,
-        "sourceDiscoveryJobIds": candidate.source_discovery_job_ids,
-        "recommendationTraceId": candidate.recommendation_trace_id,
-    }
-
-
-def _profile_version(profile_trace_id: str, profile: MusicProfile) -> str:
-    payload = json.dumps(profile.to_dict(), ensure_ascii=False, sort_keys=True)
-    digest = hashlib.sha1(f"{profile_trace_id}:{payload}".encode("utf-8")).hexdigest()[:12]
-    return f"{profile_trace_id}:{digest}"
-
-
-def _profile_summary(profile: MusicProfile) -> dict[str, Any]:
-    return {
-        "topPositiveTopics": _top_score_items(profile.positive_topics),
-        "topNegativeTopics": _top_score_items(profile.negative_topics),
-        "topUploaders": _top_score_items(profile.preferred_uploaders),
-        "topMoods": _top_score_items(profile.mood_weights),
-        "strategy": {
-            "sameUploaderLimit": profile.same_uploader_limit,
-            "explorationRatio": profile.exploration_ratio,
-            "confidence": profile.confidence,
-            "source": profile.source,
-        },
-        "evidenceMemoryCount": len(profile.evidence_memory_ids),
-    }
-
-
-def _top_score_items(values: dict[str, float], *, limit: int = 6) -> list[dict[str, Any]]:
-    return [
-        {"name": key, "weight": value}
-        for key, value in sorted(values.items(), key=lambda item: item[1], reverse=True)[:limit]
-    ]
-
-
-def _json_loads(value: str) -> dict[str, Any]:
-    try:
-        parsed = json.loads(value)
-    except (TypeError, ValueError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _payload_string_list(payload: dict[str, Any], *keys: str, limit: int) -> list[str]:
-    for key in keys:
-        value = payload.get(key)
-        if not isinstance(value, list):
-            continue
-        return [str(item) for item in value if str(item).strip()][:limit]
-    return []
-
-
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().casefold() in {"1", "true", "yes", "on"}

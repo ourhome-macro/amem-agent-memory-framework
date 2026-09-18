@@ -7,10 +7,10 @@ WORKDIR /app
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir -e .
+RUN --mount=type=cache,target=/root/.cache/pip pip install -e .
 
 COPY recommend-radio/backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements.txt
 
 COPY recommend-radio/backend .
 

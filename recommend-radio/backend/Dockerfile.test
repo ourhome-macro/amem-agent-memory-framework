@@ -4,7 +4,7 @@ WORKDIR /workspace
 COPY pyproject.toml README.md ./
 COPY src ./src
 COPY recommend-radio/backend/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -e '.[dev]' -r /tmp/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip pip install -e '.[dev]' -r /tmp/requirements.txt
 COPY recommend-radio/backend ./recommend-radio/backend
 COPY recommend-radio/scripts ./recommend-radio/scripts
 COPY recommend-radio/evals ./recommend-radio/evals

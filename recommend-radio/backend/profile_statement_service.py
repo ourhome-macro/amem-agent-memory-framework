@@ -11,10 +11,18 @@ DEFAULT_STATEMENT_CONFIDENCE = 0.86
 
 
 class ProfileStatementService:
-    def __init__(self, amem_bridge: Any, *, llm_client: Any | None = None, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        amem_bridge: Any,
+        *,
+        llm_client: Any | None = None,
+        enabled: bool = True,
+        db_path: str | None = None,
+    ) -> None:
         self.amem_bridge = amem_bridge
         self.llm_client = llm_client
         self.enabled = enabled
+        self.db_path = db_path
 
     def submit(self, *, user_id: str, description: str) -> dict[str, Any]:
         normalized = (description or "").strip()
@@ -23,7 +31,7 @@ class ProfileStatementService:
         if len(normalized) > 2000:
             raise ValueError("profile description is too long")
 
-        profile, source = self._extract(normalized)
+        profile, source = self._extract(normalized, user_id=user_id)
         result = self.amem_bridge.record_profile_statement(
             user_id=user_id,
             description=normalized,
@@ -38,19 +46,25 @@ class ProfileStatementService:
             "memoryIds": result.get("memoryIds") or [],
         }
 
-    def _extract(self, description: str) -> tuple[MusicProfile, str]:
+    def _extract(self, description: str, *, user_id: str) -> tuple[MusicProfile, str]:
         rule_profile = _extract_with_rules(description)
-        if self.enabled:
+        from settings_service import SettingsService
+
+        llm_allowed = self.enabled and (
+            self.llm_client is not None
+            or SettingsService(db_path=self.db_path, user_id=user_id).has_deepseek_api_key()
+        )
+        if llm_allowed:
             try:
-                profile = self._extract_with_llm(description)
+                profile = self._extract_with_llm(description, user_id=user_id)
                 _apply_rule_guardrails(profile, rule_profile)
                 return profile, "llm+rules"
             except Exception:
                 pass
         return rule_profile, "rules"
 
-    def _extract_with_llm(self, description: str) -> MusicProfile:
-        client = self.llm_client or _default_llm_client()
+    def _extract_with_llm(self, description: str, *, user_id: str) -> MusicProfile:
+        client = self.llm_client or _default_llm_client(user_id=user_id, db_path=self.db_path)
         system_prompt = (
             "Extract a structured music profile from a user's free-form self description. "
             "The user only needs to describe their music personality. Infer a best-effort four-letter MBTI, current music phase, "

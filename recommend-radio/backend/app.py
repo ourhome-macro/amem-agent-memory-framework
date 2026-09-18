@@ -45,6 +45,7 @@ from request_spec import RequestInterpreter
 from requests.adapters import HTTPAdapter
 from result import Result
 from settings_service import SettingsService
+from service_factory import MusicServices
 from sse_event_client import SSEEventPublisher
 from stream_service import StreamService
 from trace_metrics import summarize_traces
@@ -61,6 +62,14 @@ def record_music_behavior(*args, **kwargs):
         return _record_music_behavior(*args, **kwargs)
 
 app = Flask(__name__)
+from telemetry_setup import setup as setup_telemetry
+setup_telemetry('recommend-radio-api', app)
+
+@app.after_request
+def attach_trace_id(response):
+    from agent_memory_runtime.telemetry import trace_id
+    response.headers['X-Trace-ID'] = trace_id()
+    return response
 app.secret_key = os.getenv("APP_SECRET_KEY") or secrets.token_urlsafe(48)
 _secure_cookie_default = os.getenv("AUTH_MODE", "disabled").strip().lower() == "oidc"
 _secure_cookie_value = os.getenv("SESSION_COOKIE_SECURE")
@@ -116,7 +125,6 @@ auth_service = AuthService()
 library_service = LibraryService()
 playback_service = PlaybackService()
 queue_service = PlayerQueueService()
-recommendation_service = RecommendationService()
 settings_service = SettingsService()
 analysis_service = AnalysisService()
 admin_service = AdminService()
@@ -166,25 +174,19 @@ def _queue_for_request() -> PlayerQueueService:
 
 
 def _recommendations_for_request() -> RecommendationService:
-    return _request_service(
-        "_recommendation_service",
-        recommendation_service,
-        lambda user_id: RecommendationService(
-            user_id=user_id,
-            bili_client=bili_client,
-            amem_bridge=amem_bridge,
-            profile_projector=profile_projector,
-        ),
-    )
+    return _music_services_for_request().recommendations
 
 
 def _dialogue_for_request() -> MusicDialogueService:
+    return _music_services_for_request().dialogue
+
+
+def _music_services_for_request() -> MusicServices:
     return _request_service(
-        "_dialogue_service",
-        dialogue_service,
-        lambda user_id: MusicDialogueService(
-            user_id=user_id,
-            recommendation_service=_recommendations_for_request(),
+        "_music_services", music_services,
+        lambda user_id: MusicServices(
+            user_id=user_id, bili_client=bili_client,
+            amem_runtime=(amem_bridge, profile_projector),
         ),
     )
 
@@ -203,12 +205,9 @@ def _analysis_for_request() -> AnalysisService:
 
 bili_client = BiliClient(cookie_provider=lambda: _auth_for_request().get_cookie_header())
 amem_bridge, profile_projector = build_amem_runtime()
-recommendation_service = RecommendationService(
-    bili_client=bili_client,
-    amem_bridge=amem_bridge,
-    profile_projector=profile_projector,
-)
-dialogue_service = MusicDialogueService(recommendation_service=recommendation_service)
+music_services = MusicServices(bili_client=bili_client, amem_runtime=(amem_bridge, profile_projector))
+recommendation_service = music_services.recommendations
+dialogue_service = music_services.dialogue
 dialogue_task_service = DialogueTaskService(SSEEventPublisher())
 stream_service = StreamService(bili_client)
 register_monitoring(app, user_stats_provider=admin_service.monitoring_user_stats)
@@ -232,6 +231,7 @@ _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 def _close_runtime_clients() -> None:
     for client in (
+        profile_projector,
         amem_bridge,
         dialogue_task_service,
         stream_service,
@@ -282,6 +282,9 @@ def enforce_loopback_binding(host: str, *, auth_enabled: bool = oidc_auth.enable
 
 @app.teardown_request
 def close_request_services(_error=None):
+    scoped_music = getattr(g, "_music_services", None)
+    if scoped_music is not None:
+        scoped_music.close()
     scoped_auth = getattr(g, "_auth_service", None)
     if scoped_auth is not None:
         try:
@@ -321,7 +324,10 @@ def complete_request(response: Response):
         (time.perf_counter() - getattr(g, "request_started_at", time.perf_counter())) * 1_000,
     )
     response.headers["X-Request-ID"] = request_id
-    if request.endpoint in {"session_me", "session_callback", "session_logout"}:
+    if (
+        request.endpoint in {"session_me", "session_callback", "session_logout"}
+        or request.path == "/api/settings/deepseek-key"
+    ):
         response.headers["Cache-Control"] = "no-store"
     app_timing = f"app_headers;dur={headers_ms:.1f}"
     existing_timing = response.headers.get("Server-Timing")
@@ -372,6 +378,19 @@ def require_admin(handler):
         user = getattr(g, "current_user", None)
         if not user or user.get("role") != "admin":
             raise APIError.forbidden("Administrator access is required")
+        return handler(*args, **kwargs)
+
+    return wrapped
+
+
+def require_personal_deepseek_key(handler):
+    @wraps(handler)
+    def wrapped(*args, **kwargs):
+        provider = (os.getenv("RECOMMEND_LLM_PROVIDER", "deepseek") or "deepseek").casefold()
+        if provider != "deepseek":
+            raise APIError.conflict("音乐助手当前需要 DeepSeek 模型")
+        if not _settings_for_request().has_deepseek_api_key():
+            raise APIError.forbidden("请先在 API 设置中配置个人 DeepSeek API Key")
         return handler(*args, **kwargs)
 
     return wrapped
@@ -996,11 +1015,18 @@ def list_agent_dialogue_sessions():
 
 
 @app.post("/api/agent/dialogue/sessions")
+@require_personal_deepseek_key
 def create_agent_dialogue_session():
     return Result.ok(_dialogue_for_request().create_session()).json_with_status(201)
 
 
+@app.delete("/api/agent/dialogue/sessions/<path:session_id>")
+def delete_agent_dialogue_session(session_id: str):
+    return Result.ok(_dialogue_for_request().delete_session(session_id)).json()
+
+
 @app.post("/api/agent/dialogue/message")
+@require_personal_deepseek_key
 def send_agent_dialogue_message():
     payload = _json_body()
     message = str(payload.get("message") or "")
@@ -1022,6 +1048,7 @@ def send_agent_dialogue_message():
 
 
 @app.post("/api/agent/dialogue/tasks")
+@require_personal_deepseek_key
 def submit_agent_dialogue_task():
     payload = _json_body()
     message = str(payload.get("message") or "")
@@ -1060,6 +1087,7 @@ def dialogue_task_status(task_id: str):
 
 
 @app.post("/api/agent/dialogue/undo")
+@require_personal_deepseek_key
 def undo_agent_dialogue_message():
     payload = _json_body()
     session_id = payload.get("sessionId")
@@ -1073,6 +1101,7 @@ def undo_agent_dialogue_message():
 
 
 @app.post("/api/agent/dialogue/cards/<path:card_id>/feedback")
+@require_personal_deepseek_key
 def submit_agent_dialogue_card_feedback(card_id: str):
     payload = _json_body()
     action = str(payload.get("action") or "")
@@ -1118,6 +1147,7 @@ def auth_qrcode_status():
 
 
 @app.post("/api/agent/dialogue/cards/<path:card_id>/refresh")
+@require_personal_deepseek_key
 def refresh_agent_dialogue_recommendation_card(card_id: str):
     try:
         return Result.ok(_dialogue_for_request().refresh_recommendation_card(card_id)).json()
@@ -1191,6 +1221,34 @@ def update_settings():
         value = payload.get("playbackSpeed") or payload.get("playback_speed")
         _settings_for_request().set_playback_speed(value)
     return Result.ok(_settings_for_request().to_dict()).json()
+
+
+@app.get("/api/settings/deepseek-key")
+def get_deepseek_key_status():
+    service = _settings_for_request()
+    fallback_env = os.getenv("RECOMMEND_LLM_API_KEY_ENV", "").strip() or "DEEPSEEK_API_KEY"
+    provider = (
+        os.getenv("RECOMMEND_LLM_PROVIDER", "").strip()
+        or os.getenv("AMEM_LLM_PROVIDER", "").strip()
+        or "deepseek"
+    ).casefold()
+    return Result.ok({
+        "configured": service.has_deepseek_api_key(),
+        "fallbackConfigured": bool(os.getenv(fallback_env, "").strip()),
+        "provider": provider,
+    }).json()
+
+
+@app.put("/api/settings/deepseek-key")
+def set_deepseek_key():
+    _settings_for_request().set_deepseek_api_key(_json_body().get("deepseekApiKey"))
+    return Result.ok({"configured": True}).json()
+
+
+@app.delete("/api/settings/deepseek-key")
+def delete_deepseek_key():
+    _settings_for_request().delete_deepseek_api_key()
+    return Result.ok({"configured": False}).json()
 
 
 @app.get("/api/settings/audio-quality")

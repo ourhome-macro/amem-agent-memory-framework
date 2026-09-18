@@ -18,6 +18,12 @@ dependencies = [
   "PyYAML>=6.0",
   "jsonschema[format-nongpl]>=4.23",
   "sqlite-vec==0.1.9",
+  "langgraph==1.2.11",
+  "langgraph-checkpoint-sqlite==3.1.1",
+  "alembic==1.20.0",
+  "filelock>=3.16,<4",
+  "opentelemetry-sdk==1.44.0",
+  "opentelemetry-exporter-otlp-proto-http==1.44.0",
 ]
 
 [project.optional-dependencies]

@@ -91,13 +91,13 @@ def test_recommendation_writes_full_trace_and_metrics(tmp_path) -> None:
     assert row["status"] == "completed"
     assert {"scene_memory.retrieve", "profile.project", "candidate_pool.read"} <= span_names
     assert feedback_trace["parent_trace_id"] == result["fullTraceId"]
-    assert feedback_trace["root_trace_id"] == result["fullTraceId"]
+    assert feedback_trace["root_trace_id"].startswith('agent-run:')
     assert feedback_trace["status"] == "completed"
     metrics = summarize_traces(str(db_path))
-    assert metrics["trace"]["count"] == 2
-    assert metrics["trace"]["statusCounts"] == {"completed": 2}
+    assert metrics["trace"]["count"] == 3
+    assert metrics["trace"]["statusCounts"] == {"completed": 3}
     assert metrics["process"]["candidatePoolHitRate"] == 0.0
-    assert metrics["process"]["toolCallSuccessRate"] is None
+    assert metrics["process"]["toolCallSuccessRate"] == 1.0
     assert metrics["result"]["propensityCoverage"] is None
 
 

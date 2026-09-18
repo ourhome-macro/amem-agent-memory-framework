@@ -83,6 +83,8 @@ class StaticProxyHandler(SimpleHTTPRequestHandler):
             with urllib.request.urlopen(request, timeout=120) as response:
                 if self._is_sse_response(response.headers):
                     self._copy_stream(response.status, response.headers, response)
+                elif self._is_audio_stream_path():
+                    self._copy_binary_stream(response.status, response.headers, response)
                 else:
                     self._copy_response(response.status, response.headers, response.read())
         except urllib.error.HTTPError as error:
@@ -100,6 +102,12 @@ class StaticProxyHandler(SimpleHTTPRequestHandler):
         if self.path.startswith("/api/agent/events"):
             return SSE_GATEWAY_URL + self.path
         return BACKEND_URL + self.path
+
+    def _is_audio_stream_path(self) -> bool:
+        path = self.path.split("?", 1)[0]
+        return (path.startswith("/api/tracks/") and path.endswith("/stream")) or path.startswith(
+            "/api/stream/"
+        )
 
     @staticmethod
     def _is_sse_response(headers) -> bool:
@@ -121,6 +129,27 @@ class StaticProxyHandler(SimpleHTTPRequestHandler):
                 if not line:
                     return
                 self.wfile.write(line)
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def _copy_binary_stream(self, status: int, headers, response) -> None:
+        self.send_response(status)
+        has_length = bool(headers.get("Content-Length"))
+        for key, value in headers.items():
+            if key.lower() in HOP_BY_HOP_HEADERS:
+                continue
+            self.send_header(key, value)
+        if not has_length:
+            self.send_header("Connection", "close")
+            self.close_connection = True
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        read_chunk = getattr(response, "read1", response.read)
+        try:
+            while chunk := read_chunk(32 * 1024):
+                self.wfile.write(chunk)
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):
             return

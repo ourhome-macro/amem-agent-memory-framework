@@ -7,8 +7,10 @@ import type {
   AgentDialogueSession,
   AgentDialogueSessionsResult,
   AgentDialogueTaskAccepted,
+  AgentDialogueTaskStatus,
   AgentDialogueUndoResult,
   AppSettings,
+  DeepSeekKeyStatus,
   AppSession,
   AudioStreamInfo,
   AudioQualityPreference,
@@ -274,6 +276,18 @@ export async function getTrackStreamInfo(
   return streamInfo
 }
 
+export function trackProxyStreamUrl(
+  bvid: string,
+  cid?: number | null,
+  quality: AudioQualityPreference = 'auto'
+): string {
+  const safeBvid = encodeURIComponent(bvid)
+  const path = cid != null
+    ? `/api/tracks/${safeBvid}/${cid}/stream`
+    : `/api/tracks/${safeBvid}/stream`
+  return apiUrl(`${path}?quality=${encodeURIComponent(quality)}`)
+}
+
 export async function resetStreamStats(): Promise<void> {
   await apiRequest('/api/stream/stats/reset', { method: 'POST' })
 }
@@ -527,6 +541,22 @@ export async function updateSettings(payload: Partial<AppSettings>): Promise<App
   })
 }
 
+export async function fetchDeepSeekKeyStatus(): Promise<DeepSeekKeyStatus> {
+  return apiRequest<DeepSeekKeyStatus>('/api/settings/deepseek-key')
+}
+
+export async function saveDeepSeekKey(deepseekApiKey: string): Promise<{ configured: boolean }> {
+  return apiRequest<{ configured: boolean }>('/api/settings/deepseek-key', {
+    method: 'PUT',
+    body: JSON.stringify({ deepseekApiKey }),
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+export async function removeDeepSeekKey(): Promise<{ configured: boolean }> {
+  return apiRequest<{ configured: boolean }>('/api/settings/deepseek-key', { method: 'DELETE' })
+}
+
 export async function importBiliFavoriteToPlaylist(
   playlistId: string,
   mediaId: number,
@@ -600,6 +630,12 @@ export async function createAgentDialogueSession(): Promise<AgentDialogueSession
   })
 }
 
+export async function deleteAgentDialogueSession(sessionId: string): Promise<void> {
+  await apiRequest(`/api/agent/dialogue/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'DELETE',
+  })
+}
+
 export async function sendAgentDialogueMessage(payload: {
   message: string
   sessionId?: string
@@ -624,6 +660,12 @@ export async function submitAgentDialogueTask(payload: {
     body: JSON.stringify(payload),
     headers: { 'Content-Type': 'application/json' },
   })
+}
+
+export async function fetchAgentDialogueTaskStatus(taskId: string): Promise<AgentDialogueTaskStatus> {
+  return apiRequest<AgentDialogueTaskStatus>(
+    `/api/agent/dialogue/tasks/${encodeURIComponent(taskId)}`
+  )
 }
 
 export async function undoAgentDialogueMessage(sessionId?: string): Promise<AgentDialogueUndoResult> {

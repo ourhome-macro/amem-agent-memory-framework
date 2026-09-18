@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
@@ -32,8 +31,7 @@ class ModelGateway(Protocol):
         messages: tuple[ModelMessage, ...],
         tools: tuple[ToolDefinition, ...],
         metadata: dict[str, Any] | None = None,
-    ) -> ModelResponse:
-        ...
+    ) -> ModelResponse: ...
 
 
 class StreamingModelGateway(ModelGateway, Protocol):
@@ -43,8 +41,7 @@ class StreamingModelGateway(ModelGateway, Protocol):
         messages: tuple[ModelMessage, ...],
         tools: tuple[ToolDefinition, ...],
         metadata: dict[str, Any] | None = None,
-    ) -> AsyncIterator[ModelGatewayStreamEvent]:
-        ...
+    ) -> AsyncIterator[ModelGatewayStreamEvent]: ...
 
 
 class LegacyChatModelGateway:
@@ -68,9 +65,7 @@ class LegacyChatModelGateway:
             message.content for message in messages if message.role == "system"
         )
         conversation = "\n".join(
-            f"{message.role}: {message.content}"
-            for message in messages
-            if message.role != "system"
+            f"{message.role}: {message.content}" for message in messages if message.role != "system"
         )
         response = await asyncio.to_thread(
             self.client.complete,
@@ -192,16 +187,13 @@ class OpenAICompatibleModelGateway:
                 usage = getattr(chunk, "usage", None)
                 if usage is not None:
                     input_tokens = _optional_int(getattr(usage, "prompt_tokens", None))
-                    output_tokens = _optional_int(
-                        getattr(usage, "completion_tokens", None)
-                    )
+                    output_tokens = _optional_int(getattr(usage, "completion_tokens", None))
                 choices = getattr(chunk, "choices", None) or ()
                 if not choices:
                     continue
                 choice = choices[0]
                 finish_reason = (
-                    _optional_str(getattr(choice, "finish_reason", None))
-                    or finish_reason
+                    _optional_str(getattr(choice, "finish_reason", None)) or finish_reason
                 )
                 delta = getattr(choice, "delta", None)
                 delta_content = getattr(delta, "content", None)
@@ -215,9 +207,7 @@ class OpenAICompatibleModelGateway:
             tool_calls = _stream_tool_calls(tool_buffers)
             content = "".join(content_parts)
             if not content and not tool_calls:
-                raise LLMResponseError(
-                    f"{self.config.provider} returned an empty agent stream."
-                )
+                raise LLMResponseError(f"{self.config.provider} returned an empty agent stream.")
             response = ModelResponse(
                 content=content,
                 tool_calls=tool_calls,
@@ -248,8 +238,7 @@ class OpenAICompatibleModelGateway:
             raise
         except Exception as error:
             raise LLMRequestError(
-                f"{self.config.provider} agent completion request failed: "
-                f"{type(error).__name__}."
+                f"{self.config.provider} agent completion request failed: {type(error).__name__}."
             ) from error
         choices = getattr(response, "choices", None) or ()
         if not choices:
@@ -290,8 +279,7 @@ class OpenAICompatibleModelGateway:
             raise
         except Exception as error:
             raise LLMRequestError(
-                f"{self.config.provider} agent stream request failed: "
-                f"{type(error).__name__}."
+                f"{self.config.provider} agent stream request failed: {type(error).__name__}."
             ) from error
 
     def _request(
@@ -344,33 +332,13 @@ class OpenAICompatibleModelGateway:
     def _get_client(self) -> Any:
         if self._client is not None:
             return self._client
-        api_key = os.environ.get(self.config.api_key_env)
-        if not api_key:
-            _load_dotenv()
-            api_key = os.environ.get(self.config.api_key_env)
-        if not api_key:
-            raise LLMConfigurationError(
-                f"Missing {self.config.api_key_env}. Set it before running an agent."
-            )
-        if not self.config.base_url.startswith("https://"):
-            raise LLMConfigurationError(f"{self.config.provider} base_url must use HTTPS.")
-        try:
-            from openai import OpenAI
-        except ImportError as error:
-            raise LLMConfigurationError(
-                "The OpenAI-compatible client is unavailable. Run: pip install -e ."
-            ) from error
-        try:
-            self._client = OpenAI(
-                api_key=api_key,
-                base_url=self.config.base_url,
-                timeout=self.config.timeout_seconds,
-            )
-        except Exception as error:
-            raise LLMConfigurationError(
-                f"Could not initialize the {self.config.provider} agent client."
-            ) from error
-        return self._client
+        from agent_memory_runtime.llm.transport import get_openai_client
+
+        return get_openai_client(
+            base_url=self.config.base_url,
+            api_key_env=self.config.api_key_env,
+            timeout_seconds=self.config.timeout_seconds,
+        )
 
 
 def _provider_message(message: ModelMessage) -> dict[str, object]:
@@ -399,13 +367,9 @@ def _provider_message(message: ModelMessage) -> dict[str, object]:
 
 
 def _legacy_prompts(messages: tuple[ModelMessage, ...]) -> tuple[str, str]:
-    system_prompt = "\n".join(
-        message.content for message in messages if message.role == "system"
-    )
+    system_prompt = "\n".join(message.content for message in messages if message.role == "system")
     conversation = "\n".join(
-        f"{message.role}: {message.content}"
-        for message in messages
-        if message.role != "system"
+        f"{message.role}: {message.content}" for message in messages if message.role != "system"
     )
     return system_prompt, conversation
 
@@ -482,9 +446,7 @@ def _parse_tool_calls(values: object) -> tuple[ModelToolCall, ...]:
             raise ModelProtocolError(f"provider returned duplicate tool call id {call_id!r}")
         try:
             arguments = (
-                json.loads(raw_arguments)
-                if isinstance(raw_arguments, str)
-                else raw_arguments
+                json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
             )
         except json.JSONDecodeError as error:
             raise ModelProtocolError(

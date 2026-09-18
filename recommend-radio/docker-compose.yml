@@ -1,4 +1,13 @@
 services:
+  otel-collector:
+    image: otel/opentelemetry-collector:0.147.0
+    restart: unless-stopped
+    user: "0:0"
+    command: ["--config=/etc/otel/collector.yaml"]
+    volumes:
+      - ./deploy/otel/collector.yaml:/etc/otel/collector.yaml:ro
+      - otel-traces:/var/lib/otel
+    mem_limit: 256m
   rabbitmq:
     image: rabbitmq:4.3.5-management-alpine
     container_name: bilibili-radio-rabbitmq
@@ -44,7 +53,9 @@ services:
     restart: unless-stopped
     command: ["python", "amem_grpc_server.py"]
     environment:
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-}
       AMEM_ENABLED: "${AMEM_ENABLED:-true}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
       AMEM_GRPC_BIND: "0.0.0.0:9090"
       AMEM_GRPC_WORKERS: "${AMEM_GRPC_WORKERS:-8}"
       AMEM_DB_PATH: "/app/data/amem.sqlite3"
@@ -99,6 +110,7 @@ services:
     restart: unless-stopped
     environment:
       REQUIRE_DB_MIGRATION: "1"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
       AUTH_MODE: ${AUTH_MODE:-disabled}
       ALLOW_INSECURE_LOCAL_AUTH: ${ALLOW_INSECURE_LOCAL_AUTH:-1}
       APP_SECRET_KEY: ${APP_SECRET_KEY:-}
@@ -210,12 +222,12 @@ services:
   task-worker:
     <<: *backend-service
     container_name: bilibili-radio-task-worker
-    command: ["celery", "-A", "task_app", "worker", "--loglevel=INFO", "--concurrency=2", "--hostname=jobs@%h", "-Q", "radio.jobs.v2"]
+    command: ["python", "-m", "celery", "-A", "task_app", "worker", "--loglevel=INFO", "--concurrency=2", "--hostname=jobs@%h", "-Q", "radio.jobs.v2"]
     ports: []
     expose: []
     stop_grace_period: 300s
     healthcheck:
-      test: ["CMD-SHELL", "celery -A task_app inspect ping -d jobs@$$HOSTNAME --timeout=3"]
+      test: ["CMD-SHELL", "python -m celery -A task_app inspect ping -d jobs@$$HOSTNAME --timeout=3"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -224,12 +236,12 @@ services:
   event-worker:
     <<: *backend-service
     container_name: bilibili-radio-event-worker
-    command: ["celery", "-A", "task_app", "worker", "--loglevel=INFO", "--concurrency=2", "--hostname=events@%h", "-Q", "radio.events.v2"]
+    command: ["python", "-m", "celery", "-A", "task_app", "worker", "--loglevel=INFO", "--concurrency=2", "--hostname=events@%h", "-Q", "radio.events.v2"]
     ports: []
     expose: []
     stop_grace_period: 300s
     healthcheck:
-      test: ["CMD-SHELL", "celery -A task_app inspect ping -d events@$$HOSTNAME --timeout=3"]
+      test: ["CMD-SHELL", "python -m celery -A task_app inspect ping -d events@$$HOSTNAME --timeout=3"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -257,6 +269,7 @@ services:
     restart: unless-stopped
     command: ["python", "behavior_worker.py"]
     environment:
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-}
       REQUIRE_DB_MIGRATION: "1"
       AMEM_GRPC_ADDR: "${AMEM_GRPC_ADDR:-amem:9090}"
       AMEM_GRPC_TIMEOUT_SECONDS: "${AMEM_GRPC_TIMEOUT_SECONDS:-10}"
@@ -308,6 +321,7 @@ services:
     restart: unless-stopped
     environment:
       SSE_BIND: "0.0.0.0:8080"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
       SSE_DB_PATH: "/app/data/sse-events.sqlite3"
       SSE_INTERNAL_TOKEN: "${SSE_INTERNAL_TOKEN:-local-sse-token}"
       SSE_AUTH_VERIFY_URL: "http://backend:5000/api/session/me"
@@ -358,4 +372,5 @@ services:
         max-file: "5"
 
 volumes:
+  otel-traces:
   rabbitmq-data:

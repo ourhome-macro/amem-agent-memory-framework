@@ -1,0 +1,134 @@
+name: amem-framework-e2e
+x-python: &python
+  image: amem-framework-e2e-python
+  build:
+    context: ..
+    dockerfile: recommend-radio/backend/Dockerfile
+  env_file: ${E2E_ENV_FILE:?Prepare the private E2E environment first}
+  volumes:
+    - type: volume
+      source: e2e-data
+      target: /app/data
+  restart: "no"
+  init: true
+services:
+  seed:
+    <<: *python
+    command: ["python", "seed_e2e_data.py"]
+    volumes:
+      - e2e-data:/app/data
+      - ${E2E_DATA_DIR}:/source:ro
+  otel-collector:
+    image: otel/opentelemetry-collector:0.147.0
+    user: "0:0"
+    command: ["--config=/etc/otel/collector.yaml"]
+    volumes:
+      - ./deploy/otel/collector.yaml:/etc/otel/collector.yaml:ro
+      - ${E2E_RUN_DIR}/traces:/var/lib/otel
+  rabbitmq:
+    image: rabbitmq:4.3.5-management-alpine
+    hostname: rabbitmq
+    volumes:
+      - e2e-rabbitmq:/var/lib/rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  migrate:
+    <<: *python
+    command: ["python", "migrate_db.py"]
+    depends_on:
+      seed: {condition: service_completed_successfully}
+  amem:
+    <<: *python
+    command: ["python", "amem_grpc_server.py"]
+    environment:
+      AMEM_GRPC_BIND: "0.0.0.0:9090"
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      otel-collector: {condition: service_started}
+    healthcheck:
+      test: ["CMD", "python", "-c", "from amem_grpc_bridge import AmemGrpcBridge; assert AmemGrpcBridge('127.0.0.1:9090').health() == 'serving'"]
+      interval: 10s
+      timeout: 15s
+      retries: 18
+  backend:
+    <<: *python
+    environment:
+      WEB_CONCURRENCY: "1"
+    depends_on:
+      amem: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    ports: ["127.0.0.1:25000:5000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health/ready',timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  task-worker:
+    <<: *python
+    command: ["python", "-m", "celery", "-A", "task_app", "worker", "--loglevel=INFO", "--concurrency=2", "--hostname=jobs@%h", "-Q", "radio.jobs.v2"]
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "python -m celery -A task_app inspect ping -d jobs@$$HOSTNAME --timeout=3"]
+      interval: 10s
+      timeout: 8s
+      retries: 10
+  event-worker:
+    <<: *python
+    command: ["python", "-m", "celery", "-A", "task_app", "worker", "--loglevel=INFO", "--concurrency=2", "--hostname=events@%h", "-Q", "radio.events.v2"]
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "python -m celery -A task_app inspect ping -d events@$$HOSTNAME --timeout=3"]
+      interval: 10s
+      timeout: 8s
+      retries: 10
+  outbox:
+    <<: *python
+    command: ["python", "outbox_dispatcher.py"]
+    depends_on:
+      backend: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import pathlib,time; assert time.time()-float(pathlib.Path('/tmp/radio-outbox-heartbeat').read_text()) < 60"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  sse-gateway:
+    build: ./sse-gateway
+    env_file: ${E2E_ENV_FILE}
+    volumes:
+      - e2e-sse:/app/data
+    depends_on:
+      backend: {condition: service_healthy}
+    ports: ["127.0.0.1:28080:8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    environment:
+      BACKEND_URL: http://backend:5000
+      SSE_GATEWAY_URL: http://sse-gateway:8080
+      PORT: "3000"
+    ports: ["127.0.0.1:23000:3000"]
+    depends_on:
+      backend: {condition: service_healthy}
+      sse-gateway: {condition: service_healthy}
+
+volumes:
+  e2e-data:
+    name: ${E2E_DATA_VOLUME}
+  e2e-sse:
+    name: ${E2E_DATA_VOLUME}-sse
+  e2e-rabbitmq:
+    name: ${E2E_DATA_VOLUME}-rabbitmq

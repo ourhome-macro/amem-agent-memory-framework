@@ -2,6 +2,8 @@
 
 agent runtime 负责协调模型调用、工具执行、checkpoint 和记忆上下文注入。
 
+执行控制流现由 LangGraph 驱动，覆盖单 Agent 的模型/工具循环和多 Agent 依赖图。音乐对话、推荐与 Discovery 通过同一个 BusinessAgentRuntime 执行，详见 [框架迁移](framework-unification-2026-09-16.md)。
+
 ## 模块职责
 
 - `BusinessAgentRuntime`：执行 `AgentRequest`，准备模型输入，运行工具循环并记录 run state。

@@ -29,6 +29,13 @@ _GENRE_ALIASES = {
     "reggae": ("雷鬼", "reggae"),
     "rnb": ("rnb", "r&b", "节奏布鲁斯"),
 }
+_SCENE_ALIASES = {
+    "dance_stage": (
+        "唱跳舞台", "舞台唱跳", "唱跳现场", "唱跳表演", "打歌舞台",
+        "dance stage", "dance performance", "k-pop stage",
+    ),
+    "live_stage": ("现场舞台", "舞台现场", "演唱会", "live stage", "live performance"),
+}
 _NEGATION_PREFIX = r"(?:不要(?:放|听|来)?|不想(?:听|要)?|别(?:放|来|听|推)?|避开|少来点|不听)"
 
 
@@ -55,6 +62,7 @@ class RequestSpec:
     excluded_languages: tuple[str, ...] = ()
     required_vocals: tuple[str, ...] = ()
     required_genres: tuple[str, ...] = ()
+    required_scenes: tuple[str, ...] = ()
     moods: tuple[str, ...] = ()
     excluded_topics: tuple[str, ...] = ()
     evidence: tuple[str, ...] = ()
@@ -67,6 +75,7 @@ class RequestSpec:
             or self.excluded_languages
             or self.required_vocals
             or self.required_genres
+            or self.required_scenes
             or self.excluded_topics
         )
 
@@ -102,6 +111,7 @@ class RequestSpec:
             *(labels.get(value, value) for value in self.required_languages),
             *(labels.get(value, value) for value in self.required_vocals),
             *(labels.get(value, value) for value in self.required_genres),
+            *({"dance_stage": "唱跳舞台", "live_stage": "现场舞台"}.get(value, value) for value in self.required_scenes),
             *self.moods,
         ]
         return "、".join(_dedupe(values)[:3]) or "这轮"
@@ -114,6 +124,7 @@ class RequestSpec:
             "excludedLanguages": list(self.excluded_languages),
             "requiredVocals": list(self.required_vocals),
             "requiredGenres": list(self.required_genres),
+            "requiredScenes": list(self.required_scenes),
             "moods": list(self.moods),
             "excludedTopics": list(self.excluded_topics),
             "evidence": list(self.evidence),
@@ -137,6 +148,9 @@ class RequestSpec:
             excluded_languages=strings("excludedLanguages"),
             required_vocals=strings("requiredVocals"),
             required_genres=strings("requiredGenres"),
+            required_scenes=strings("requiredScenes") or tuple(
+                _positive_matches(str(value.get("rawText") or "").casefold(), _SCENE_ALIASES)
+            ),
             moods=strings("moods"),
             excluded_topics=strings("excludedTopics"),
             evidence=strings("evidence"),
@@ -163,6 +177,32 @@ class RequestSpec:
             return False
         return True
 
+    def matches_candidate(self, track: dict[str, object], facets: dict[str, object]) -> bool:
+        if not self.matches_facets(facets):
+            return False
+        if not self.required_scenes:
+            return True
+        text = " ".join(
+            str(value or "")
+            for value in (
+                track.get("title"), track.get("pageTitle"),
+                track.get("description"), track.get("typeName"),
+                " ".join(str(tag) for tag in (track.get("tags") or [])),
+            )
+        ).casefold()
+        stage = any(term in text for term in (
+            "舞台", "现场", "演唱会", "打歌", "直拍", "live", "performance", "stage",
+        ))
+        dance = any(term in text for term in (
+            "唱跳", "跳舞", "舞蹈", "编舞", "打歌", "直拍", "dance", "k-pop", "kpop",
+        ))
+        scenes = set()
+        if stage:
+            scenes.add("live_stage")
+        if stage and dance:
+            scenes.add("dance_stage")
+        return set(self.required_scenes).issubset(scenes)
+
 
 class RequestInterpreter:
     """Rule-based interpreter for executable, non-persistent request constraints."""
@@ -175,6 +215,7 @@ class RequestInterpreter:
         excluded_languages = _negative_matches(normalized, _LANGUAGE_ALIASES)
         required_vocals = _positive_matches(normalized, _VOCAL_ALIASES)
         required_genres = _positive_matches(normalized, _GENRE_ALIASES)
+        required_scenes = _positive_matches(normalized, _SCENE_ALIASES)
         if "western" in required_regions and "english" not in required_languages:
             required_languages.append("english")
         moods = _positive_matches(normalized, _MOOD_ALIASES)
@@ -195,6 +236,7 @@ class RequestInterpreter:
             excluded_languages=tuple(excluded_languages),
             required_vocals=tuple(required_vocals),
             required_genres=tuple(required_genres),
+            required_scenes=tuple(required_scenes),
             moods=tuple(moods),
             excluded_topics=tuple(excluded_topics),
             evidence=tuple(evidence),

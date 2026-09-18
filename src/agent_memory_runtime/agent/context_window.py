@@ -51,8 +51,7 @@ class ConversationSummarizer(Protocol):
         max_tokens: int,
         estimator: TokenEstimator,
         model: str | None,
-    ) -> str:
-        ...
+    ) -> str: ...
 
 
 def compact_checkpoint(
@@ -81,13 +80,16 @@ def compact_checkpoint(
             for line in message.content.splitlines()
             if line.startswith("- role=user: ")
         )
-        initial = next((
-            line.removeprefix("initial_task_context: ")
-            for message in checkpoint.messages
-            if message.content.startswith(_TASK_STATE_OPEN)
-            for line in message.content.splitlines()
-            if line.startswith("initial_task_context: ")
-        ), None)
+        initial = next(
+            (
+                line.removeprefix("initial_task_context: ")
+                for message in checkpoint.messages
+                if message.content.startswith(_TASK_STATE_OPEN)
+                for line in message.content.splitlines()
+                if line.startswith("initial_task_context: ")
+            ),
+            None,
+        )
         if initial is not None:
             if original_task:
                 groups.insert(0, original_task)
@@ -133,8 +135,8 @@ def compact_checkpoint(
     task_state = _task_state_message(original_task, keep_groups)
     compacted_messages = (
         *system_prefix,
-        *( () if pinned is None else (pinned,) ),
-        *( () if task_state is None else (task_state,) ),
+        *(() if pinned is None else (pinned,)),
+        *(() if task_state is None else (task_state,)),
         summary,
         *original_task,
         *(item for group in keep_groups for item in group),
@@ -166,8 +168,8 @@ def compact_checkpoint(
         task_state = _task_state_message(original_task, keep_groups)
         compacted_messages = (
             *system_prefix,
-            *( () if pinned is None else (pinned,) ),
-            *( () if task_state is None else (task_state,) ),
+            *(() if pinned is None else (pinned,)),
+            *(() if task_state is None else (task_state,)),
             summary,
             *original_task,
             *(item for group in keep_groups for item in group),
@@ -217,10 +219,7 @@ def estimate_model_call(
 
 
 def estimate_cost(input_tokens: int, output_tokens: int, *, policy: AgentPolicy) -> float | None:
-    if (
-        policy.input_cost_per_million_usd is None
-        or policy.output_cost_per_million_usd is None
-    ):
+    if policy.input_cost_per_million_usd is None or policy.output_cost_per_million_usd is None:
         return None
     value = (
         input_tokens * policy.input_cost_per_million_usd
@@ -363,7 +362,8 @@ def compact_tool_output_for_model(
     head_count = max(0, head_lines)
     tail_count = max(0, tail_lines)
     head = lines[:head_count]
-    tail = lines[-tail_count:] if tail_count else []
+    # Head and tail must not overlap on short structured results.
+    tail = lines[max(len(head), len(lines) - tail_count) :] if tail_count else []
     kept = set(head)
     important: list[str] = []
     for line in lines[head_count : len(lines) - tail_count if tail_count else len(lines)]:
@@ -373,7 +373,7 @@ def compact_tool_output_for_model(
         if len(important) >= 30:
             break
     omitted = max(0, len(lines) - len(head) - len(tail) - len(important))
-    return {
+    preview = {
         "compacted_tool_output": True,
         "raw_output_hash": digest,
         "raw_output_tokens": raw_tokens,
@@ -387,6 +387,35 @@ def compact_tool_output_for_model(
         "tail": tail,
         "omitted_line_count": omitted,
     }
+    # A single JSON field can itself be hundreds of thousands of characters.
+    # Limiting line counts alone does not bound the model context.
+    for key in ("head", "important_middle", "tail"):
+        preview[key] = [line if len(line) <= 1024 else line[:1021] + "..." for line in preview[key]]
+    while (
+        estimator.count_text(
+            json.dumps(preview, ensure_ascii=False, sort_keys=True, indent=2), model=model
+        )
+        > max_tokens
+    ):
+        choices = [
+            (len(line), key, index)
+            for key in ("head", "important_middle", "tail")
+            for index, line in enumerate(preview[key])
+        ]
+        if not choices:
+            # Extremely small configured budgets cannot retain verbose metadata.
+            compact = {"raw_output_hash": digest}
+            if estimator.count_text(json.dumps(compact), model=model) <= max_tokens:
+                return compact
+            return {}
+        length, key, index = max(choices)
+        if length > 64:
+            preview[key][index] = preview[key][index][: length // 2] + "..."
+        else:
+            preview[key].pop(index)
+            preview["omitted_line_count"] += 1
+    preview["summary"] = "Tool output compacted; full result retained in the tool journal."
+    return preview
 
 
 def _tool_output_lines(output: dict[str, object]) -> list[str]:
@@ -397,9 +426,7 @@ def _tool_output_lines(output: dict[str, object]) -> list[str]:
             for index, line in enumerate(value.splitlines(), start=1):
                 lines.append(f"{name}[{index}]: {line}")
             continue
-        lines.append(
-            f"{name}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}"
-        )
+        lines.append(f"{name}: {json.dumps(value, ensure_ascii=False, sort_keys=True)}")
     return lines
 
 
@@ -428,9 +455,7 @@ def _deterministic_conversation_summary(
             patterns=("待办", "还没", "怎么", "如何", "看看", "?"),
         ),
     }
-    previous = next(
-        (m.content for m in messages if m.content.startswith(_SUMMARY_OPEN)), ""
-    )
+    previous = next((m.content for m in messages if m.content.startswith(_SUMMARY_OPEN)), "")
     if previous:
         previous = "\n".join(previous.splitlines()[3:-1])
     lines: list[str] = previous.splitlines() if previous else []
@@ -442,9 +467,8 @@ def _deterministic_conversation_summary(
             continue
         for item in items[:4]:
             lines.append(f"- {item}")
-    while (
-        estimator.count_text("\n".join(lines), model=model) > max_tokens
-        and len(lines) > max(retained_lines, 8)
+    while estimator.count_text("\n".join(lines), model=model) > max_tokens and len(lines) > max(
+        retained_lines, 8
     ):
         lines.pop()
     return "\n".join(lines)
@@ -475,8 +499,7 @@ def _select_pinned_messages(messages: tuple[ModelMessage, ...]) -> tuple[ModelMe
     return tuple(
         message
         for message in messages
-        if message.role == "user"
-        and _PINNED_MESSAGE_RE.search(message.content)
+        if message.role == "user" and _PINNED_MESSAGE_RE.search(message.content)
     )
 
 

@@ -194,6 +194,16 @@ class DiscoveryPlanner:
         )
         if spec.required_vocals:
             labels.append("女声")
+        if spec.required_scenes:
+            scene_queries = (
+                ("唱跳舞台", "打歌舞台", "唱跳现场表演")
+                if "dance_stage" in spec.required_scenes
+                else ("现场舞台", "演唱会 现场")
+            )
+            qualifier = " ".join(labels)
+            return list(dict.fromkeys(
+                f"{query} {qualifier}".strip() for query in scene_queries
+            ))
         if not labels:
             return []
         mood = spec.moods[0] if spec.moods else ""
@@ -320,6 +330,7 @@ def _contains_term(value: str, term: str) -> bool:
 
 def _request_family_spec(spec: RequestSpec) -> dict[str, object]:
     return {
+        "scenes": sorted(spec.required_scenes),
         "genres": sorted(spec.required_genres),
         "languages": sorted(spec.required_languages),
         "regions": sorted(spec.required_regions),

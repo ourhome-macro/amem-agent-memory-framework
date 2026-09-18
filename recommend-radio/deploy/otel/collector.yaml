@@ -1,0 +1,26 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 192
+  batch:
+    timeout: 1s
+exporters:
+  file:
+    path: /var/lib/otel/traces.json
+    rotation:
+      max_megabytes: 32
+      max_days: 7
+      max_backups: 3
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [file]

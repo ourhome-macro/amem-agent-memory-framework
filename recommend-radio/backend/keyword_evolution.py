@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from keyword_governance import KeywordGovernance
 from profile_projector import _default_llm_client
+from settings_service import SettingsService
 
 
 EVOLUTION_TOOL = {
@@ -53,8 +54,16 @@ class KeywordEvolutionService:
         if os.getenv("RECOMMEND_LLM_ENABLED", "false").strip().lower() not in {"1", "true", "yes", "on"}:
             self.governance.record_evolution_run(status="skipped", error="llm_disabled", run_id=run_id)
             return {"executed": False, "reason": "llm_disabled", "accepted": 0, "rejected": 0}
+        if self.llm_client is None and not SettingsService(
+            db_path=self.governance.db_path, user_id=self.governance.user_id
+        ).has_deepseek_api_key():
+            self.governance.record_evolution_run(status="skipped", error="personal_key_missing", run_id=run_id)
+            return {"executed": False, "reason": "personal_key_missing", "accepted": 0, "rejected": 0}
         snapshot = self.governance.evolution_snapshot(limit=24)
-        client = self.llm_client or _default_llm_client()
+        client = self.llm_client or _default_llm_client(
+            user_id=self.governance.user_id,
+            db_path=str(self.governance.db_path),
+        )
         response = client.complete_tool(
             system_prompt=(
                 "You improve music discovery queries from measured performance. "

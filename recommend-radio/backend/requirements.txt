@@ -2,6 +2,7 @@ Flask==3.0.0
 Flask-CORS==4.0.0
 click==8.1.8
 Authlib==1.7.2
+cryptography>=44.0
 gunicorn==23.0.0
 prometheus-client==0.25.0
 pika==1.4.4
@@ -16,4 +17,7 @@ PyYAML>=6.0
 jsonschema[format-nongpl]>=4.23
 sqlite-vec==0.1.9
 grpcio==1.83.0
-grpcio-tools==1.83.0
+grpcio-tools==1.76.0
+opentelemetry-instrumentation-flask==0.65b0
+opentelemetry-instrumentation-grpc==0.65b0
+opentelemetry-instrumentation-requests==0.65b0

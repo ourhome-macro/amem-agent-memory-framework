@@ -289,6 +289,12 @@ export interface AppSettings {
   playbackSpeed: number
 }
 
+export interface DeepSeekKeyStatus {
+  configured: boolean
+  fallbackConfigured: boolean
+  provider: string
+}
+
 export interface BiliUpProfile {
   mid: number
   name: string
@@ -363,7 +369,7 @@ export interface RecommendationsResult {
 export interface RecommendationDiscoveryStatus {
   jobId: string
   available: boolean
-  status?: 'queued' | 'running' | 'completed' | 'failed'
+  status?: 'queued' | 'running' | 'completed' | 'failed' | 'needs_reconciliation'
   result?: Record<string, unknown>
   error?: string
 }
@@ -456,7 +462,7 @@ export interface AgentDialogueCard {
   note?: string
   recommendations?: RecommendationItem[]
   discoveryJobId?: string | null
-  discoveryStatus?: 'queued' | 'running' | 'completed' | 'failed' | null
+  discoveryStatus?: 'queued' | 'running' | 'completed' | 'failed' | 'needs_reconciliation' | null
   tracks?: Track[]
 }
 
@@ -496,6 +502,13 @@ export interface AgentDialogueTaskAccepted {
   taskId: string
   sessionId: string
   status: 'queued'
+}
+
+export interface AgentDialogueTaskStatus {
+  taskId: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'needs_reconciliation'
+  result?: AgentDialogueResult | null
+  error?: string | null
 }
 
 export interface AgentDialogueStreamEvent {

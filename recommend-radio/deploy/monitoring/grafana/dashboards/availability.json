@@ -1,0 +1,1 @@
+{"uid":"radio-availability","title":"Radio availability","schemaVersion":39,"version":1,"panels":[{"id":1,"type":"timeseries","title":"Backend availability","gridPos":{"x":0,"y":0,"w":24,"h":8},"datasource":{"type":"prometheus","uid":"radio-prometheus"},"targets":[{"refId":"A","expr":"up{job=\"radio\"}"}]}]}

@@ -4,7 +4,8 @@ import json
 import os
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
+from contextvars import copy_context
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -181,6 +182,7 @@ class GrpcProfileProjector:
         self._refreshing: set[tuple[str, str]] = set()
         self._epochs: dict[tuple[str, str], int] = {}
         self._lock = Lock()
+        self._futures = set()
 
     def clear_cache(self, user_id: str | None = None, scene: str | None = None) -> None:
         if user_id is None and scene is None:
@@ -245,7 +247,8 @@ class GrpcProfileProjector:
                 return
             self._refreshing.add(cache_key)
             epoch = self._epochs.get(cache_key, 0)
-        _PROFILE_REFRESH_EXECUTOR.submit(
+        future = _PROFILE_REFRESH_EXECUTOR.submit(
+            copy_context().run,
             self._refresh,
             cache_key,
             user_id,
@@ -253,6 +256,20 @@ class GrpcProfileProjector:
             MusicProfile.from_dict(fallback_profile.to_dict(), source=fallback_profile.source),
             epoch,
         )
+        with self._lock:
+            self._futures.add(future)
+        future.add_done_callback(self._refresh_finished)
+
+    def _refresh_finished(self, future) -> None:
+        with self._lock:
+            self._futures.discard(future)
+
+    def close(self) -> None:
+        with self._lock:
+            futures = tuple(self._futures)
+        for future in futures:
+            future.cancel()  # Only queued work is cancelled; running RPCs finish first.
+        wait(futures, timeout=self.bridge.timeout_seconds + 1)
 
     def _refresh(
         self,

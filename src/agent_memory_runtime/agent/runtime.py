@@ -464,18 +464,16 @@ class BusinessAgentRuntime:
                 self._active_tokens.pop(run.run_id, None)
             self.metrics.observe("runs.duration_ms", (perf_counter() - started_at) * 1000)
 
-    async def _drive(
-        self,
-        run: AgentRun,
-        *,
-        factory: _EventFactory,
-        token: CancellationToken,
-        policy: AgentPolicy,
-    ) -> AsyncIterator[AgentRunEvent]:
+    async def _drive(self, run: AgentRun, *, factory: _EventFactory,
+                     token: CancellationToken, policy: AgentPolicy) -> AsyncIterator[AgentRunEvent]:
+        from agent_memory_runtime.agent.graph_driver import drive_graph
+        async for event in drive_graph(self, run, factory=factory, token=token, policy=policy):
+            yield event
+
+    async def _prepare_graph(self, progress, *, factory, token, policy):
+        run = progress.run
         run = await self._reconcile_counters(run, factory, policy=policy)
         checkpoint = await asyncio.to_thread(self.state_store.get_checkpoint, run.run_id)
-        tools = self._resolve_tools(run.request, policy)
-        definitions = tuple(tool_definition(tools[name]) for name in sorted(tools))
 
         if checkpoint is None:
             context = await asyncio.to_thread(
@@ -524,293 +522,265 @@ class BusinessAgentRuntime:
             )
             run = await self._update_active_run(run, factory)
             yield await self._publish(resumed_event)
+        progress.run = run
+        progress.checkpoint = checkpoint
 
-        if checkpoint.final_output is not None:
-            async for event in self._complete(
-                run,
-                checkpoint.final_output,
-                factory=factory,
-            ):
-                yield event
-            return
 
-        while True:
-            token.raise_if_cancelled()
-            while checkpoint.pending_tool_calls:
-                call = checkpoint.pending_tool_calls[0]
-                progress = _ToolProgress(run=run, checkpoint=checkpoint)
-                async for event in self._process_tool_call(
-                    progress,
-                    call,
-                    tools=tools,
-                    policy=policy,
-                    factory=factory,
-                    token=token,
-                ):
-                    yield await self._publish(event)
-                run = progress.run
-                checkpoint = progress.checkpoint
-                if progress.paused:
-                    return
-
-            compacted, compaction = compact_checkpoint(
-                checkpoint,
-                tools=definitions,
-                estimator=self.token_estimator,
-                policy=policy,
-                model=self.model_name,
-                summarizer=self.conversation_summarizer,
+    async def _model_step(self, progress, *, factory, token, policy):
+        run, checkpoint = progress.run, progress.checkpoint
+        tools = self._resolve_tools(run.request, policy)
+        definitions = tuple(tool_definition(tools[name]) for name in sorted(tools))
+        compacted, compaction = compact_checkpoint(
+            checkpoint,
+            tools=definitions,
+            estimator=self.token_estimator,
+            policy=policy,
+            model=self.model_name,
+            summarizer=self.conversation_summarizer,
+        )
+        if compaction is not None:
+            checkpoint = await asyncio.to_thread(
+                self.state_store.save_checkpoint,
+                compacted,
+                expected_version=checkpoint.version,
             )
-            if compaction is not None:
-                checkpoint = await asyncio.to_thread(
-                    self.state_store.save_checkpoint,
-                    compacted,
-                    expected_version=checkpoint.version,
-                )
-                compacted_event = factory.create(
-                    "context.compacted",
-                    {
-                        "before_tokens": compaction.before_tokens,
-                        "after_tokens": compaction.after_tokens,
-                        "removed_messages": compaction.removed_messages,
-                        "summary_hash": compaction.summary_hash,
-                        "compaction_count": checkpoint.compaction_count,
-                    },
-                )
-                run = await self._update_active_run(run, factory)
-                self.metrics.increment("contexts.compacted")
-                yield await self._publish(compacted_event)
-            estimate = estimate_model_call(
-                checkpoint,
-                tools=definitions,
-                estimator=self.token_estimator,
-                policy=policy,
-                model=self.model_name,
-                current_cost_usd=run.cost_usd,
-            )
-            _check_pre_model_budget(run, policy, estimate)
-            sequence = run.step + 1
-            turn = AgentTurn.new(run_id=run.run_id, sequence=sequence)
-            await asyncio.to_thread(self.state_store.save_turn, turn)
-            model_started = factory.create(
-                "model.started",
+            compacted_event = factory.create(
+                "context.compacted",
                 {
-                    "turn": sequence,
-                    "available_tools": len(definitions),
-                    "estimated_input_tokens": estimate.input_tokens,
-                    "reserved_output_tokens": estimate.reserved_output_tokens,
-                    "estimated_maximum_cost_usd": estimate.maximum_cost_usd,
+                    "before_tokens": compaction.before_tokens,
+                    "after_tokens": compaction.after_tokens,
+                    "removed_messages": compaction.removed_messages,
+                    "summary_hash": compaction.summary_hash,
+                    "compaction_count": checkpoint.compaction_count,
                 },
             )
             run = await self._update_active_run(run, factory)
-            yield await self._publish(model_started)
+            self.metrics.increment("contexts.compacted")
+            yield await self._publish(compacted_event)
+        estimate = estimate_model_call(
+            checkpoint,
+            tools=definitions,
+            estimator=self.token_estimator,
+            policy=policy,
+            model=self.model_name,
+            current_cost_usd=run.cost_usd,
+        )
+        _check_pre_model_budget(run, policy, estimate)
+        sequence = run.step + 1
+        turn = AgentTurn.new(run_id=run.run_id, sequence=sequence)
+        await asyncio.to_thread(self.state_store.save_turn, turn)
+        model_started = factory.create(
+            "model.started",
+            {
+                "turn": sequence,
+                "available_tools": len(definitions),
+                "estimated_input_tokens": estimate.input_tokens,
+                "reserved_output_tokens": estimate.reserved_output_tokens,
+                "estimated_maximum_cost_usd": estimate.maximum_cost_usd,
+            },
+        )
+        run = await self._update_active_run(run, factory)
+        yield await self._publish(model_started)
 
-            token.raise_if_cancelled()
-            model_started_at = perf_counter()
-            streamed_output = False
-            try:
-                async with asyncio.timeout(policy.model_timeout_seconds):
-                    stream = getattr(self.model_gateway, "stream", None)
-                    if callable(stream):
-                        model_progress = _ModelProgress()
-                        async for delta in self._consume_model_stream(
-                            model_progress,
-                            stream(
-                                messages=checkpoint.messages,
-                                tools=definitions,
-                                metadata={
-                                    "run_id": run.run_id,
-                                    "tenant_id": run.tenant_id,
-                                    "output_contract": _output_contract_metadata(
-                                        run.request.output_contract
-                                    ),
-                                },
-                            ),
-                            token=token,
-                        ):
-                            if run.request.output_contract is None:
-                                streamed_output = True
-                                yield await self._publish(
-                                    factory.create(
-                                        "model.output.delta",
-                                        {"delta": delta},
-                                    )
+        token.raise_if_cancelled()
+        model_started_at = perf_counter()
+        streamed_output = False
+        try:
+            async with asyncio.timeout(policy.model_timeout_seconds):
+                stream = getattr(self.model_gateway, "stream", None)
+                if callable(stream):
+                    model_progress = _ModelProgress()
+                    async for delta in self._consume_model_stream(
+                        model_progress,
+                        stream(
+                            messages=checkpoint.messages,
+                            tools=definitions,
+                            metadata={
+                                "run_id": run.run_id,
+                                "tenant_id": run.tenant_id,
+                                "output_contract": _output_contract_metadata(
+                                    run.request.output_contract
+                                ),
+                            },
+                        ),
+                        token=token,
+                    ):
+                        if run.request.output_contract is None:
+                            streamed_output = True
+                            yield await self._publish(
+                                factory.create(
+                                    "model.output.delta",
+                                    {"delta": delta},
                                 )
-                        if model_progress.response is None:
-                            raise ModelProtocolError(
-                                "streaming model gateway did not emit a completed response"
                             )
-                        response = model_progress.response
-                    else:
-                        response = await _await_cancellable(
-                            self.model_gateway.complete(
-                                messages=checkpoint.messages,
-                                tools=definitions,
-                                metadata={
-                                    "run_id": run.run_id,
-                                    "tenant_id": run.tenant_id,
-                                    "output_contract": _output_contract_metadata(
-                                        run.request.output_contract
-                                    ),
-                                },
-                            ),
-                            token,
+                    if model_progress.response is None:
+                        raise ModelProtocolError(
+                            "streaming model gateway did not emit a completed response"
                         )
-            except Exception as error:
-                await asyncio.to_thread(
-                    self.state_store.save_turn,
-                    replace(
-                        turn,
-                        status=TurnStatus.FAILED,
-                        error_type=type(error).__name__,
-                        updated_at=utc_now_iso(),
-                    ),
-                )
-                raise
-            self.metrics.increment("models.calls")
-            self.metrics.observe(
-                "models.duration_ms",
-                (perf_counter() - model_started_at) * 1000,
-            )
-            stored_calls = await asyncio.to_thread(
-                self.state_store.list_tool_calls,
-                run.run_id,
-            )
-            stored_call_ids = {item.call_id for item in stored_calls}
-            additional_calls = sum(
-                call.call_id not in stored_call_ids for call in response.tool_calls
-            )
-            if len(stored_calls) + additional_calls > policy.max_tool_calls:
-                await asyncio.to_thread(
-                    self.state_store.save_turn,
-                    replace(
-                        turn,
-                        status=TurnStatus.FAILED,
-                        error_type="AgentPolicyError",
-                        updated_at=utc_now_iso(),
-                    ),
-                )
-                raise AgentPolicyError("agent run exceeded max_tool_calls")
-            contract = run.request.output_contract
-            validation: StructuredOutputResult | None = None
-            if not response.tool_calls and contract is not None:
-                validation = validate_structured_output(response.content, contract)
-            validation_failed = validation is not None and not validation.valid
-            will_repair = bool(
-                validation_failed
-                and contract is not None
-                and checkpoint.output_repair_attempts < contract.max_repair_attempts
-            )
-            completed_turn = replace(
-                turn,
-                status=TurnStatus.COMPLETED,
-                response=response,
-                updated_at=utc_now_iso(),
-            )
-            await asyncio.to_thread(self.state_store.save_turn, completed_turn)
-            assistant_message = ModelMessage(
-                role="assistant",
-                content=response.content,
-                tool_calls=response.tool_calls,
-            )
-            next_messages = (*checkpoint.messages, assistant_message)
-            if will_repair and contract is not None and validation is not None:
-                next_messages = (
-                    *next_messages,
-                    ModelMessage(
-                        role="system",
-                        content=output_repair_instruction(contract, validation),
-                    ),
-                )
-            valid_final_output = bool(
-                not response.tool_calls
-                and (contract is None or (validation is not None and validation.valid))
-            )
-            checkpoint = await asyncio.to_thread(
-                self.state_store.save_checkpoint,
+                    response = model_progress.response
+                else:
+                    response = await _await_cancellable(
+                        self.model_gateway.complete(
+                            messages=checkpoint.messages,
+                            tools=definitions,
+                            metadata={
+                                "run_id": run.run_id,
+                                "tenant_id": run.tenant_id,
+                                "output_contract": _output_contract_metadata(
+                                    run.request.output_contract
+                                ),
+                            },
+                        ),
+                        token,
+                    )
+        except Exception as error:
+            await asyncio.to_thread(
+                self.state_store.save_turn,
                 replace(
-                    checkpoint,
-                    messages=next_messages,
-                    pending_tool_calls=response.tool_calls,
-                    final_output=response.content if valid_final_output else None,
-                    last_estimated_input_tokens=estimate.input_tokens,
-                    output_repair_attempts=(
-                        checkpoint.output_repair_attempts + 1
-                        if validation_failed
-                        else checkpoint.output_repair_attempts
-                    ),
+                    turn,
+                    status=TurnStatus.FAILED,
+                    error_type=type(error).__name__,
+                    updated_at=utc_now_iso(),
                 ),
-                expected_version=checkpoint.version,
             )
-            output_event = (
-                factory.create("model.output.delta", {"delta": response.content})
-                if response.content
-                and not streamed_output
-                and (
-                    contract is None
-                    or (not response.tool_calls and validation is not None and validation.valid)
-                )
-                else None
+            raise
+        self.metrics.increment("models.calls")
+        self.metrics.observe(
+            "models.duration_ms",
+            (perf_counter() - model_started_at) * 1000,
+        )
+        stored_calls = await asyncio.to_thread(
+            self.state_store.list_tool_calls,
+            run.run_id,
+        )
+        stored_call_ids = {item.call_id for item in stored_calls}
+        additional_calls = sum(
+            call.call_id not in stored_call_ids for call in response.tool_calls
+        )
+        if len(stored_calls) + additional_calls > policy.max_tool_calls:
+            await asyncio.to_thread(
+                self.state_store.save_turn,
+                replace(
+                    turn,
+                    status=TurnStatus.FAILED,
+                    error_type="AgentPolicyError",
+                    updated_at=utc_now_iso(),
+                ),
             )
-            completed_event = factory.create(
-                "model.completed",
+            raise AgentPolicyError("agent run exceeded max_tool_calls")
+        contract = run.request.output_contract
+        validation: StructuredOutputResult | None = None
+        if not response.tool_calls and contract is not None:
+            validation = validate_structured_output(response.content, contract)
+        validation_failed = validation is not None and not validation.valid
+        will_repair = bool(
+            validation_failed
+            and contract is not None
+            and checkpoint.output_repair_attempts < contract.max_repair_attempts
+        )
+        completed_turn = replace(
+            turn,
+            status=TurnStatus.COMPLETED,
+            response=response,
+            updated_at=utc_now_iso(),
+        )
+        await asyncio.to_thread(self.state_store.save_turn, completed_turn)
+        assistant_message = ModelMessage(
+            role="assistant",
+            content=response.content,
+            tool_calls=response.tool_calls,
+        )
+        next_messages = (*checkpoint.messages, assistant_message)
+        if will_repair and contract is not None and validation is not None:
+            next_messages = (
+                *next_messages,
+                ModelMessage(
+                    role="system",
+                    content=output_repair_instruction(contract, validation),
+                ),
+            )
+        valid_final_output = bool(
+            not response.tool_calls
+            and (contract is None or (validation is not None and validation.valid))
+        )
+        checkpoint = await asyncio.to_thread(
+            self.state_store.save_checkpoint,
+            replace(
+                checkpoint,
+                messages=next_messages,
+                pending_tool_calls=response.tool_calls,
+                final_output=response.content if valid_final_output else None,
+                last_estimated_input_tokens=estimate.input_tokens,
+                output_repair_attempts=(
+                    checkpoint.output_repair_attempts + 1
+                    if validation_failed
+                    else checkpoint.output_repair_attempts
+                ),
+            ),
+            expected_version=checkpoint.version,
+        )
+        output_event = (
+            factory.create("model.output.delta", {"delta": response.content})
+            if response.content
+            and not streamed_output
+            and (
+                contract is None
+                or (not response.tool_calls and validation is not None and validation.valid)
+            )
+            else None
+        )
+        completed_event = factory.create(
+            "model.completed",
+            {
+                "turn": sequence,
+                "model": response.model,
+                "response_id": response.response_id,
+                "finish_reason": response.finish_reason,
+                "input_tokens": response.input_tokens,
+                "output_tokens": response.output_tokens,
+                "tool_call_count": len(response.tool_calls),
+                "structured_output_valid": (
+                    None if validation is None else validation.valid
+                ),
+            },
+        )
+        call_cost = estimate_cost(
+            response.input_tokens,
+            response.output_tokens,
+            policy=policy,
+        )
+        run = await self._update_active_run(
+            run,
+            factory,
+            step=sequence,
+            model_calls=run.model_calls + 1,
+            input_tokens=run.input_tokens + response.input_tokens,
+            output_tokens=run.output_tokens + response.output_tokens,
+            cost_usd=round(run.cost_usd + (call_cost or 0.0), 8),
+        )
+        _check_post_model_budget(run, policy)
+        if output_event is not None:
+            yield await self._publish(output_event)
+        yield await self._publish(completed_event)
+
+        if validation_failed and contract is not None and validation is not None:
+            validation_event = factory.create(
+                "output.validation_failed",
                 {
-                    "turn": sequence,
-                    "model": response.model,
-                    "response_id": response.response_id,
-                    "finish_reason": response.finish_reason,
-                    "input_tokens": response.input_tokens,
-                    "output_tokens": response.output_tokens,
-                    "tool_call_count": len(response.tool_calls),
-                    "structured_output_valid": (
-                        None if validation is None else validation.valid
-                    ),
+                    "reason": validation.reason,
+                    "path": validation.path,
+                    "attempt": checkpoint.output_repair_attempts,
+                    "will_retry": will_repair,
                 },
             )
-            call_cost = estimate_cost(
-                response.input_tokens,
-                response.output_tokens,
-                policy=policy,
-            )
-            run = await self._update_active_run(
-                run,
-                factory,
-                step=sequence,
-                model_calls=run.model_calls + 1,
-                input_tokens=run.input_tokens + response.input_tokens,
-                output_tokens=run.output_tokens + response.output_tokens,
-                cost_usd=round(run.cost_usd + (call_cost or 0.0), 8),
-            )
-            _check_post_model_budget(run, policy)
-            if output_event is not None:
-                yield await self._publish(output_event)
-            yield await self._publish(completed_event)
-
-            if validation_failed and contract is not None and validation is not None:
-                validation_event = factory.create(
-                    "output.validation_failed",
-                    {
-                        "reason": validation.reason,
-                        "path": validation.path,
-                        "attempt": checkpoint.output_repair_attempts,
-                        "will_retry": will_repair,
-                    },
-                )
-                run = await self._update_active_run(run, factory)
-                self.metrics.increment("outputs.validation_failed")
-                yield await self._publish(validation_event)
-                if will_repair:
-                    continue
-                raise ModelProtocolError("structured model output failed validation")
-
-            if not response.tool_calls:
-                async for event in self._complete(
-                    run,
-                    response.content,
-                    factory=factory,
-                ):
-                    yield event
+            run = await self._update_active_run(run, factory)
+            self.metrics.increment("outputs.validation_failed")
+            yield await self._publish(validation_event)
+            if will_repair:
+                progress.run, progress.checkpoint = run, checkpoint
                 return
+            raise ModelProtocolError("structured model output failed validation")
+        progress.run, progress.checkpoint = run, checkpoint
 
     async def _process_tool_call(
         self,

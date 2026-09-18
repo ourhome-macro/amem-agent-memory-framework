@@ -1,0 +1,5 @@
+apiVersion: 1
+providers:
+  - name: Radio
+    options:
+      path: /var/lib/grafana/dashboards

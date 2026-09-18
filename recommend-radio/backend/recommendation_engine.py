@@ -3,7 +3,9 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+
+from recommendation_policy import RecommendationPolicy
 
 from request_spec import RequestSpec
 
@@ -21,26 +23,39 @@ class RecommendationRequest:
 class RecommendationEngine:
     """Serving-only engine: scope filtering, score ordering, diversity and final selection."""
 
-    def __init__(self, *, embedding_service: Any | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        embedding_service: Any | None = None,
+        user_id: str = "legacy-owner",
+        policy: RecommendationPolicy | None = None,
+    ) -> None:
         self.embedding_service = embedding_service
+        self.policy = policy or RecommendationPolicy(user_id)
+
+    def score(self, draft, legacy_profile, profile, trace_id, request_spec):
+        return self.policy._score_candidate(draft, legacy_profile, profile, trace_id, request_spec)
 
     def rank_and_select(
         self,
         candidates: list[Any],
         *,
         request: RecommendationRequest,
-        hard_filtered: Callable[[Any], bool],
-        select: Callable[[list[Any]], list[Any]],
-        diversity: Callable[[list[Any]], list[Any]],
+        legacy_profile: Any,
     ) -> tuple[list[Any], list[Any], dict[str, Any]]:
         hard_rejected = []
         facet_rejected = []
         eligible = []
         for item in candidates:
-            if hard_filtered(item):
+            if (
+                self.policy._is_hard_filtered(item, request.profile, legacy_profile)
+                or item.track["trackId"] in legacy_profile.recently_recommended_track_ids
+            ):
                 hard_rejected.append(item)
                 continue
-            if not request.request_spec.matches_facets(getattr(item, "facets", {})):
+            if not request.request_spec.matches_candidate(
+                item.track, getattr(item, "facets", {})
+            ):
                 facet_rejected.append(item)
                 continue
             eligible.append(item)
@@ -60,7 +75,27 @@ class RecommendationEngine:
                 "eligibleCount": len(eligible),
             }
         )
-        selected = diversity(select(mmr_ranked))
+
+        def diversity(values):
+            return self.policy._apply_diversity_limits(
+                values,
+                request.profile.same_uploader_limit,
+                request.limit,
+                request_scoped_limit=None if request.request_spec.constrained else 2,
+            )
+
+        if request.request_spec.required_scenes:
+            selected = diversity(mmr_ranked)
+        else:
+            selected = diversity(
+                self.policy._select_epsilon_greedy(
+                    mmr_ranked,
+                    request.limit,
+                    request.scene,
+                    legacy_profile,
+                    request.profile,
+                )
+            )
         if len(selected) < request.limit:
             selected_ids = {
                 str((getattr(item, "track", {}) or {}).get("trackId") or "") for item in selected
@@ -102,7 +137,7 @@ class RecommendationEngine:
                 "reason": "persisted_candidate_vectors_incomplete",
             }
         profile = request.profile
-        query = (
+        query = request.request_spec.raw_text if request.request_spec.required_scenes else (
             " ".join(
                 item
                 for item in [
@@ -117,7 +152,7 @@ class RecommendationEngine:
             )
             or "personalized music recommendation"
         )
-        negative_query = " ".join(
+        negative_query = "" if request.request_spec.required_scenes else " ".join(
             [
                 " ".join(getattr(profile, "negative_topics", {}).keys()),
                 " ".join(getattr(profile, "negative_interest_texts", [])),

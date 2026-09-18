@@ -139,10 +139,10 @@ function Start-DockerEngine {
 function Start-ComposeStack {
     Push-Location $appRoot
     try {
-        $services = @('rabbitmq', 'amem', 'outbox', 'task-worker', 'event-worker', 'backend', 'sse-gateway')
+        $services = @('otel-collector', 'rabbitmq', 'amem', 'outbox', 'task-worker', 'event-worker', 'backend', 'sse-gateway')
         if (-not $NoFrontend) { $services += 'frontend' }
         if ($Rebuild) {
-            $buildServices = @('migrate') + @($services | Where-Object { $_ -ne 'rabbitmq' })
+            $buildServices = @('migrate') + @($services | Where-Object { $_ -notin @('rabbitmq','otel-collector') })
             & docker compose build @buildServices
             if ($LASTEXITCODE -ne 0) { throw "docker compose build failed with exit code $LASTEXITCODE" }
         }
