@@ -1,10 +1,10 @@
-import type { AudioStreamInfo } from '@/types'
-
 class StreamingAudioPlayer {
   private audioElement: HTMLAudioElement | null = null
   private volume = 1.0
   private isMuted = false
   private playbackRate = 1.0
+  private playPending = false
+  private streamGeneration = 0
 
   private _onStateChange: ((playing: boolean) => void) | null = null
   private _onTimeUpdate: ((currentTime: number, duration: number) => void) | null = null
@@ -21,6 +21,7 @@ class StreamingAudioPlayer {
 
     try {
       this.audioElement = new Audio()
+      this.audioElement.preload = 'auto'
       this.audioElement.crossOrigin = 'anonymous'
       this.audioElement.volume = this.isMuted ? 0 : this.volume
       this.applyPlaybackRate()
@@ -69,13 +70,14 @@ class StreamingAudioPlayer {
     }
   }
 
-  loadStream(streamInfo: AudioStreamInfo) {
+  loadStream(streamInfo: { url: string }) {
     if (!this.audioElement) {
       console.error('Audio element not initialized')
       return
     }
 
-    console.log('[StreamingAudioPlayer] Loading stream:', streamInfo.url)
+    this.streamGeneration += 1
+    this.playPending = false
     this.audioElement.src = streamInfo.url
     this.applyPlaybackRate()
     this.audioElement.load()
@@ -85,8 +87,15 @@ class StreamingAudioPlayer {
     if (!this.audioElement) {
       return false
     }
-
-    this.audioElement.play().catch(error => {
+    if (this.playPending) return true
+    this.playPending = true
+    const generation = this.streamGeneration
+    this.audioElement.play().then(() => {
+      if (generation === this.streamGeneration) this.playPending = false
+    }).catch(error => {
+      if (generation !== this.streamGeneration) return
+      this.playPending = false
+      if (error?.name === 'AbortError') return
       console.error('[StreamingAudioPlayer] Play error:', error)
       if (this._onError) {
         this._onError(error.message)
@@ -111,6 +120,8 @@ class StreamingAudioPlayer {
 
   stop() {
     if (this.audioElement) {
+      this.streamGeneration += 1
+      this.playPending = false
       this.audioElement.pause()
       this.audioElement.currentTime = 0
       this.audioElement.removeAttribute('src')

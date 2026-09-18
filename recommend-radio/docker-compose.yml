@@ -53,6 +53,7 @@ services:
     restart: unless-stopped
     command: ["python", "amem_grpc_server.py"]
     environment:
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-}
       AMEM_ENABLED: "${AMEM_ENABLED:-true}"
       OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}"
       AMEM_GRPC_BIND: "0.0.0.0:9090"
@@ -268,6 +269,7 @@ services:
     restart: unless-stopped
     command: ["python", "behavior_worker.py"]
     environment:
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-}
       REQUIRE_DB_MIGRATION: "1"
       AMEM_GRPC_ADDR: "${AMEM_GRPC_ADDR:-amem:9090}"
       AMEM_GRPC_TIMEOUT_SECONDS: "${AMEM_GRPC_TIMEOUT_SECONDS:-10}"

@@ -23,11 +23,12 @@ if hasattr(os, "register_at_fork"):
 
 
 def get_openai_client(
-    *, base_url: str, api_key_env: str, timeout_seconds: float, require_https: bool = True
+    *, base_url: str, api_key_env: str, timeout_seconds: float, require_https: bool = True,
+    api_key: str | None = None,
 ):
     if require_https and not base_url.startswith("https://"):
         raise LLMConfigurationError("Model base_url must use HTTPS.")
-    api_key = os.getenv(api_key_env)
+    api_key = api_key or os.getenv(api_key_env)
     if not api_key:
         from dotenv import load_dotenv
 

@@ -53,7 +53,10 @@ class RecommendationPolicy:
             profile=profile,
             legacy_profile=legacy_profile,
         )
-        filtered = [item for item in filtered if resolved_request_spec.matches_facets(item.facets)]
+        filtered = [
+            item for item in filtered
+            if resolved_request_spec.matches_candidate(item.track, item.facets)
+        ]
         selected = self._select_epsilon_greedy(filtered, limit, scene, legacy_profile, profile)
         return self._apply_diversity_limits(
             selected,
@@ -79,27 +82,28 @@ class RecommendationPolicy:
         text = (
             f"{track.title} {track.owner} {' '.join(draft.tags)} {' '.join(draft.profile_signals)}"
         )
+        strong_scope = bool(request_spec and request_spec.required_scenes)
 
-        if track.owner_mid and track.owner_mid in profile.frequent_owner_mids:
+        if not strong_scope and track.owner_mid and track.owner_mid in profile.frequent_owner_mids:
             score += _add_score_signal(score_signals, "frequent_owner", 3)
             evidence.append("来自你最近常听的 UP 或相近来源")
 
         matched_tags = sorted(draft.tags & profile.common_tags)
-        if matched_tags:
+        if matched_tags and not strong_scope:
             score += _add_score_signal(score_signals, "tag_match", 3)
             matched_preferences.extend(matched_tags[:2])
             evidence.append(f"命中你近期标过的标签：{'、'.join(matched_tags[:2])}")
 
-        if track.owner_mid and track.owner_mid in profile.repeated_owner_mids:
+        if not strong_scope and track.owner_mid and track.owner_mid in profile.repeated_owner_mids:
             score += _add_score_signal(score_signals, "recent_owner_repeat", 2)
             evidence.append("最近重复听过相近来源")
 
-        if track.owner_mid and track.owner_mid in profile.completed_owner_mids:
+        if not strong_scope and track.owner_mid and track.owner_mid in profile.completed_owner_mids:
             score += _add_score_signal(score_signals, "recent_completion", 2)
             evidence.append("最近完整听完过相近来源")
 
         positive_weight = music_profile.topic_weight(text, positive=True)
-        if positive_weight:
+        if positive_weight and not strong_scope:
             score += _add_score_signal(score_signals, "profile_match", 4 * positive_weight)
             profile_topics = _matched_profile_topics(text, music_profile.positive_topics)
             matched_preferences.extend(profile_topics)
@@ -113,7 +117,7 @@ class RecommendationPolicy:
             draft.facets.get("genres") or []
         ):
             negative_weight = 0.0
-        if negative_weight:
+        if negative_weight and not strong_scope:
             score += _add_score_signal(
                 score_signals, "negative_preference_penalty", -3 * negative_weight
             )
@@ -125,7 +129,7 @@ class RecommendationPolicy:
 
         uploader_key = _uploader_key(track)
         uploader_weight = music_profile.uploader_weight(uploader_key)
-        if uploader_weight:
+        if uploader_weight and not strong_scope:
             score += _add_score_signal(score_signals, "preferred_uploader", 3 * uploader_weight)
             evidence.append("来自你更容易接受的 UP 或来源")
 

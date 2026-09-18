@@ -54,6 +54,9 @@ class RecommendationOpenAIChatClient:
         max_tokens: int,
         extra_body: dict[str, Any] | None = None,
         json_response: bool = True,
+        user_id: str | None = None,
+        db_path: str | None = None,
+        deepseek_user_key: bool = False,
     ) -> None:
         self.base_url = base_url
         self.api_key_env = api_key_env
@@ -64,12 +67,28 @@ class RecommendationOpenAIChatClient:
         self.max_tokens = max_tokens
         self.extra_body = extra_body or {}
         self.json_response = json_response
+        self.user_id = user_id
+        self.db_path = db_path
+        self.deepseek_user_key = deepseek_user_key
+
+    def _api_key(self) -> str:
+        if self.deepseek_user_key and self.user_id is not None:
+            from settings_service import SettingsService
+
+            stored = SettingsService(
+                db_path=self.db_path, user_id=self.user_id
+            ).get_deepseek_api_key()
+            if not stored:
+                raise RuntimeError("Personal DeepSeek API Key is required")
+            return stored
+        key = os.getenv(self.api_key_env, "").strip()
+        if not key:
+            raise RuntimeError(f"{self.api_key_env} is required for recommendation LLM")
+        return key
 
     @traced('llm.chat')
     def complete(self, *, system_prompt: str, user_prompt: str) -> _ChatResponse:
-        api_key = os.getenv(self.api_key_env, "").strip()
-        if not api_key:
-            raise RuntimeError(f"{self.api_key_env} is required for recommendation LLM")
+        api_key = self._api_key()
 
         from agent_memory_runtime.llm.transport import get_openai_client
 
@@ -77,6 +96,7 @@ class RecommendationOpenAIChatClient:
             base_url=self.base_url,
             api_key_env=self.api_key_env,
             timeout_seconds=self.timeout_seconds,
+            api_key=api_key,
         )
         kwargs: dict[str, Any] = {
             "model": self.model,
@@ -104,13 +124,15 @@ class RecommendationOpenAIChatClient:
         user_prompt: str,
         tools: list[dict[str, Any]],
     ) -> _ToolCallResponse:
-        api_key = os.getenv(self.api_key_env, "").strip()
-        if not api_key:
-            raise RuntimeError(f"{self.api_key_env} is required for recommendation LLM")
+        api_key = self._api_key()
         from agent_memory_runtime.llm.transport import get_openai_client
 
-        client = get_openai_client(base_url=self.base_url, api_key_env=self.api_key_env,
-                                   timeout_seconds=self.timeout_seconds)
+        client = get_openai_client(
+            base_url=self.base_url,
+            api_key_env=self.api_key_env,
+            timeout_seconds=self.timeout_seconds,
+            api_key=api_key,
+        )
         started = time.perf_counter()
         completion = client.chat.completions.create(
             model=self.model,
@@ -158,7 +180,7 @@ class ProfileProjector:
             "RECOMMEND_PROFILE_TTL_SECONDS",
             DEFAULT_PROFILE_TTL_SECONDS,
         )
-        self._cache: dict[tuple[str, str], tuple[float, ProfileProjection]] = {}
+        self._cache: dict[tuple[str, str, bool], tuple[float, ProfileProjection]] = {}
         self._last_llm_latency_ms = 0.0
 
     def clear_cache(self, user_id: str | None = None, scene: str | None = None) -> None:
@@ -166,7 +188,7 @@ class ProfileProjector:
             self._cache.clear()
             return
         for key in list(self._cache):
-            key_user, key_scene = key
+            key_user, key_scene = key[:2]
             if user_id is not None and key_user != user_id:
                 continue
             if scene is not None and key_scene != scene:
@@ -180,14 +202,20 @@ class ProfileProjector:
         scene: str,
         fallback_profile: MusicProfile,
     ) -> ProfileProjection:
-        cache_key = (user_id, scene)
+        from settings_service import SettingsService
+
+        llm_allowed = self.enabled and (
+            self.llm_client is not None
+            or SettingsService(user_id=user_id).has_deepseek_api_key()
+        )
+        cache_key = (user_id, scene, llm_allowed)
         cached = self._cache.get(cache_key)
         if cached and time.time() - cached[0] < self.ttl_seconds:
             return replace(cached[1], llm_latency_ms=0.0, cache_hit=True)
 
         memories = self.memory_retriever.retrieve_memories(user_id, scene, limit=16)
         trace_id = f"profile:{user_id}:{scene}:{int(time.time())}"
-        if not self.enabled:
+        if not llm_allowed:
             projection = ProfileProjection(
                 profile=overlay_profile_snapshot(
                     self._fallback_with_memories(fallback_profile, memories), fallback_profile
@@ -200,7 +228,9 @@ class ProfileProjector:
 
         try:
             self._last_llm_latency_ms = 0.0
-            profile = self._project_with_llm(memories, scene=scene, fallback_profile=fallback_profile)
+            profile = self._project_with_llm(
+                memories, scene=scene, fallback_profile=fallback_profile, user_id=user_id
+            )
         except Exception:
             profile = self._fallback_with_memories(fallback_profile, memories)
         profile = overlay_profile_snapshot(profile, fallback_profile)
@@ -215,8 +245,9 @@ class ProfileProjector:
         *,
         scene: str,
         fallback_profile: MusicProfile,
+        user_id: str | None = None,
     ) -> MusicProfile:
-        client = self.llm_client or _default_llm_client()
+        client = self.llm_client or _default_llm_client(user_id=user_id)
         system_prompt = (
             "Extract a music recommendation profile from memories. "
             "Infer a best-effort tentative MBTI, current music phase, core traits and psychological needs from explicit "
@@ -355,7 +386,7 @@ class ProfileProjector:
         return profile
 
 
-def _default_llm_client() -> Any:
+def _default_llm_client(*, user_id: str | None = None, db_path: str | None = None) -> Any:
     _ensure_amem_import_path()
     from agent_memory_runtime.config import LLMConfig
     from agent_memory_runtime.llm import OpenAICompatibleChatClient
@@ -376,6 +407,9 @@ def _default_llm_client() -> Any:
                 {"chat_template_kwargs": {"thinking": False}},
             ),
             json_response=_env_bool("RECOMMEND_LLM_JSON_RESPONSE", True),
+            user_id=user_id,
+            db_path=db_path,
+            deepseek_user_key=True,
         )
 
     if provider_id in {"nvidia", "nvidia-nim"} or os.getenv("RECOMMEND_LLM_BASE_URL", "").strip():

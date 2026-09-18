@@ -18,6 +18,7 @@ import {
   getTrackCoverInfo,
   getTrackSubtitles,
   getTrackStreamInfo,
+  trackProxyStreamUrl,
   resolveTrackInput,
   savePlayerQueue,
   updateSettings,
@@ -137,6 +138,7 @@ export const usePlayerStore = defineStore('player', () => {
   let playbackLastPosition: number | null = null
   let autoplaySeq: number | null = null
   let playbackBehaviorRecorded = false
+  const prewarmedStreams = new Map<string, number>()
 
   const currentTrack = computed<Track | null>(() => {
     if (currentIndex.value < 0 || currentIndex.value >= queue.value.length) return null
@@ -295,6 +297,7 @@ export const usePlayerStore = defineStore('player', () => {
     streamingAudioPlayer.onStateChange((playing) => {
       if (playing) {
         status.value = 'playing'
+        autoplaySeq = null
       } else {
         if (status.value === 'playing') {
           status.value = 'paused'
@@ -393,23 +396,8 @@ export const usePlayerStore = defineStore('player', () => {
       syncQueueCurrentTrack(track)
       videoInfo.value = trackToVideoInfo(track)
       duration.value = track.duration
-      statusMessage.value = '正在解析音频流...'
-
-      const streamInfo = await getTrackStreamInfo(track.bvid, track.cid, audioQualityPreference.value)
-      if (seq !== playSeq) return
-      availableAudioQualities.value = normalizeAvailableQualities(streamInfo.availableAudioQualities)
-
-      const resolvedCid = streamInfo.cid ?? track.cid
-      const playableTrack: Track = {
-        ...track,
-        trackId: resolvedCid !== track.cid ? undefined : track.trackId,
-        cid: resolvedCid,
-        duration: streamInfo.duration || track.duration,
-      }
-      syncQueueCurrentTrack(playableTrack)
-      videoInfo.value = trackToVideoInfo(playableTrack)
-      duration.value = playableTrack.duration
-      playbackRecentKey = trackIdentity(playableTrack)
+      statusMessage.value = '正在连接音频...'
+      playbackRecentKey = trackIdentity(track)
       playbackRecentRecorded = false
       playbackListenSeconds = 0
       playbackLastPosition = null
@@ -417,8 +405,30 @@ export const usePlayerStore = defineStore('player', () => {
 
       statusMessage.value = '正在缓冲音频...'
       autoplaySeq = seq
-      streamingAudioPlayer.loadStream(streamInfo)
-      hydrateTrackMetadataInBackground(playableTrack, seq)
+      streamingAudioPlayer.loadStream({
+        url: trackProxyStreamUrl(track.bvid, track.cid, audioQualityPreference.value),
+      })
+      streamingAudioPlayer.play()
+      hydrateTrackMetadataInBackground(track, seq)
+      void getTrackStreamInfo(track.bvid, track.cid, audioQualityPreference.value)
+        .then((streamInfo) => {
+          if (seq !== playSeq) return
+          availableAudioQualities.value = normalizeAvailableQualities(streamInfo.availableAudioQualities)
+          const resolvedCid = streamInfo.cid ?? track.cid
+          const playableTrack: Track = {
+            ...track,
+            trackId: resolvedCid !== track.cid ? undefined : track.trackId,
+            cid: resolvedCid,
+            duration: streamInfo.duration || track.duration,
+          }
+          syncQueueCurrentTrack(playableTrack)
+          videoInfo.value = trackToVideoInfo(playableTrack)
+          duration.value = playableTrack.duration
+          playbackRecentKey = trackIdentity(playableTrack)
+        })
+        .catch(() => {
+          // The direct proxy stream may still play when metadata lookup fails.
+        })
     } catch (error) {
       if (seq !== playSeq) return
       setError(error instanceof Error ? error.message : '播放失败')
@@ -456,6 +466,19 @@ export const usePlayerStore = defineStore('player', () => {
     }
     markShuffleManualSelection(currentIndex.value)
     void requestPlayTrack(track)
+  }
+
+  function prewarmTrack(track: Track) {
+    if (!track.bvid) return
+    const key = `${track.bvid}:${track.cid ?? 'video'}:${audioQualityPreference.value}`
+    const last = prewarmedStreams.get(key) ?? 0
+    if (Date.now() - last < 10 * 60_000) return
+    if (prewarmedStreams.size >= 64) {
+      prewarmedStreams.delete(prewarmedStreams.keys().next().value as string)
+    }
+    prewarmedStreams.set(key, Date.now())
+    void getTrackStreamInfo(track.bvid, track.cid, audioQualityPreference.value)
+      .catch(() => prewarmedStreams.delete(key))
   }
 
   /** 鐢ㄤ竴缁勬洸鐩浛鎹㈤槦鍒楀苟浠庢寚瀹氫綅缃紑濮嬫挱鏀?*/
@@ -1113,6 +1136,7 @@ export const usePlayerStore = defineStore('player', () => {
     initialize,
     playInput,
     playTrack,
+    prewarmTrack,
     playList,
     enqueue,
     enqueueTracks,

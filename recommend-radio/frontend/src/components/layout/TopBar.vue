@@ -45,9 +45,15 @@
       <button class="icon-btn theme-btn" :title="isDark ? '切换到浅色' : '切换到深色'" @click="ui.toggleTheme">
         <AppIcon :name="isDark ? 'sun' : 'moon'" :size="18" />
       </button>
-      <button class="icon-btn notification-btn" title="消息">
-        <AppIcon name="bell" :size="18" />
-      </button>
+      <RouterLink
+        v-if="keyStatus && !keyStatus.configured"
+        to="/settings"
+        class="key-notice"
+        title="请配置个人 API Key：音乐助手需要它，推荐目前使用规则模式"
+      >
+        <AppIcon name="bell" :size="16" />
+        <span>请配置个人 API Key 使用音乐助手；推荐目前使用规则模式</span>
+      </RouterLink>
       <button class="avatar" :title="biliAuthTitle" @click="openLogin">
         <img
           v-if="auth.biliUser?.face"
@@ -76,6 +82,10 @@
               <strong>{{ auth.appUser?.displayName }}</strong>
               <span>用户</span>
             </div>
+            <button class="menu-item" role="menuitem" @click="openSettings">
+              <AppIcon name="shield" :size="16" />
+              <span>API 设置</span>
+            </button>
             <button class="menu-item" role="menuitem" @click="logoutApp">
               <AppIcon name="logout" :size="16" />
               <span>退出应用账户</span>
@@ -88,12 +98,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import { useUiStore } from '@/stores/uiStore'
 import { useSearchHistory, useSearchHistoryMenu } from '@/composables/useSearchHistory'
-import { mediaUrl } from '@/api/client'
+import { fetchDeepSeekKeyStatus, mediaUrl } from '@/api/client'
+import type { DeepSeekKeyStatus } from '@/types'
 import AppIcon from '@/components/base/AppIcon.vue'
 import SearchHistoryMenu from '@/components/SearchHistoryMenu.vue'
 
@@ -107,6 +118,7 @@ const { requestSearch } = useSearchHistory()
 const keyword = ref('')
 const accountOpen = ref(false)
 const accountRoot = ref<HTMLElement | null>(null)
+const keyStatus = ref<DeepSeekKeyStatus | null>(null)
 const isDark = computed(() => ui.theme === 'dark')
 const biliAuthTitle = computed(() =>
   auth.biliConnected ? `B 站已登录：${auth.biliUser?.name ?? ''}` : '登录 B 站'
@@ -127,8 +139,23 @@ const {
   clear: clearSearchHistory,
 } = useSearchHistoryMenu(keyword, 'topbar-search-history', executeSearch)
 
-onMounted(() => document.addEventListener('pointerdown', closeAccountMenu))
-onBeforeUnmount(() => document.removeEventListener('pointerdown', closeAccountMenu))
+onMounted(() => {
+  document.addEventListener('pointerdown', closeAccountMenu)
+  window.addEventListener('deepseek-key-updated', refreshKeyStatus)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', closeAccountMenu)
+  window.removeEventListener('deepseek-key-updated', refreshKeyStatus)
+})
+watch(() => [route.fullPath, auth.appUser?.id], refreshKeyStatus, { immediate: true })
+
+async function refreshKeyStatus() {
+  try {
+    keyStatus.value = await fetchDeepSeekKeyStatus()
+  } catch {
+    keyStatus.value = null
+  }
+}
 
 function submitSearch() {
   const q = keyword.value.trim()
@@ -158,6 +185,11 @@ function goForward() {
 
 function openLogin() {
   router.push({ name: 'login' })
+}
+
+function openSettings() {
+  accountOpen.value = false
+  void router.push({ name: 'settings' })
 }
 
 function closeAccountMenu(event: PointerEvent) {
@@ -254,6 +286,27 @@ async function logoutApp() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.key-notice {
+  max-width: min(28vw, 340px);
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid rgba(224, 117, 35, 0.24);
+  border-radius: 999px;
+  color: #ad5b21;
+  background: rgba(249, 168, 78, 0.12);
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.key-notice span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .avatar {
@@ -396,8 +449,18 @@ async function logoutApp() {
   }
 
   .nav-arrows,
-  .theme-btn,
-  .notification-btn {
+  .theme-btn {
+    display: none;
+  }
+
+  .key-notice {
+    width: 32px;
+    min-width: 32px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .key-notice span {
     display: none;
   }
 

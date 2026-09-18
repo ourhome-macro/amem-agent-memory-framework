@@ -5,7 +5,7 @@ import warnings
 
 from amem.v1 import amem_pb2 as amem_dot_v1_dot_amem__pb2
 
-GRPC_GENERATED_VERSION = '1.83.0'
+GRPC_GENERATED_VERSION = '1.76.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class AmemServiceStub:
+class AmemServiceStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -61,7 +61,7 @@ class AmemServiceStub:
                 _registered_method=True)
 
 
-class AmemServiceServicer:
+class AmemServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def RecordBehavior(self, request, context):
@@ -130,7 +130,7 @@ def add_AmemServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class AmemService:
+class AmemService(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod

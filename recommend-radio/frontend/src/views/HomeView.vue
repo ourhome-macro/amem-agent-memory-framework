@@ -42,7 +42,7 @@
             <img class="recommend-cover" :src="mediaUrl(item.track.cover)" :alt="item.track.title" loading="lazy" />
             <span class="recommend-copy">
               <strong :title="item.track.title">{{ item.track.title }}</strong>
-              <small>{{ item.reason }}</small>
+              <small>{{ item.track.owner }}</small>
             </span>
           </button>
           <button class="recommend-dismiss" title="不感兴趣" @click="dismissRecommendation(item)">
@@ -54,73 +54,22 @@
     </section>
 
     <section class="section profile-section">
-      <SectionHeader title="今天我会这样陪你听" />
-      <div class="profile-grid">
-        <div class="profile-panel">
-          <div class="profile-meta">
-            <span>结合最近播放、收藏、反馈和聊天里的状态</span>
-          </div>
-          <div class="signal-row">
-            <span
-              v-for="item in topSignals(musicProfile?.profile.positive_topics)"
-              :key="`positive-${item.name}`"
-              class="signal-chip positive"
-            >
-              {{ item.name }}
-            </span>
-            <span
-              v-for="item in topSignals(musicProfile?.profile.negative_topics)"
-              :key="`negative-${item.name}`"
-              class="signal-chip negative"
-            >
-              {{ item.name }}
-            </span>
-            <span
-              v-for="item in topSignals(musicProfile?.profile.mood_weights)"
-              :key="`mood-${item.name}`"
-              class="signal-chip mood"
-            >
-              {{ item.name }}
-            </span>
-          </div>
-          <div v-if="musicProfile?.profile.music_persona" class="persona-card">
-            <strong>{{ musicProfile.profile.mbti || '音乐人格' }}</strong>
-            <p>{{ musicProfile.profile.music_persona }}</p>
-            <small v-if="musicProfile.profile.current_music_phase">最近：{{ musicProfile.profile.current_music_phase }}</small>
-            <div class="signal-row">
-              <span v-for="trait in musicProfile.profile.core_traits ?? []" :key="`trait-${trait}`" class="signal-chip mood">{{ trait }}</span>
-              <span v-for="need in musicProfile.profile.psychological_needs ?? []" :key="`need-${need}`" class="signal-chip positive">{{ need }}</span>
-            </div>
-          </div>
-          <form class="statement-form" @submit.prevent="saveProfileStatement">
-            <textarea
-              v-model="profileStatement"
-              rows="4"
-              maxlength="2000"
-              placeholder="只需描述你的音乐人格：喜欢的风格、舞台、旋律和听歌场景。MBTI、核心特质和心理需求会结合近期行为推断。"
-            />
-            <div class="statement-actions">
-              <span>{{ statementStatus }}</span>
-              <button type="submit" :disabled="statementSaving || !profileStatement.trim()">
-                {{ statementSaving ? '理解中' : '告诉音乐搭子' }}
-              </button>
-            </div>
-          </form>
+      <SectionHeader title="今天我想陪你听" />
+      <form class="statement-form" @submit.prevent="saveProfileStatement">
+        <textarea
+          v-model="profileStatement"
+          rows="3"
+          maxlength="2000"
+          placeholder="说说今天想听的风格、歌手或场景……"
+          aria-label="描述今天想听的音乐"
+        />
+        <div class="statement-actions">
+          <span role="status">{{ statementStatus }}</span>
+          <button type="submit" :disabled="statementSaving || !profileStatement.trim()">
+            {{ statementSaving ? '保存中' : '保存' }}
+          </button>
         </div>
-        <div class="profile-panel">
-          <div class="profile-meta">
-            <span>为什么会出现这些歌</span>
-          </div>
-          <p class="reason-copy">{{ recommendationReasonSummary }}</p>
-          <ol v-if="recommendationTrace?.finalResults?.length" class="trace-list">
-            <li v-for="item in recommendationTrace.finalResults.slice(0, 5)" :key="item.trackId ?? item.bvid">
-              <span>{{ item.title }}</span>
-              <small>{{ item.reason || '贴近你最近的听歌状态' }}</small>
-            </li>
-          </ol>
-          <p v-else class="pending-text">先聊几句或听几首，我会把原因说成人能看懂的话。</p>
-        </div>
-      </div>
+      </form>
     </section>
 
     <section class="section">
@@ -149,13 +98,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import {
-  fetchLatestRecommendationDebug,
   fetchRecommendationDiscovery,
-  fetchMusicProfile,
   fetchRecommendations,
   mediaUrl,
   recordRecommendationEvent,
@@ -163,7 +110,7 @@ import {
 } from '@/api/client'
 import { usePlayerStore } from '@/stores/playerStore'
 import { useLibraryStore } from '@/stores/libraryStore'
-import type { MusicProfileAnalysis, RecommendationDebugTrace, RecommendationItem, Track } from '@/types'
+import type { RecommendationItem, Track } from '@/types'
 import { formatCount } from '@/utils/format'
 import TrackCard from '@/components/TrackCard.vue'
 import AppIcon from '@/components/base/AppIcon.vue'
@@ -174,14 +121,16 @@ const library = useLibraryStore()
 const { recent } = storeToRefs(library)
 const recommendations = ref<RecommendationItem[]>([])
 const recommendationLoading = ref(false)
-const musicProfile = ref<MusicProfileAnalysis | null>(null)
-const recommendationTrace = ref<RecommendationDebugTrace | null>(null)
 const profileStatement = ref('')
 const statementSaving = ref(false)
 const statementStatus = ref('')
+let recommendationLoadSeq = 0
 
 onMounted(() => {
   void loadRecommendations()
+})
+onBeforeUnmount(() => {
+  recommendationLoadSeq += 1
 })
 
 const companionGreeting = computed(() => {
@@ -200,48 +149,43 @@ const playCountRanking = computed(() => {
     .slice(0, 10)
 })
 
-const recommendationReasonSummary = computed(() => {
-  const profile = musicProfile.value?.profile
-  const positives = topSignals(profile?.positive_topics).map((item) => item.name).slice(0, 3)
-  const moods = topSignals(profile?.mood_weights).map((item) => item.name).slice(0, 2)
-  const negatives = topSignals(profile?.negative_topics).map((item) => item.name).slice(0, 2)
-  const parts: string[] = []
-  if (positives.length) parts.push(`先贴近 ${positives.join('、')} 这些长期更合拍的方向。`)
-  if (moods.length) parts.push(`听感上会照顾 ${moods.join('、')} 这类状态。`)
-  if (negatives.length) parts.push(`同时减少 ${negatives.join('、')}。`)
-  return parts.join('') || '我会结合最近播放、收藏和反馈来选，避免只按单一标签硬推。'
-})
-
 async function loadRecommendations() {
+  const seq = ++recommendationLoadSeq
   recommendationLoading.value = true
   try {
     const result = await fetchRecommendations('home', 8)
+    if (seq !== recommendationLoadSeq) return
     recommendations.value = result.items
-    if (result.discoveryJobId && result.items.length < 8) {
-      statementStatus.value = '正在补充新的候选…'
-      const completed = await waitForDiscovery(result.discoveryJobId)
-      if (completed) {
-        const refreshed = await fetchRecommendations('home', 8)
-        recommendations.value = refreshed.items
-        statementStatus.value = ''
-      }
-    }
-    await loadRecommendationInsights()
-  } catch {
-    recommendations.value = []
-  } finally {
+    result.items.slice(0, 2).forEach((item) => player.prewarmTrack(item.track))
     recommendationLoading.value = false
+    if (result.discoveryJobId && result.items.length < 8) {
+      void refreshAfterDiscovery(result.discoveryJobId, seq)
+    }
+  } catch {
+    if (seq === recommendationLoadSeq) recommendations.value = []
+  } finally {
+    if (seq === recommendationLoadSeq) recommendationLoading.value = false
   }
 }
 
-async function waitForDiscovery(jobId: string): Promise<boolean> {
+async function refreshAfterDiscovery(jobId: string, seq: number): Promise<void> {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await new Promise(resolve => window.setTimeout(resolve, 1000))
-    const status = await fetchRecommendationDiscovery(jobId)
-    if (status.status === 'completed') return true
-    if (!status.available || status.status === 'failed') return false
+    if (seq !== recommendationLoadSeq) return
+    try {
+      const status = await fetchRecommendationDiscovery(jobId)
+      if (status.status === 'completed') {
+        const refreshed = await fetchRecommendations('home', 8)
+        if (seq !== recommendationLoadSeq) return
+        recommendations.value = refreshed.items
+        refreshed.items.slice(0, 2).forEach((item) => player.prewarmTrack(item.track))
+        return
+      }
+      if (!status.available || status.status === 'failed') return
+    } catch {
+      return
+    }
   }
-  return false
 }
 
 function playRecommendation(item: RecommendationItem) {
@@ -272,35 +216,14 @@ function dismissRecommendation(item: RecommendationItem) {
   })
 }
 
-async function loadRecommendationInsights() {
-  const [profile, trace] = await Promise.allSettled([
-    fetchMusicProfile('home'),
-    fetchLatestRecommendationDebug('home'),
-  ])
-  if (profile.status === 'fulfilled') {
-    musicProfile.value = profile.value
-  }
-  if (trace.status === 'fulfilled') {
-    recommendationTrace.value = trace.value
-  }
-}
-
-function topSignals(values: Record<string, number> | undefined): Array<{ name: string; weight: number }> {
-  return Object.entries(values ?? {})
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 6)
-    .map(([name, weight]) => ({ name, weight }))
-}
-
 async function saveProfileStatement() {
   const description = profileStatement.value.trim()
   if (!description) return
   statementSaving.value = true
   statementStatus.value = ''
   try {
-    const result = await submitMusicProfileStatement(description)
-    musicProfile.value = result.analysis
-    statementStatus.value = '收到，我会按这段状态调整推荐'
+    await submitMusicProfileStatement(description)
+    statementStatus.value = '已保存'
     await loadRecommendations()
   } catch (error) {
     statementStatus.value = error instanceof Error ? error.message : '这段话暂时没理解好'
@@ -579,99 +502,8 @@ function uniqueTracks(tracks: Track[]): Track[] {
   color: var(--color-primary);
 }
 
-.profile-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.profile-panel {
-  min-width: 0;
-  padding: 14px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-small);
-  background: var(--color-bg-elevated);
-}
-
-.profile-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
-  margin-bottom: 12px;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-}
-
-.signal-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.signal-chip {
-  max-width: 100%;
-  min-height: 26px;
-  display: inline-flex;
-  align-items: center;
-  padding: 4px 8px;
-  border-radius: var(--radius-small);
-  font-size: 12px;
-  color: var(--color-text-primary);
-  background: var(--color-bg-hover);
-  overflow-wrap: anywhere;
-}
-
-.signal-chip.positive {
-  color: #116329;
-  background: #e8f5eb;
-}
-
-.signal-chip.negative {
-  color: #8a241f;
-  background: #fdeceb;
-}
-
-.signal-chip.mood {
-  color: #37558f;
-  background: #edf2ff;
-}
-
-.reason-copy {
-  color: var(--color-text-primary);
-  font-size: 13px;
-  line-height: 1.65;
-}
-
-.trace-list {
-  margin: 12px 0 0;
-  padding-left: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.trace-list li {
-  min-width: 0;
-  font-size: 13px;
-  color: var(--color-text-primary);
-}
-
-.trace-list span,
-.trace-list small {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.trace-list small {
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--color-text-secondary);
-}
-
 .statement-form {
+  max-width: 760px;
   margin-top: 14px;
   display: flex;
   flex-direction: column;
@@ -736,10 +568,6 @@ function uniqueTracks(tracks: Track[]): Track[] {
 
   .welcome {
     flex-direction: column;
-  }
-
-  .profile-grid {
-    grid-template-columns: 1fr;
   }
 
   .statement-actions {

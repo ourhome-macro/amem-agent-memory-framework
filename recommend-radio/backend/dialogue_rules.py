@@ -1230,8 +1230,9 @@ def _llm_chat_reply(
     route: DialogueRoute,
     analysis: dict[str, Any],
     recent_turns: list[dict[str, str]],
+    client: Any | None = None,
 ) -> str:
-    client = _default_llm_client()
+    client = client or _default_llm_client()
     system_prompt = (
         "你是一个自然、敏感、懂音乐的中文 AI 助手，定位像用户的音乐搭子，"
         "但也能正常闲聊和回答日常问题。你必须直接回答用户当前这句话，"

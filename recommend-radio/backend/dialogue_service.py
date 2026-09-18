@@ -8,6 +8,7 @@ from typing import Any, Callable
 from amem_bridge import record_music_behavior
 from conversation_memory import ConversationMemoryService
 from database import DEFAULT_DB_PATH, LEGACY_OWNER_USER_ID, get_connection, init_db
+from error_code import APIError
 from full_trace import FullTrace, hash_text
 from profile_projector import _default_llm_client
 from recommendation_service import RecommendationService
@@ -153,6 +154,30 @@ class MusicDialogueService:
         with get_connection(self.db_path) as conn:
             session = self.repository._create_session(conn)
             return self._serialize_session(conn, session)
+
+    def delete_session(self, session_id: str) -> dict[str, Any]:
+        normalized = str(session_id or "").strip()
+        if not normalized:
+            raise APIError.validation_error("sessionId is required")
+        with get_connection(self.db_path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            session = self.repository._load_session(conn, normalized)
+            if session is None:
+                raise APIError.not_found("dialogue session not found")
+            active = conn.execute(
+                """SELECT 1 FROM durable_jobs
+                   WHERE user_id = ? AND kind IN ('dialogue', 'discovery_watch')
+                     AND status IN ('queued', 'running')
+                     AND json_extract(payload_json, '$.session_id') = ? LIMIT 1""",
+                (self.user_id, normalized),
+            ).fetchone()
+            if active is not None:
+                raise APIError.conflict("对话任务仍在运行，请完成后再删除")
+            conn.execute(
+                "DELETE FROM agent_dialogue_sessions WHERE session_id = ? AND user_id = ?",
+                (normalized, self.user_id),
+            )
+        return {"deleted": True, "sessionId": normalized}
 
     @_finish_session_analysis
     def undo_last_message(self, *, session_id: str | None = None) -> dict[str, Any]:
@@ -871,14 +896,18 @@ class MusicDialogueService:
             if job_id:
                 status = self.recommendation_service.discovery_status(job_id)
                 job_status = str(status.get("status") or "")
-                if status.get("available") and job_status not in {"completed", "failed"}:
+                if status.get("available") and job_status not in {
+                    "completed", "failed", "needs_reconciliation"
+                }:
                     payload["discoveryStatus"] = job_status or "queued"
                     self.repository._update_card(
                         conn, card_id, status=card["status"], payload=payload
                     )
                     session = self.repository._load_session(conn, card["session_id"])
                     return self._serialize_session(conn, session)
-                if not status.get("available") or job_status == "failed":
+                if not status.get("available") or job_status in {
+                    "failed", "needs_reconciliation"
+                }:
                     payload["discoveryStatus"] = "failed"
                     payload["error"] = status.get("error") or "discovery job unavailable"
                     self.repository._update_card(
@@ -1102,6 +1131,7 @@ class MusicDialogueService:
                 route=route,
                 analysis=analysis,
                 recent_turns=self.repository._recent_turn_context(session_id),
+                client=_default_llm_client(user_id=self.user_id, db_path=str(self.db_path)),
             )
             return {"text": text, "engine": "llm"}
         except Exception:
@@ -1299,7 +1329,9 @@ class MusicDialogueService:
                 message,
                 context_card=context_card,
                 recent_turns=self.conversation_memory.hot(session_id=session_id),
-                client=self.router_llm_client or _default_llm_client(),
+                client=self.router_llm_client or _default_llm_client(
+                    user_id=self.user_id, db_path=str(self.db_path)
+                ),
             )
             return _canonical_route(route, message, source="llm_tool", confidence=0.72)
         except Exception:

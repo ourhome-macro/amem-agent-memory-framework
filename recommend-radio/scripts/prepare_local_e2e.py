@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import shutil
 import sqlite3
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -76,6 +78,22 @@ def main():
             "OTEL_BSP_SCHEDULE_DELAY": "500",
         }
     )
+    personal_key = str(values.get("DEEPSEEK_API_KEY") or "").strip()
+    if personal_key:
+        sys.path.insert(0, str(ROOT / "recommend-radio" / "backend"))
+        from settings_service import SettingsService
+
+        previous_secret = os.environ.get("APP_SECRET_KEY")
+        os.environ["APP_SECRET_KEY"] = str(values["APP_SECRET_KEY"])
+        try:
+            SettingsService(db_path=data / "bili_radio.sqlite3").set_deepseek_api_key(
+                personal_key
+            )
+        finally:
+            if previous_secret is None:
+                os.environ.pop("APP_SECRET_KEY", None)
+            else:
+                os.environ["APP_SECRET_KEY"] = previous_secret
     env_file = target / "private.env"
     env_file.write_text("\n".join(f"{k}={v}" for k, v in values.items()) + "\n", encoding="utf-8")
     (target / "inventory.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")

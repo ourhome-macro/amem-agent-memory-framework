@@ -53,7 +53,9 @@ class RecommendationEngine:
             ):
                 hard_rejected.append(item)
                 continue
-            if not request.request_spec.matches_facets(getattr(item, "facets", {})):
+            if not request.request_spec.matches_candidate(
+                item.track, getattr(item, "facets", {})
+            ):
                 facet_rejected.append(item)
                 continue
             eligible.append(item)
@@ -82,15 +84,18 @@ class RecommendationEngine:
                 request_scoped_limit=None if request.request_spec.constrained else 2,
             )
 
-        selected = diversity(
-            self.policy._select_epsilon_greedy(
-                mmr_ranked,
-                request.limit,
-                request.scene,
-                legacy_profile,
-                request.profile,
+        if request.request_spec.required_scenes:
+            selected = diversity(mmr_ranked)
+        else:
+            selected = diversity(
+                self.policy._select_epsilon_greedy(
+                    mmr_ranked,
+                    request.limit,
+                    request.scene,
+                    legacy_profile,
+                    request.profile,
+                )
             )
-        )
         if len(selected) < request.limit:
             selected_ids = {
                 str((getattr(item, "track", {}) or {}).get("trackId") or "") for item in selected
@@ -132,7 +137,7 @@ class RecommendationEngine:
                 "reason": "persisted_candidate_vectors_incomplete",
             }
         profile = request.profile
-        query = (
+        query = request.request_spec.raw_text if request.request_spec.required_scenes else (
             " ".join(
                 item
                 for item in [
@@ -147,7 +152,7 @@ class RecommendationEngine:
             )
             or "personalized music recommendation"
         )
-        negative_query = " ".join(
+        negative_query = "" if request.request_spec.required_scenes else " ".join(
             [
                 " ".join(getattr(profile, "negative_topics", {}).keys()),
                 " ".join(getattr(profile, "negative_interest_texts", [])),

@@ -26,6 +26,7 @@ from profile_statement_service import ProfileStatementService
 from profile_update import MusicProfileUpdatePipeline
 from recommendation_engine import RecommendationEngine, RecommendationRequest
 from request_spec import RequestSpec
+from settings_service import SettingsService
 from recommendation_contracts import (
     CandidateDraft,
     DEFAULT_POOL_TARGET,
@@ -81,7 +82,7 @@ class RecommendationService:
             embedding_service=self.content_embeddings, user_id=self.user_id
         )
         self.profile_reader = UserProfileReader(self.db_path, self.user_id)
-        self.profile_statement_service = ProfileStatementService(self.amem_bridge)
+        self.profile_statement_service = ProfileStatementService(self.amem_bridge, db_path=str(self.db_path))
         self.profile_update_pipeline = MusicProfileUpdatePipeline(
             str(self.db_path),
             user_id=self.user_id,
@@ -185,12 +186,21 @@ class RecommendationService:
         )
         legacy_profile = self.profile_reader._load_user_profile()
         fallback_profile = self.profile_reader._fallback_music_profile(legacy_profile)
+        has_personal_key = SettingsService(
+            db_path=self.db_path, user_id=self.user_id
+        ).has_deepseek_api_key()
         span_started = time.perf_counter()
         if memory_variant == "control":
             projection = ProfileProjection(
                 profile=MusicProfile.empty(),
                 memories=[],
                 trace_id=f"profile-control:{self.user_id}:{normalized_scene}",
+            )
+        elif not has_personal_key:
+            projection = ProfileProjection(
+                profile=fallback_profile,
+                memories=[],
+                trace_id=f"profile-rules:{self.user_id}:{normalized_scene}",
             )
         else:
             projection = self.profile_projector.project(
