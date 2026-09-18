@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 from celery import Celery
 from database import DEFAULT_DB_PATH, get_connection, init_db
-from durable_jobs import claim, finish
+from durable_jobs import claim, finish, publish_pending
 from kombu import Exchange, Queue
 from rabbitmq_bus import RabbitMQSettings
 
@@ -92,6 +92,11 @@ def execute_job(self, job_id: str) -> None:
             else:
                 with get_connection() as conn:
                     finish(conn, job, result=result)
+                if job["kind"] == "sse":
+                    try:
+                        publish_pending(DEFAULT_DB_PATH, publish_job)
+                    except Exception:
+                        LOGGER.exception("Could not immediately publish the next SSE event")
     finally:
         current_job_id.reset(token)
         flush()

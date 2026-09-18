@@ -212,8 +212,15 @@ def publish_pending(db_path, publisher, *, now: float | None = None) -> int:
         conn.execute("BEGIN IMMEDIATE")
         recover_expired(conn, now=now)
         rows = conn.execute(
-            """SELECT job_id,kind FROM durable_jobs
-            WHERE status='queued' AND next_publish_at<=? ORDER BY created_at LIMIT 32""",
+            """SELECT j.job_id,j.kind FROM durable_jobs AS j
+            WHERE j.status='queued' AND j.next_publish_at<=?
+              AND (j.lane='' OR NOT EXISTS (
+                SELECT 1 FROM durable_jobs AS predecessor
+                WHERE predecessor.lane=j.lane AND predecessor.job_id<>j.job_id
+                  AND (predecessor.status IN ('running','needs_reconciliation')
+                       OR (predecessor.status='queued' AND predecessor.id<j.id))
+              ))
+            ORDER BY j.created_at,j.id LIMIT 32""",
             (now,),
         ).fetchall()
         # Reservation is recoverable. A dispatcher killed here retries after 30s.
